@@ -1,5 +1,5 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
-import { useLoaderData, useFetcher, useRouteError, useRevalidator, redirect, useSearchParams } from "react-router";
+import { useLoaderData, useFetcher, useRouteError, useRevalidator, redirect } from "react-router";
 import { useState, useEffect } from "react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import {
@@ -79,12 +79,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     return redirect("/app/billing");
   }
 
+  const errorParam = url.searchParams.get("error");
+
   const subscription = await getSubscriptionInfo(shopDomain);
 
   return {
     shopDomain,
     subscription,
     plans: PLAN_INFO,
+    errorParam,
   };
 };
 
@@ -163,13 +166,11 @@ function CheckIcon() {
 }
 
 export default function BillingPage() {
-  const { subscription, plans } = useLoaderData<typeof loader>();
+  const { subscription, plans, errorParam } = useLoaderData<typeof loader>();
   const fetcher = useFetcher();
   const { revalidate } = useRevalidator();
   const [isAnnual, setIsAnnual] = useState(false);
   const { t } = useTranslation();
-  const [searchParams] = useSearchParams();
-  const errorParam = searchParams.get("error");
 
   useEffect(() => {
     if (fetcher.data?.success) {
