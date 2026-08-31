@@ -231,8 +231,7 @@ export default function BillingPage() {
                 )}
               </InlineStack>
             </InlineStack>
-            {!subscription.isDeveloper && (
-              <div style={{ marginTop: "12px" }}>
+            <div style={{ marginTop: "12px" }}>
                 {isAnnual && subscription.billingType === "monthly" && subscription.planHandle.endsWith("-monthly") && (
                   <fetcher.Form method="post" style={{ display: "inline" }}>
                     <input type="hidden" name="intent" value="subscribe" />
@@ -252,7 +251,6 @@ export default function BillingPage() {
                   </fetcher.Form>
                 )}
               </div>
-            )}
           </Card>
         )}
 
