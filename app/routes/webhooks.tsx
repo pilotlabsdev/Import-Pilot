@@ -167,11 +167,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         : subStatus === "cancelled" ? "cancelled"
         : subStatus === "frozen" ? "frozen"
         : subStatus === "pending" ? "trial"
-        : "active";
+        : subStatus === "payment_due" ? "payment_failed"
+        : subStatus === "declined" ? "payment_failed"
+        : null;
+
+      if (newStatus === null) {
+        console.log(`[Webhook] APP_SUBSCRIPTIONS_UPDATE: status desconocido "${subStatus}" para ${shop}, ignorando`);
+        break;
+      }
 
       await upsertSubscription(shop, validPlan || "basic", newStatus);
 
-      if (newStatus === "cancelled" || newStatus === "frozen" || validPlan) {
+      if (newStatus === "cancelled" || newStatus === "frozen" || newStatus === "payment_failed" || validPlan) {
         await enforcePlanLimits(shop);
       }
 

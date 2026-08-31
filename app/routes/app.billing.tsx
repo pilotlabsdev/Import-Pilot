@@ -1,5 +1,5 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
-import { useLoaderData, useFetcher, useRouteError, useRevalidator, redirect } from "react-router";
+import { useLoaderData, useFetcher, useRouteError, useRevalidator, redirect, useSearchParams } from "react-router";
 import { useState, useEffect } from "react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import {
@@ -10,6 +10,7 @@ import {
   Button,
   Badge,
   Page,
+  Banner,
 } from "@shopify/polaris";
 import { useTranslation } from "react-i18next";
 
@@ -38,14 +39,31 @@ const FEATURES = [
 ];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { billing, session } = await authenticate.admin(request);
   const shopDomain = session.shop;
 
   const url = new URL(request.url);
   const planHandle = url.searchParams.get("plan_handle");
+  const chargeId = url.searchParams.get("charge_id");
 
   if (planHandle) {
     const currentSubscription = await getSubscriptionInfo(shopDomain);
+
+    if (chargeId && !currentSubscription.isDeveloper) {
+      try {
+        const { hasActivePayment } = await billing.check({
+          plans: [planHandle],
+        });
+        if (!hasActivePayment) {
+          console.log(`[Billing] Loader: charge ${chargeId} not approved for ${shopDomain}`);
+          return redirect("/app/billing?error=payment_failed");
+        }
+      } catch (error: any) {
+        console.log(`[Billing] Loader: billing.check failed for ${shopDomain}:`, error?.message);
+        return redirect("/app/billing?error=verification_failed");
+      }
+    }
+
     const trialDaysRemaining = calculateCarryoverTrialDays(currentSubscription);
     const newTrialDays = calculateTrialDays(shopDomain, currentSubscription, trialDaysRemaining > 0 ? trialDaysRemaining : 14);
     const billingType = planHandle.endsWith("-annual") ? "annual" : "monthly";
@@ -98,17 +116,26 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         returnUrl: `${process.env.SHOPIFY_APP_URL}/app/billing`,
       });
     } catch (error: any) {
-      console.log("[Billing Action] billing.request failed:", JSON.stringify(error, null, 2));
-      console.log("[Billing Action] billing.request failed message:", error.message);
-      console.log("[Billing Action] billing.request failed response:", JSON.stringify(error.response?.body, null, 2));
-      const isTrial = newTrialDays > 0;
-      const status = isTrial ? "trial" : "active";
-      const trialEndsAt = isTrial
-        ? new Date(Date.now() + newTrialDays * 24 * 60 * 60 * 1000)
-        : undefined;
-      await upsertSubscription(shopDomain, planHandle, status, trialEndsAt, billingType);
-      await enforcePlanLimits(shopDomain);
-      return { success: true };
+      console.log("[Billing Action] billing.request catch:", error?.constructor?.name, error?.message);
+
+      if (error instanceof Response) {
+        throw error;
+      }
+
+      if (currentSubscription.isDeveloper) {
+        console.log("[Billing Action] Dev store — activando sin cobro real");
+        const isTrial = newTrialDays > 0;
+        const status = isTrial ? "trial" : "active";
+        const trialEndsAt = isTrial
+          ? new Date(Date.now() + newTrialDays * 24 * 60 * 60 * 1000)
+          : undefined;
+        await upsertSubscription(shopDomain, planHandle, status, trialEndsAt, billingType);
+        await enforcePlanLimits(shopDomain);
+        return { success: true };
+      }
+
+      console.error("[Billing Action] Error real en billing.request:", error.message);
+      return { success: false, error: "billing.paymentError" };
     }
 
     return { success: true };
@@ -141,6 +168,8 @@ export default function BillingPage() {
   const { revalidate } = useRevalidator();
   const [isAnnual, setIsAnnual] = useState(false);
   const { t } = useTranslation();
+  const [searchParams] = useSearchParams();
+  const errorParam = searchParams.get("error");
 
   useEffect(() => {
     if (fetcher.data?.success) {
@@ -151,6 +180,21 @@ export default function BillingPage() {
   return (
     <Page title={t("billing.title")}>
       <BlockStack gap="600">
+        {errorParam === "payment_failed" && (
+          <Banner tone="critical" title={t("billing.paymentFailed")}>
+            <p>{t("billing.paymentFailedDetail")}</p>
+          </Banner>
+        )}
+        {errorParam === "verification_failed" && (
+          <Banner tone="warning" title={t("billing.verificationFailed")}>
+            <p>{t("billing.verificationFailedDetail")}</p>
+          </Banner>
+        )}
+        {subscription.paymentFailed && (
+          <Banner tone="critical" title={t("billing.paymentFailed")}>
+            <p>{t("billing.paymentFailedDetail")}</p>
+          </Banner>
+        )}
         {subscription.hasActiveSubscription && (
           <Card>
             <InlineStack align="space-between" blockAlign="center">
@@ -189,7 +233,7 @@ export default function BillingPage() {
             </InlineStack>
             {!subscription.isDeveloper && (
               <div style={{ marginTop: "12px" }}>
-                {isAnnual && subscription.billingType === "monthly" && (
+                {isAnnual && subscription.billingType === "monthly" && subscription.planHandle.endsWith("-monthly") && (
                   <fetcher.Form method="post" style={{ display: "inline" }}>
                     <input type="hidden" name="intent" value="subscribe" />
                     <input type="hidden" name="planHandle" value={subscription.planHandle.replace("-monthly", "-annual")} />
@@ -198,7 +242,7 @@ export default function BillingPage() {
                     </Button>
                   </fetcher.Form>
                 )}
-                {!isAnnual && subscription.billingType === "annual" && (
+                {!isAnnual && subscription.billingType === "annual" && subscription.planHandle.endsWith("-annual") && (
                   <fetcher.Form method="post" style={{ display: "inline" }}>
                     <input type="hidden" name="intent" value="subscribe" />
                     <input type="hidden" name="planHandle" value={subscription.planHandle.replace("-annual", "-monthly")} />

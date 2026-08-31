@@ -402,6 +402,10 @@
   "billing.trialInfo": "Alle Pläne beinhalten 14 Tage Testzeitraum gratis. Keine Bindung. Wechseln Sie jederzeit den Plan.",
   "billing.devStoreNotice": "Kann nicht vom Entwickler-Shop abbestellt werden",
   "billing.invalidAction": "Ungültige Aktion",
+  "billing.paymentFailed": "Zahlung fehlgeschlagen",
+  "billing.paymentFailedDetail": "Ihre Zahlung konnte nicht verarbeitet werden. Bitte aktualisieren Sie Ihre Zahlungsmethode oder kontaktieren Sie den Shopify-Support.",
+  "billing.verificationFailed": "Zahlungsverifizierung fehlgeschlagen",
+  "billing.verificationFailedDetail": "Wir konnten Ihre Zahlung nicht überprüfen. Bitte versuchen Sie es erneut oder kontaktieren Sie den Support.",
 
   "duplicates.title": "Erkannte Duplikate",
   "duplicates.suppliers": "Lieferanten",

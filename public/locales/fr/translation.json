@@ -402,6 +402,10 @@
   "billing.trialInfo": "Tous les abonnements incluent 14 jours d'essai gratuit. Sans engagement. Changez d'abonnement quand vous le souhaitez.",
   "billing.devStoreNotice": "Impossible d'annuler depuis une boutique de développeur",
   "billing.invalidAction": "Action invalide",
+  "billing.paymentFailed": "Paiement échoué",
+  "billing.paymentFailedDetail": "Votre paiement n'a pas pu être traité. Veuillez mettre à jour votre moyen de paiement ou contacter le support Shopify.",
+  "billing.verificationFailed": "Vérification du paiement échouée",
+  "billing.verificationFailedDetail": "Nous n'avons pas pu vérifier votre paiement. Veuillez réessayer ou contacter le support.",
   
   "duplicates.title": "Doublons Détectés",
   "duplicates.suppliers": "Fournisseurs",

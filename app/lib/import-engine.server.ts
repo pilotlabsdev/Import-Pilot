@@ -381,6 +381,7 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
           let retried = false;
 
           for (let attempt = 1; attempt <= config.maxRetries; attempt++) {
+            await new Promise((r) => setTimeout(r, 2000));
             try {
               const excludedFields = getExcludedFields(sku, fieldRules);
               const effectiveOpts = excludedFields
@@ -401,9 +402,9 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
               });
               retried = true;
               break;
-            } catch {
+            } catch (retryErr: any) {
               if (attempt === config.maxRetries) {
-                result.errors.push({ sku, error: errorMsg, lineNumber });
+                result.errors.push({ sku, error: retryErr?.message || errorMsg, lineNumber });
               }
             }
           }
@@ -1412,7 +1413,9 @@ async function processProduct({
     }
 
     if (updateOpts.has("stock") && existing.shopifyInventoryItemId) {
-      if (processedInventoryItems.has(existing.shopifyInventoryItemId)) {
+      if (config.skipZeroStockCreate && newQty <= 0) {
+        console.log(`[Import] Stock skip zero: SKU ${sku}, newQty=${newQty}`);
+      } else if (processedInventoryItems.has(existing.shopifyInventoryItemId)) {
         console.log(`[Import] Stock skip duplicate: ${existing.shopifyInventoryItemId} (SKU ${sku})`);
       } else {
         processedInventoryItems.add(existing.shopifyInventoryItemId);

@@ -423,6 +423,10 @@
   "billing.trialInfo": "Todos los planes incluyen 14 días de trial gratis. Sin compromiso. Cambia de plan cuando quieras.",
   "billing.devStoreNotice": "No se puede cancelar desde tienda de desarrollador",
   "billing.invalidAction": "Acción no válida",
+  "billing.paymentFailed": "Pago fallido",
+  "billing.paymentFailedDetail": "No se pudo procesar tu pago. Actualiza tu método de pago o contacta a soporte de Shopify.",
+  "billing.verificationFailed": "Verificación de pago fallida",
+  "billing.verificationFailedDetail": "No pudimos verificar tu pago. Intenta de nuevo o contacta a soporte.",
   
   "duplicates.title": "Duplicados Detectados",
   "duplicates.suppliers": "Proveedores",

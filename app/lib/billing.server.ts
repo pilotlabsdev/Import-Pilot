@@ -12,6 +12,7 @@ export interface SubscriptionInfo {
   isDeveloper: boolean;
   hasUsedTrial: boolean;
   trialDaysRemaining: number;
+  paymentFailed: boolean;
 }
 
 export async function getSubscriptionInfo(
@@ -34,6 +35,7 @@ export async function getSubscriptionInfo(
       isDeveloper: isDev,
       hasUsedTrial: false,
       trialDaysRemaining: 0,
+      paymentFailed: false,
     };
   }
 
@@ -61,6 +63,7 @@ export async function getSubscriptionInfo(
     isDeveloper: isDev,
     hasUsedTrial: subscription.hasUsedTrial,
     trialDaysRemaining,
+    paymentFailed: subscription.status === "payment_failed",
   };
 }
 
