@@ -1,9 +1,8 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { data, Links, Meta, Outlet, Scripts, ScrollRestoration, useLoaderData } from "react-router";
-import { useEffect, useMemo } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AppProvider as PolarisAppProvider } from "@shopify/polaris";
-import { useAppBridge } from "@shopify/app-bridge-react";
 import "@shopify/polaris/build/esm/styles.css";
 
 import esPolaris from "@shopify/polaris/locales/es.json";
@@ -99,15 +98,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
 export default function App() {
   const { locale: serverLocale } = useLoaderData<typeof loader>();
   const { i18n } = useTranslation();
-  const shopify = useAppBridge();
+  const [appBridgeLocale, setAppBridgeLocale] = useState<string | null>(null);
 
-  const appBridgeLocale = useMemo(() => {
+  useEffect(() => {
     try {
-      return normalizeLocale((shopify as any).config?.locale);
-    } catch {
-      return null;
-    }
-  }, [shopify]);
+      const shopify = (window as any).shopify;
+      if (shopify?.config?.locale) {
+        const normalized = normalizeLocale(shopify.config.locale);
+        setAppBridgeLocale(normalized);
+      }
+    } catch {}
+  }, []);
 
   useEffect(() => {
     const bestLocale = appBridgeLocale || getLocaleFromCookie() || serverLocale || "en";
