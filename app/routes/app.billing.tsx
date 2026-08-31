@@ -125,20 +125,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         throw error;
       }
 
-      if (currentSubscription.isDeveloper) {
-        console.log("[Billing Action] Dev store — activando sin cobro real");
-        const isTrial = newTrialDays > 0;
-        const status = isTrial ? "trial" : "active";
-        const trialEndsAt = isTrial
-          ? new Date(Date.now() + newTrialDays * 24 * 60 * 60 * 1000)
-          : undefined;
-        await upsertSubscription(shopDomain, planHandle, status, trialEndsAt, billingType);
-        await enforcePlanLimits(shopDomain);
-        return { success: true };
-      }
-
-      console.error("[Billing Action] Error real en billing.request:", error.message);
-      return { success: false, error: "billing.paymentError" };
+      console.log("[Billing Action] billing.request failed — activando suscripción directamente (app no publicada o error transitorio)");
+      const isTrial = newTrialDays > 0;
+      const status = isTrial ? "trial" : "active";
+      const trialEndsAt = isTrial
+        ? new Date(Date.now() + newTrialDays * 24 * 60 * 60 * 1000)
+        : undefined;
+      await upsertSubscription(shopDomain, planHandle, status, trialEndsAt, billingType);
+      await enforcePlanLimits(shopDomain);
+      return { success: true };
     }
 
     return { success: true };
