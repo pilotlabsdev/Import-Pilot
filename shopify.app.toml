@@ -1,0 +1,32 @@
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "0266903e6bdd1744c8cea256d89ff230"
+name = "importador-mediamax"
+handle = "importador-mediamax"
+application_url = "https://oakland-event-switching-constitute.trycloudflare.com/app"
+embedded = true
+extension_directories = []
+
+[access_scopes]
+scopes = "write_products,read_products,read_inventory,write_inventory,read_locations,read_content,write_publications,read_publications,read_markets"
+
+[auth]
+redirect_urls = [
+  "https://localhost:3000/auth/callback",
+  "https://localhost:5173/auth/callback",
+  "https://oakland-event-switching-constitute.trycloudflare.com/auth/callback",
+]
+
+[webhooks]
+api_version = "2026-07"
+
+[[webhooks.subscriptions]]
+topics = ["products/update", "products/delete", "inventory_items/update", "app/uninstalled"]
+uri = "/webhooks"
+
+[[webhooks.subscriptions]]
+compliance_topics = ["customers/redact", "customers/data_request", "shop/redact"]
+uri = "/webhooks"
+
+[build]
+automatically_update_urls_on_dev = true

@@ -1,0 +1,43 @@
+
+> importador-mediamax@1.0.0 dev
+> react-router dev
+
+[33m  ⚠️  Future Flag Warning: Route middleware support is changing in React Router v8.
+     You can use the `future.v8_middleware` flag to opt in early.
+     -> https://reactrouter.com/v7/upgrading/future#futurev8_middleware[39m
+[33m  ⚠️  Future Flag Warning: Route module splitting behavior is changing in React Router v8.
+     You can use the `future.v8_splitRouteModules` flag to opt in early.
+     -> https://reactrouter.com/v7/upgrading/future#futurev8_splitroutemodules[39m
+[33m  ⚠️  Future Flag Warning: Vite Environment API usage is changing in React Router v8.
+     You can use the `future.v8_viteEnvironmentApi` flag to opt in early.
+     -> https://reactrouter.com/v7/upgrading/future#futurev8_viteenvironmentapi[39m
+[33m  ⚠️  Future Flag Warning: Request handling behavior is changing in React Router v8.
+     You can use the `future.v8_passThroughRequests` flag to opt in early.
+     -> https://reactrouter.com/v7/upgrading/future#futurev8_passthroughrequests[39m
+[33m  ⚠️  Future Flag Warning: Data request URL formats are changing in React Router v8.
+     You can use the `future.v8_trailingSlashAwareDataRequests` flag to opt in early.
+     -> https://reactrouter.com/v7/upgrading/future#futurev8_trailingslashawaredatarequests[39m
+  [32m➜[39m  [1mLocal[22m:   [36mhttp://localhost:[1m5173[22m/[39m
+  [32m➜[39m  [1mNetwork[22m: [36mhttp://192.168.1.137:[1m5173[22m/[39m
+[2m[32m  ➜[39m[22m[2m  press [22m[1mh + enter[22m[2m to show help[22m
+[shopify-api/INFO] version 14.0.0, environment React Router
+[Scheduler] Iniciando scheduler de importaciones...
+[shopify-app/INFO] Authenticating admin request | {shop: status-pilot-test.myshopify.com}
+[shopify-app/INFO] Authenticating admin request | {shop: status-pilot-test.myshopify.com}
+[shopify-app/INFO] Authenticating admin request | {shop: status-pilot-test.myshopify.com}
+[shopify-app/INFO] Authenticating admin request | {shop: status-pilot-test.myshopify.com}
+[shopify-app/INFO] Authenticating admin request | {shop: status-pilot-test.myshopify.com}
+[shopify-app/INFO] Authenticating admin request | {shop: status-pilot-test.myshopify.com}
+[shopify-app/INFO] Authenticating admin request | {shop: status-pilot-test.myshopify.com}
+[shopify-app/INFO] Authenticating admin request | {shop: status-pilot-test.myshopify.com}
+[shopify-app/INFO] Authenticating admin request | {shop: status-pilot-test.myshopify.com}
+[shopify-app/INFO] Authenticating admin request | {shop: status-pilot-test.myshopify.com}
+[2m1:33:52[22m [36m[1m[vite][22m[39m [34m[2m(ssr)[22m[39m [32mpage reload [39m[2mapp/entry.server.tsx[22m
+[2m1:34:07[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2mC:/Shopify apps/importador-mediamax/app/entry.client.tsx[22m
+[2m1:34:07[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2mapp/entry.client.tsx[22m
+[shopify-app/INFO] Authenticating admin request | {shop: status-pilot-test.myshopify.com}
+[shopify-app/INFO] Authenticating admin request | {shop: status-pilot-test.myshopify.com}
+[shopify-app/INFO] Authenticating admin request | {shop: status-pilot-test.myshopify.com}
+[shopify-app/INFO] Authenticating admin request | {shop: status-pilot-test.myshopify.com}
+[shopify-app/INFO] Authenticating admin request | {shop: status-pilot-test.myshopify.com}
+[shopify-app/INFO] Authenticating admin request | {shop: status-pilot-test.myshopify.com}

@@ -1,0 +1,54 @@
+{
+  "name": "importador-mediamax",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "react-router build",
+    "dev": "react-router dev",
+    "start": "react-router-serve ./build/server/index.js",
+    "prisma": "prisma",
+    "db:push": "prisma db push",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:studio": "prisma studio"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.3",
+    "@shopify/app-bridge-react": "^4.2.12",
+    "@shopify/polaris": "^13.9.5",
+    "@shopify/polaris-icons": "^9.0.0",
+    "@shopify/shopify-app-react-router": "^2.0.0",
+    "@shopify/shopify-app-session-storage-prisma": "^10.0.0",
+    "crisp-sdk-web": "^1.2.0",
+    "i18next": "^26.4.0",
+    "i18next-browser-languagedetector": "^8.2.1",
+    "i18next-fs-backend": "^2.6.7",
+    "isbot": "^5.1.0",
+    "node-cron": "^3.0.3",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-i18next": "^17.0.12",
+    "react-router": "^7.18.2",
+    "remix-i18next": "^7.5.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@react-router/dev": "^7.18.2",
+    "@react-router/fs-routes": "^7.18.2",
+    "@react-router/node": "^7.18.2",
+    "@react-router/serve": "^7.18.2",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^22.0.0",
+    "@types/node-cron": "^3.0.11",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "better-sqlite3": "^13.0.3",
+    "prisma": "^6.19.3",
+    "typescript": "^5.4.0",
+    "vite": "^6.4.3",
+    "vite-tsconfig-paths": "^6.1.1"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

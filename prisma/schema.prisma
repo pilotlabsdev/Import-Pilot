@@ -1,0 +1,342 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// Sessions para OAuth de Shopify (requerido por @shopify/shopify-app-session-storage-prisma)
+model Session {
+  id                String    @id
+  shop              String
+  state             String
+  isOnline          Boolean   @default(false)
+  scope             String?
+  expires           DateTime?
+  accessToken       String
+  userId            BigInt?
+  firstName         String?
+  lastName          String?
+  email             String?
+  accountOwner      Boolean   @default(false)
+  locale            String?
+  collaborator      Boolean   @default(false)
+  emailVerified     Boolean   @default(false)
+  refreshToken      String?
+  refreshTokenExpires DateTime?
+
+  @@unique([shop, id])
+}
+
+// Configuración de importación por proveedor
+model ImportConfig {
+  id              String   @id @default(cuid())
+  shopDomain      String
+  name            String   @default("Proveedor") // Nombre del proveedor (ej: "Proveedor A", "Mi Proveedor")
+  csvUrl          String   @default("")
+  dataSource      String   @default("url") // "url" o "file"
+  localFilePath   String?
+  csvDelimiter    String   @default("|")
+  frequency       String   @default("12h")
+  cronExpression  String   @default("0 */12 * * *")
+  productStatus   String   @default("DRAFT")
+  importMode      String   @default("chunks")
+  chunkSize       Int      @default(50)
+  maxRetries      Int      @default(3)
+  updateOptions   String   @default("[\"name\",\"description\",\"price\",\"stock\",\"images\",\"vendor\",\"productType\",\"tags\",\"metafields\",\"collections\"]")
+  isActive        Boolean  @default(false)
+  filterType      String   @default("all")
+  filterSkus      String?
+  filterCategories String?
+  locationId      String?
+  locationName    String?
+  defaultTags     String?
+  skipZeroStockCreate Boolean @default(false)
+  publicationIds   String?
+  marketIds        String?
+  excludeTitleWords String?
+  excludeSkus      String?
+  excludeEans      String?
+  excludeBrands    String?
+  excludeFieldRules String?
+  filterPresets    String?  // JSON: [{ dataSource, fileName?, filterType, filterSkus, filterCategories }]
+  planPaused       Boolean  @default(false) // Pausado por límite de plan en downgrade
+  lastImportAt    DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  logs            ImportLog[]
+  products        ProductMapping[]
+  priceRules      PriceRule[]
+  categoryMaps    CategoryCollectionMapping[]
+  columnMaps      ColumnMapping[]
+  notifications   NotificationConfig?
+  bulkJobs        BulkJob[]
+
+  @@index([shopDomain])
+}
+
+// Mapeo de columnas CSV → Shopify
+model ColumnMapping {
+  id              String   @id @default(cuid())
+  configId        String
+  shopDomain      String
+  sourceKey       String   @default("default")
+  shopifyField    String
+  csvColumn       String?
+  isRequired      Boolean  @default(false)
+  defaultValue    String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  config          ImportConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+
+  @@unique([configId, sourceKey, shopifyField])
+  @@index([shopDomain])
+}
+
+// Reglas de precio jerárquicas con fórmulas
+model PriceRule {
+  id              String   @id @default(cuid())
+  configId        String
+  shopDomain      String
+  name            String
+  priority        Int      @default(3)
+  ruleType        String
+  targetValue     String?
+  priceFormula    String   @default("C")
+  priceRanges     Json?
+  comparePriceEnabled Boolean @default(false)
+  comparePriceBasis  String  @default("cost")
+  comparePriceType   String  @default("formula")
+  comparePriceFormula  String @default("C")
+  comparePriceFixedValue Float?
+  comparePricePercentage Float?
+  compareRoundingType    String   @default("none")
+  compareRoundingCustom  Float?
+  roundingType    String   @default("none")
+  roundingCustom  Float?
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  config          ImportConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+
+  @@index([shopDomain])
+}
+
+// Mapeo categorías CSV → colecciones Shopify
+model CategoryCollectionMapping {
+  id              String   @id @default(cuid())
+  configId        String
+  shopDomain      String
+  csvCategory     String
+  collectionId    String
+  collectionName  String
+  shopifyProductType String?
+  tags            String?
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  config          ImportConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+
+  @@index([shopDomain])
+}
+
+// Historial de importaciones
+model ImportLog {
+  id              String   @id @default(cuid())
+  shopDomain      String
+  configId        String
+  status          String   @default("running")
+  triggerType     String   @default("scheduled")
+  totalProducts   Int      @default(0)
+  created         Int      @default(0)
+  updated         Int      @default(0)
+  unchanged       Int      @default(0)
+  priceChanges    Int      @default(0)
+   stockChanges    Int      @default(0)
+   excludedCount   Int      @default(0)
+   errors          String?
+  previewData     String?
+  lastSku         String?
+  startedAt       DateTime @default(now())
+  completedAt     DateTime?
+  config          ImportConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+
+  @@index([shopDomain])
+}
+
+// Mapeo SKU proveedor → Product ID Shopify
+model ProductMapping {
+  id                    String   @id @default(cuid())
+  shopDomain            String
+  configId              String
+  supplierSku           String
+  ean                   String?  // Para detección de duplicados entre proveedores
+  shopifyProductId      String
+  shopifyVariantId      String?
+  shopifyInventoryItemId String?
+  lastPrice             Float?
+  lastComparePrice  Float?
+  lastCost          Float?
+  lastQuantity      Int?
+  lastSyncAt        DateTime @default(now())
+  config            ImportConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+
+  @@unique([shopDomain, supplierSku])
+}
+
+// Job de importación bulk en curso (pipeline async por webhook)
+model BulkJob {
+  id               String   @id @default(cuid())
+  shopDomain       String
+  configId         String
+  logId            String
+  phase            String   @default("lookup") // lookup | mutations | done | failed
+  workDir          String
+  manifestPath     String?
+  lookupOpId       String?
+  filterType       String?
+  filterSkus       String?
+  filterCategories String?
+  totalMutationOps Int      @default(0)
+  mutationOpsDone  Int      @default(0)
+  totalCount       Int      @default(0)
+  createCount      Int      @default(0)
+  updateCount      Int      @default(0)
+  unchangedCount   Int      @default(0)
+  errorCount       Int      @default(0)
+  priceChanges     Int      @default(0)
+   stockChanges     Int      @default(0)
+   excludedCount    Int      @default(0)
+   forceUpdate      Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  ops              BulkJobOp[]
+  config          ImportConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+
+  @@index([shopDomain])
+}
+
+// Configuración global de la tienda (1 por shop)
+model ShopSettings {
+  id                 String   @id @default(cuid())
+  shopDomain         String   @unique
+  duplicatePolicy    String   @default("create_both") // create_both | priority | skip_existing
+  supplierPriority   String?  // JSON array de IDs de proveedor en orden de prioridad
+  maxSuppliers       Int      @default(5)
+  active             Boolean  @default(true)
+  uninstalledAt      DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+// Tracking de duplicados entre proveedores
+model DuplicateLog {
+  id                 String   @id @default(cuid())
+  shopDomain         String
+  ean                String
+  supplierA_id       String
+  supplierA_name     String
+  supplierA_sku      String
+  supplierA_title    String
+  supplierB_id       String
+  supplierB_name     String
+  supplierB_sku      String
+  supplierB_title    String
+  detectedAt         DateTime @default(now())
+  resolved           Boolean  @default(false)
+
+  @@index([shopDomain])
+}
+
+model BulkJobOp {
+  id          String   @id @default(cuid())
+  jobId       String
+  shopifyOpId String?  @unique
+  kind        String   // lookup | create | update
+  index       Int      @default(0)
+  status      String?  // pending | launched | processing | processed | failed
+  resultUrl   String?
+  resultPath  String?
+  startedAt   DateTime?
+  createdAt   DateTime @default(now())
+  job         BulkJob  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+}
+
+// Configuración de notificaciones
+model NotificationConfig {
+  id              String   @id @default(cuid())
+  configId        String   @unique
+  shopDomain      String
+  emailEnabled    Boolean  @default(false)
+  emailAddresses  String?
+  webhookEnabled  Boolean  @default(false)
+  webhookUrl      String?
+  notifyOnSuccess Boolean  @default(true)
+  notifyOnError   Boolean  @default(true)
+  notifyOnPriceChange Boolean @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  config          ImportConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+
+  @@index([shopDomain])
+}
+
+// Cola de importaciones pendientes
+model ImportQueue {
+  id              String   @id @default(cuid())
+  shopDomain      String
+  configId        String
+  supplierName    String?
+  sourceLabel     String?  // URL o nombre de archivo
+  triggerType     String   @default("manual") // manual | scheduled
+  importMode      String   @default("chunks") // chunks | bulk
+  filterType      String?
+  filterSkus      String?
+  filterCategories String?
+  forceUpdate     Boolean  @default(false)
+  position        Int      @default(0)
+  status          String   @default("queued") // queued | running | completed | failed | cancelled
+  logId           String?  // ImportLog id cuando empieza a correr
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  createdAt       DateTime @default(now())
+
+  @@index([shopDomain, status])
+  @@index([configId, status])
+}
+
+// Chat de soporte merchant ↔ developer
+model SupportMessage {
+  id              String   @id @default(cuid())
+  shopDomain      String
+  sender          String   // "merchant" | "developer"
+  message         String
+  email           String?  // Email del merchant (guardado para respuestas offline)
+  createdAt       DateTime @default(now())
+  readAt          DateTime?
+
+  @@index([shopDomain, createdAt])
+}
+
+// Estado del developer (heartbeat)
+model DevStatus {
+  id              String   @id @default("singleton")
+  lastPingAt      DateTime @default(now())
+  isOnline        Boolean  @default(true)
+}
+
+// Suscripción del merchant (Shopify App Pricing)
+model AppSubscription {
+  id              String   @id @default(cuid())
+  shopDomain      String   @unique
+  planHandle      String   @default("basic-monthly") // basic-monthly | basic-annual | etc.
+  billingType     String   @default("monthly") // monthly | annual
+  status          String   @default("active") // active | cancelled | frozen | trial
+  trialEndsAt     DateTime?
+  hasUsedTrial    Boolean  @default(false) // Para prevenir abuso de trial
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
