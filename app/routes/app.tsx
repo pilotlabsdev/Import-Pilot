@@ -1,5 +1,5 @@
 import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { Outlet, useLoaderData, useRouteError, redirect } from "react-router";
+import { Outlet, useLoaderData, useRouteError } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { NavMenu } from "@shopify/app-bridge-react";
@@ -30,20 +30,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
   const isBillingPage = url.pathname === "/app/billing";
 
-  if (!isBillingPage) {
-    const hasPlan = await requireSubscription(shopDomain);
-    if (!hasPlan) {
-      return redirect("/app/billing");
-    }
-  }
+  const hasPlan = isBillingPage ? true : await requireSubscription(shopDomain);
 
   const [unresolvedCount, queueCount, subscription] = await Promise.all([
-    prisma.duplicateLog.count({
+    hasPlan ? prisma.duplicateLog.count({
       where: { shopDomain, resolved: false },
-    }),
-    prisma.importQueue.count({
+    }) : Promise.resolve(0),
+    hasPlan ? prisma.importQueue.count({
       where: { shopDomain, status: { in: ["queued", "running"] } },
-    }),
+    }) : Promise.resolve(0),
     getSubscriptionInfo(shopDomain),
   ]);
 
@@ -57,12 +52,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     unresolvedCount,
     queueCount,
     planLabel,
+    hasPlan,
   };
 };
 
 export default function App() {
-  const { apiKey, shopDomain, unresolvedCount, queueCount, planLabel } = useLoaderData<typeof loader>();
+  const { apiKey, shopDomain, unresolvedCount, queueCount, planLabel, hasPlan } = useLoaderData<typeof loader>();
   const { t } = useTranslation();
+
+  if (!hasPlan) {
+    return (
+      <AppProvider apiKey={apiKey}>
+        <Outlet />
+      </AppProvider>
+    );
+  }
 
   return (
     <AppProvider apiKey={apiKey}>
