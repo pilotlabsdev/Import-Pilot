@@ -151,6 +151,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return data(result);
   }
 
+  if (intent === "clear-sessions") {
+    const targetShop = formData.get("targetShop") as string || shopDomain;
+    console.log(`[Queue API] clear-sessions: shop=${targetShop}`);
+    const deleted = await prisma.session.deleteMany({ where: { shop: targetShop } });
+    console.log(`[Queue API] clear-sessions: deleted ${deleted.count} session(s) for ${targetShop}`);
+    return data({ success: true, message: `${deleted.count} sesión(es) eliminada(s). Reinstala la app para obtener un token nuevo.` });
+  }
+
   console.log(`[Queue API] Unknown intent: ${intent}`);
   return data({ error: "Intento no válido" }, { status: 400 });
 };

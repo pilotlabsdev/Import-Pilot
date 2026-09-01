@@ -108,6 +108,14 @@ export default function QueuePage() {
     );
   };
 
+  const clearSessions = () => {
+    if (!confirm("Esto borrará la sesión de la DB. Luego necesitas reinstalar la app. ¿Continuar?")) return;
+    fetcher.submit(
+      { intent: "clear-sessions", targetShop: shopDomain },
+      { method: "POST", action: `/api/import-queue?shop=${shopDomain}` }
+    );
+  };
+
   const active = queueData?.active || [];
   const queued = queueData?.queued || [];
   const recent = queueData?.recent || [];
@@ -238,6 +246,9 @@ export default function QueuePage() {
                   {t("queue.forceCleanup", "Limpiar stuck jobs")}
                 </Button>
               )}
+              <Button size="slim" tone="critical" onClick={clearSessions}>
+                Borrar sesión DB (token inválido)
+              </Button>
             </BlockStack>
           </Card>
 
