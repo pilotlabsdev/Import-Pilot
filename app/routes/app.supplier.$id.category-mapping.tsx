@@ -179,10 +179,10 @@ export default function CategoryMapping() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewTotal, setPreviewTotal] = useState(0);
   const [previewScanned, setPreviewScanned] = useState(0);
-  const [previewLimit, setPreviewLimit] = useState(5);
+  const [previewLimit, setPreviewLimit] = useState(100);
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; category: string } | null>(null);
 
-  const loadPreview = useCallback(async (mapping: any, limit = 5) => {
+  const loadPreview = useCallback(async (mapping: any, limit = 100) => {
     setPreviewMapping(mapping);
     setPreviewLoading(true);
     setPreviewItems([]);
@@ -203,7 +203,7 @@ export default function CategoryMapping() {
 
   const loadMorePreview = useCallback(async () => {
     if (!previewMapping) return;
-    const newLimit = previewLimit + 20;
+    const newLimit = previewLimit + 100;
     setPreviewLimit(newLimit);
     setPreviewLoading(true);
     try {

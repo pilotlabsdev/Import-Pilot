@@ -303,6 +303,8 @@
   "categories.previewLoading": "Vorschau wird geladen...",
   "categories.noProducts": "Keine Produkte in dieser Kategorie gefunden.",
   "categories.showingProducts": "Zeige {{count}} von {{total}} Produkten in \"{{category}}\".",
+  "categories.showMore": "Mehr anzeigen",
+  "categories.scannedRows": "erste {{count}} Zeilen",
   "categories.deleteMapping": "Zuordnung löschen",
   "categories.deleteConfirm": "Möchten Sie die Zuordnung von {{category}} löschen? Dies kann nicht rückgängig gemacht werden.",
   "categories.categoryLabel": "Dateikategorie: {{category}}",

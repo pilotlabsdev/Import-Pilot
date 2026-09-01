@@ -303,6 +303,8 @@
   "categories.previewLoading": "Carregando pré-visualização...",
   "categories.noProducts": "Nenhum produto encontrado nesta categoria.",
   "categories.showingProducts": "Mostrando {{count}} de {{total}} produtos em \"{{category}}\".",
+  "categories.showMore": "Mostrar mais",
+  "categories.scannedRows": "primeiras {{count}} linhas",
   "categories.deleteMapping": "Excluir mapeamento",
   "categories.deleteConfirm": "Excluir o mapeamento de {{category}}? Esta ação não pode ser desfeita.",
   "categories.categoryLabel": "Categoria do arquivo: {{category}}",
