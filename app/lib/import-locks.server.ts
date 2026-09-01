@@ -73,6 +73,17 @@ export async function rateLimitedGraphql(
           await sleep(wait);
           continue;
         }
+        const isUnauthorized = gqlErrors.some((e: any) =>
+          e.message?.includes("Unauthorized") ||
+          e.message?.includes("401") ||
+          e.extensions?.code === "UNAUTHORIZED"
+        );
+        if (isUnauthorized && attempt < maxRetries) {
+          const wait = attempt * 3000;
+          console.log(`[Auth] Unauthorized (GQL), retrying in ${wait}ms (attempt ${attempt}/${maxRetries})`);
+          await sleep(wait);
+          continue;
+        }
         return json;
       } catch (error: any) {
         const msg = error?.message || error?.toString() || "";
@@ -85,6 +96,16 @@ export async function rateLimitedGraphql(
         if (isThrottled && attempt < maxRetries) {
           const wait = attempt * 2000;
           console.log(`[RateLimit] Throttled (HTTP ${statusCode}), retrying in ${wait}ms (attempt ${attempt}/${maxRetries})`);
+          await sleep(wait);
+          continue;
+        }
+        const isUnauthorized = statusCode === 401 ||
+          msg.includes("Unauthorized") ||
+          msg.includes("Session not found") ||
+          msg.includes("invalid_token");
+        if (isUnauthorized && attempt < maxRetries) {
+          const wait = attempt * 3000;
+          console.log(`[Auth] Unauthorized (HTTP ${statusCode}), retrying in ${wait}ms (attempt ${attempt}/${maxRetries})`);
           await sleep(wait);
           continue;
         }

@@ -35,7 +35,16 @@ export function getBulkWorkDir(): string {
 
 async function gql(admin: any, query: string, varsOrOptions?: any): Promise<any> {
   const vars = varsOrOptions?.variables !== undefined ? varsOrOptions.variables : varsOrOptions;
-  return rateLimitedGraphql(admin, query, vars || {});
+  try {
+    return await rateLimitedGraphql(admin, query, vars || {});
+  } catch (e: any) {
+    const msg = e?.message || "";
+    if (msg.includes("Unauthorized") || msg.includes("Session not found") || e?.response?.status === 401) {
+      console.error(`[Bulk] Auth error en gql: ${msg}`);
+      throw new Error(`Token inválido o expirado. Reinstala la app para obtener un nuevo token.`);
+    }
+    throw e;
+  }
 }
 
 export async function cancelBulkImport(configId: string, shopDomain: string): Promise<{ success: boolean; message: string }> {
@@ -52,7 +61,20 @@ export async function cancelBulkImport(configId: string, shopDomain: string): Pr
   for (const op of pendingOps) {
     if (op.shopifyOpId) {
       try {
-        const { admin } = await shopify.unauthenticated.admin(shopDomain);
+  // Diagnostic: log session state before creating admin client
+  const latestSession = await prisma.session.findFirst({
+    where: { shop: shopDomain },
+    orderBy: { expires: "desc" },
+    select: { id: true, shop: true, accessToken: true, expires: true, scope: true, state: true, isOnline: true },
+  });
+  if (latestSession) {
+    const isExpired = latestSession.expires ? new Date(latestSession.expires) < new Date() : false;
+    console.log(`[Bulk] Session for ${shopDomain}: id=${latestSession.id}, expires=${latestSession.expires?.toISOString() || "null"}, isExpired=${isExpired}, scope=${latestSession.scope || "null"}, isOnline=${latestSession.isOnline}`);
+  } else {
+    console.error(`[Bulk] NO session found for ${shopDomain}!`);
+  }
+
+  const { admin } = await shopify.unauthenticated.admin(shopDomain);
         await gql(admin, `#graphql
           mutation bulkOperationCancel($id: ID!) {
             bulkOperationCancel(id: $id) {
@@ -200,6 +222,28 @@ export async function runBulkImport({
   }
 
   const { admin } = await shopify.unauthenticated.admin(shopDomain);
+  console.log(`[Bulk] Admin client created for ${shopDomain}`);
+
+  // Pre-flight: verify token is valid before starting bulk operation
+  try {
+    const pingRes = await gql(admin, `{ shop { name } }`);
+    if (pingRes.errors?.length) {
+      const errMsg = pingRes.errors.map((e: any) => e.message).join(", ");
+      console.error(`[Bulk] Pre-flight GQL errors for ${shopDomain}:`, errMsg);
+      if (errMsg.includes("Unauthorized") || errMsg.includes("401")) {
+        throw new Error(`Token inválido para ${shopDomain}. Reinstala la app para obtener un nuevo token.`);
+      }
+    } else {
+      console.log(`[Bulk] Pre-flight OK for ${shopDomain}, shop: ${pingRes.data?.shop?.name}`);
+    }
+  } catch (e: any) {
+    console.error(`[Bulk] Pre-flight FAILED for ${shopDomain}:`, e?.message || e);
+    if (e?.message?.includes("Token inválido") || e?.message?.includes("Session not found") || e?.response?.status === 401) {
+      throw new Error(`Token inválido para ${shopDomain}. Reinstala la app para obtener un nuevo token.`);
+    }
+    throw e;
+  }
+
   await ensureMetafieldDefinitions(admin);
   await getLocationId(admin, shopDomain, config.id);
 
@@ -255,6 +299,7 @@ export async function handleBulkOperationFinish({
   opId: string;
   status: string;
 }): Promise<void> {
+  console.log(`[Bulk] handleBulkOperationFinish: opId=${opId}, status=${status}`);
   const op = await prisma.bulkJobOp.findUnique({ where: { shopifyOpId: opId } });
   if (!op) {
     console.log(`[Bulk] Webhook de operación desconocida: ${opId}`);
@@ -262,16 +307,27 @@ export async function handleBulkOperationFinish({
   }
 
   const job = await prisma.bulkJob.findUnique({ where: { id: op.jobId } });
-  if (!job) return;
+  if (!job) {
+    console.log(`[Bulk] Job ${op.jobId} no encontrado para op ${opId}`);
+    return;
+  }
+
+  console.log(`[Bulk] Op ${opId}: kind=${op.kind}, job.phase=${job.phase}, op.status=${op.status}`);
 
   if (op.kind === "lookup") {
-    if (job.phase !== "lookup") return;
+    if (job.phase !== "lookup") {
+      console.log(`[Bulk] Lookup webhook ignorado: job.phase=${job.phase} (esperado: lookup)`);
+      return;
+    }
     await handleLookupFinished(job, admin, status);
     return;
   }
 
   if (op.kind === "create" || op.kind === "update") {
-    if (job.phase !== "mutations") return;
+    if (job.phase !== "mutations") {
+      console.log(`[Bulk] Mutation webhook ignorado: job.phase=${job.phase} (esperado: mutations)`);
+      return;
+    }
     await handleMutationOpFinished(job, op, admin, status);
   }
 }
@@ -1396,30 +1452,145 @@ async function failJob(job: any, message: string): Promise<void> {
   });
 }
 
+// Limpieza de jobs stuck (sin lookupOpId o manifestPath) que no se resolverán solos
+export async function forceCleanupStuckBulkJobs(shopDomain?: string): Promise<{ cleaned: number; details: string[] }> {
+  const where: any = {
+    phase: { in: ["lookup", "mutations", "finalizing"] },
+  };
+  if (shopDomain) where.shopDomain = shopDomain;
+
+  const jobs = await prisma.bulkJob.findMany({ where, include: { ops: true } });
+  const details: string[] = [];
+  let cleaned = 0;
+
+  for (const job of jobs) {
+    const ageMs = Date.now() - new Date(job.createdAt).getTime();
+
+    // Jobs stuck in lookup without lookupOpId
+    if (job.phase === "lookup" && !job.lookupOpId) {
+      const reason = `lookup stuck sin lookupOpId (age=${Math.round(ageMs/60000)}min)`;
+      console.log(`[Bulk] Force cleanup: job ${job.id.slice(0,8)} — ${reason}`);
+      await prisma.bulkJobOp.deleteMany({ where: { jobId: job.id } });
+      await prisma.bulkJob.update({ where: { id: job.id }, data: { phase: "failed" } });
+      const log = await prisma.importLog.findUnique({ where: { id: job.logId } });
+      if (log && log.status === "running") {
+        await prisma.importLog.update({ where: { id: log.id }, data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: reason, lineNumber: 0 }]) } });
+      }
+      details.push(`Job ${job.id.slice(0,8)}: ${reason}`);
+      cleaned++;
+      continue;
+    }
+
+    // Jobs stuck in mutations without manifestPath
+    if (job.phase === "mutations" && !job.manifestPath) {
+      const reason = `mutations stuck sin manifestPath (age=${Math.round(ageMs/60000)}min)`;
+      console.log(`[Bulk] Force cleanup: job ${job.id.slice(0,8)} — ${reason}`);
+      await prisma.bulkJobOp.deleteMany({ where: { jobId: job.id } });
+      await prisma.bulkJob.update({ where: { id: job.id }, data: { phase: "failed" } });
+      const log = await prisma.importLog.findUnique({ where: { id: job.logId } });
+      if (log && log.status === "running") {
+        await prisma.importLog.update({ where: { id: log.id }, data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: reason, lineNumber: 0 }]) } });
+      }
+      details.push(`Job ${job.id.slice(0,8)}: ${reason}`);
+      cleaned++;
+      continue;
+    }
+
+    // Jobs older than 2 hours
+    if (ageMs > 2 * 60 * 60 * 1000) {
+      const reason = `job stuck demasiado viejo (age=${Math.round(ageMs/60000)}min, phase=${job.phase})`;
+      console.log(`[Bulk] Force cleanup: job ${job.id.slice(0,8)} — ${reason}`);
+      await prisma.bulkJobOp.deleteMany({ where: { jobId: job.id } });
+      await prisma.bulkJob.update({ where: { id: job.id }, data: { phase: "failed" } });
+      const log = await prisma.importLog.findUnique({ where: { id: job.logId } });
+      if (log && log.status === "running") {
+        await prisma.importLog.update({ where: { id: log.id }, data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: reason, lineNumber: 0 }]) } });
+      }
+      details.push(`Job ${job.id.slice(0,8)}: ${reason}`);
+      cleaned++;
+    }
+  }
+
+  // Also clean running ImportLogs that have no associated queue item
+  const orphanLogs = await prisma.importLog.findMany({
+    where: { status: "running" },
+    orderBy: { startedAt: "asc" },
+    take: 20,
+  });
+  for (const log of orphanLogs) {
+    const ageMs = Date.now() - new Date(log.startedAt).getTime();
+    if (ageMs > 30 * 60 * 1000) {
+      const reason = `orphan ImportLog running por ${Math.round(ageMs/60000)}min`;
+      console.log(`[Bulk] Force cleanup: orphan log ${log.id.slice(0,8)} — ${reason}`);
+      await prisma.importLog.update({ where: { id: log.id }, data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: reason, lineNumber: 0 }]) } });
+      details.push(`Log ${log.id.slice(0,8)}: ${reason}`);
+      cleaned++;
+    }
+  }
+
+  // Clean stale queued importQueue items
+  const staleQueued = await prisma.importQueue.deleteMany({
+    where: { status: "queued", createdAt: { lt: new Date(Date.now() - 2 * 60 * 60 * 1000) } },
+  });
+  if (staleQueued.count > 0) {
+    details.push(`${staleQueued.count} queue items stale eliminados`);
+    cleaned += staleQueued.count;
+  }
+
+  console.log(`[Bulk] Force cleanup: ${cleaned} items limpiados`);
+  return { cleaned, details };
+}
+
 export async function reconcileStaleBulkJobs(): Promise<void> {
   const jobs = await prisma.bulkJob.findMany({
     where: { phase: { in: ["lookup", "mutations", "finalizing"] } },
     include: { ops: true },
   });
 
+  if (jobs.length > 0) {
+    console.log(`[Bulk] Reconcile: ${jobs.length} active job(s): ${jobs.map((j: any) => `${j.id.slice(0,8)}(${j.phase})`).join(", ")}`);
+  }
+
   for (const job of jobs) {
     const ageMs = Date.now() - new Date(job.updatedAt).getTime();
     if (ageMs < 60_000) continue;
 
+    // If lookup phase has no lookupOpId after 5 minutes, the lookup never completed → fail it
+    if (job.phase === "lookup" && !job.lookupOpId && ageMs > 5 * 60 * 1000) {
+      console.error(`[Bulk] Job ${job.id.slice(0,8)} stuck in lookup phase with no lookupOpId after ${Math.round(ageMs/60000)}min → failing`);
+      await failJob(job, "Lookup nunca completó (posible token inválido). Reinstala la app y vuelve a intentar.");
+      continue;
+    }
+
+    // If mutations phase has no manifestPath after 10 minutes → fail it
+    if (job.phase === "mutations" && !job.manifestPath && ageMs > 10 * 60 * 1000) {
+      console.error(`[Bulk] Job ${job.id.slice(0,8)} stuck in mutations phase with no manifestPath after ${Math.round(ageMs/60000)}min → failing`);
+      await failJob(job, "Mutations sin manifest (posible fallo durante preparación).");
+      continue;
+    }
+
     try {
+      console.log(`[Bulk] Reconcile: resuming job ${job.id.slice(0,8)} (phase=${job.phase}, age=${Math.round(ageMs/1000)}s)`);
       if (job.phase === "lookup") {
         await reconcileLookupPhase(job);
       } else if (job.phase === "mutations") {
         await reconcileMutationsPhase(job);
       } else if (job.phase === "finalizing") {
         const { admin } = await shopify.unauthenticated.admin(job.shopDomain);
+        console.log(`[Bulk] Reconcile finalizing: admin client created for ${job.shopDomain}`);
         await finalizeBulkImport(job, admin);
       }
     } catch (error: any) {
+      const msg = error?.message || "";
+      const isAuth = msg.includes("Token inválido") || msg.includes("Session not found") || msg.includes("Unauthorized");
       console.error(
         `[Bulk] Error reanudando job ${job.id} (fase ${job.phase}):`,
-        error?.message || error
+        msg || error
       );
+      if (isAuth) {
+        console.error(`[Bulk] Auth error in reconcile → failing job ${job.id.slice(0,8)}: ${msg}`);
+        await failJob(job, `Token inválido: ${msg}. Reinstala la app para obtener un nuevo token.`);
+      }
     }
   }
 }
@@ -1469,6 +1640,14 @@ async function resetStaleProcessing(row: any): Promise<boolean> {
 }
 
 async function reconcileLookupPhase(job: any): Promise<void> {
+  const diagSession = await prisma.session.findFirst({
+    where: { shop: job.shopDomain },
+    orderBy: { expires: "desc" },
+    select: { accessToken: true, expires: true, scope: true },
+  });
+  const isExpired = diagSession?.expires ? new Date(diagSession.expires) < new Date() : true;
+  console.log(`[Bulk] Reconcile lookup: shop=${job.shopDomain}, sessionExpired=${isExpired}, scope=${diagSession?.scope || "null"}`);
+
   const { admin } = await shopify.unauthenticated.admin(job.shopDomain);
 
   const lookupRow =
@@ -1515,6 +1694,14 @@ async function reconcileMutationsPhase(job: any): Promise<void> {
     await failJob(job, "Job en fase mutations sin manifest (resume): imposible reanudar");
     return;
   }
+
+  const diagSession = await prisma.session.findFirst({
+    where: { shop: job.shopDomain },
+    orderBy: { expires: "desc" },
+    select: { accessToken: true, expires: true, scope: true },
+  });
+  const isExpired = diagSession?.expires ? new Date(diagSession.expires) < new Date() : true;
+  console.log(`[Bulk] Reconcile mutations: shop=${job.shopDomain}, sessionExpired=${isExpired}, scope=${diagSession?.scope || "null"}`);
 
   const { admin } = await shopify.unauthenticated.admin(job.shopDomain);
   const manifest = JSON.parse(await fs.readFile(job.manifestPath, "utf-8"));
@@ -1881,31 +2068,40 @@ async function downloadOperationResult(admin: any, opId: string, targetPath: str
 async function stageAndLaunch(admin: any, mutation: string, inputPath: string): Promise<string> {
   const content = await fs.readFile(inputPath);
 
-  const staged = await gql(admin,
-    `#graphql
-    mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
-      stagedUploadsCreate(input: $input) {
-        userErrors { field message }
-        stagedTargets {
-          url
-          resourceUrl
-          parameters { name value }
+  let staged;
+  try {
+    staged = await gql(admin,
+      `#graphql
+      mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
+        stagedUploadsCreate(input: $input) {
+          userErrors { field message }
+          stagedTargets {
+            url
+            resourceUrl
+            parameters { name value }
+          }
         }
+      }`,
+      {
+        variables: {
+          input: [
+            {
+              resource: "BULK_MUTATION_VARIABLES",
+              filename: "import.jsonl",
+              mimeType: "text/jsonl",
+              httpMethod: "POST",
+            },
+          ],
+        },
       }
-    }`,
-    {
-      variables: {
-        input: [
-          {
-            resource: "BULK_MUTATION_VARIABLES",
-            filename: "import.jsonl",
-            mimeType: "text/jsonl",
-            httpMethod: "POST",
-          },
-        ],
-      },
+    );
+  } catch (e: any) {
+    const msg = e?.message || "";
+    if (msg.includes("Unauthorized") || msg.includes("Session not found") || e?.response?.status === 401) {
+      throw new Error(`Token expirado durante staged upload. Reinstala la app para obtener un nuevo token.`);
     }
-  );
+    throw e;
+  }
   const target = staged.data?.stagedUploadsCreate?.stagedTargets?.[0];
   const stagedErrors = staged.data?.stagedUploadsCreate?.userErrors || [];
   if (!target || stagedErrors.length > 0) {
@@ -1926,16 +2122,25 @@ async function stageAndLaunch(admin: any, mutation: string, inputPath: string): 
   const key = (target.parameters || []).find((p: any) => p.name === "key")?.value;
   if (!key) throw new Error("Sin stagedUploadPath (key) en la respuesta");
 
-  const launch = await gql(admin,
-    `#graphql
-    mutation bulkOp($mutation: String!, $stagedUploadPath: String!) {
-      bulkOperationRunMutation(mutation: $mutation, stagedUploadPath: $stagedUploadPath) {
-        bulkOperation { id status }
-        userErrors { field message }
-      }
-    }`,
-    { variables: { mutation, stagedUploadPath: key } }
-  );
+  let launch;
+  try {
+    launch = await gql(admin,
+      `#graphql
+      mutation bulkOp($mutation: String!, $stagedUploadPath: String!) {
+        bulkOperationRunMutation(mutation: $mutation, stagedUploadPath: $stagedUploadPath) {
+          bulkOperation { id status }
+          userErrors { field message }
+        }
+      }`,
+      { variables: { mutation, stagedUploadPath: key } }
+    );
+  } catch (e: any) {
+    const msg = e?.message || "";
+    if (msg.includes("Unauthorized") || msg.includes("Session not found") || e?.response?.status === 401) {
+      throw new Error(`Token expirado durante bulkOperationRunMutation. Reinstala la app para obtener un nuevo token.`);
+    }
+    throw e;
+  }
   const launchErrors = launch.data?.bulkOperationRunMutation?.userErrors || [];
   if (launchErrors.length > 0) {
     throw new Error(launchErrors.map((e: any) => e.message).join(", "));

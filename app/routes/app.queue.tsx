@@ -25,9 +25,14 @@ const STATUS_TONE: Record<string, "success" | "critical" | "attention" | "info" 
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
-  const shopDomain = session.shop;
-  return data({ shopDomain });
+  try {
+    const { session } = await authenticate.admin(request);
+    console.log(`[Queue Page] Loader OK, shop=${session.shop}`);
+    return data({ shopDomain: session.shop });
+  } catch (error: any) {
+    console.error(`[Queue Page] Loader FAILED:`, error?.message || error);
+    throw error;
+  }
 };
 
 export default function QueuePage() {
@@ -78,6 +83,13 @@ export default function QueuePage() {
     const intent = importMode === "bulk" ? "cancel-bulk" : "cancel-scheduled";
     fetcher.submit(
       { intent, configId },
+      { method: "POST", action: `/api/import-queue?shop=${shopDomain}` }
+    );
+  };
+
+  const forceCleanup = () => {
+    fetcher.submit(
+      { intent: "force-cleanup" },
       { method: "POST", action: `/api/import-queue?shop=${shopDomain}` }
     );
   };
@@ -194,6 +206,11 @@ export default function QueuePage() {
                 })
               ) : (
                 <Text as="p" tone="subdued">{t("queue.noCron")}</Text>
+              )}
+              {(schedulerActive.length > 0 || active.length > 0 || queued.length > 0) && (
+                <Button size="slim" onClick={forceCleanup}>
+                  {t("queue.forceCleanup", "Limpiar stuck jobs")}
+                </Button>
               )}
             </BlockStack>
           </Card>

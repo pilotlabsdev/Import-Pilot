@@ -43,15 +43,33 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
     case "BULK_OPERATIONS_FINISH": {
       const opId = payload.admin_graphql_api_id as string;
+      const opStatus = (payload.status as string) || "unknown";
+      console.log(`[Webhook] BULK_OPERATIONS_FINISH: opId=${opId}, status=${opStatus}, shop=${shop}`);
       if (opId) {
-        const { admin } = await shopify.unauthenticated.admin(shop);
-        void handleBulkOperationFinish({
-          admin,
-          opId,
-          status: (payload.status as string) || "completed",
-        }).catch((error) =>
-          console.error(`[Webhook] Error procesando bulk op ${opId}:`, error)
-        );
+        // Diagnostic: check session before creating admin client
+        const latestSession = await prisma.session.findFirst({
+          where: { shop },
+          orderBy: { expires: "desc" },
+          select: { accessToken: true, expires: true, scope: true },
+        });
+        const isExpired = latestSession?.expires ? new Date(latestSession.expires) < new Date() : true;
+        console.log(`[Webhook] Session for bulk finish: shop=${shop}, sessionExpired=${isExpired}, scope=${latestSession?.scope || "null"}, accessToken=${latestSession?.accessToken ? "present" : "MISSING"}`);
+
+        try {
+          const { admin } = await shopify.unauthenticated.admin(shop);
+          console.log(`[Webhook] Admin client created for bulk finish: shop=${shop}`);
+          void handleBulkOperationFinish({
+            admin,
+            opId,
+            status: opStatus,
+          }).catch((error) =>
+            console.error(`[Webhook] Error procesando bulk op ${opId}:`, error?.message || error)
+          );
+        } catch (e: any) {
+          console.error(`[Webhook] No se pudo crear admin client para ${shop}:`, e?.message || e);
+        }
+      } else {
+        console.log(`[Webhook] BULK_OPERATIONS_FINISH sin opId`);
       }
       break;
     }

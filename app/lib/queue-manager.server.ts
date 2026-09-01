@@ -148,9 +148,13 @@ async function processQueueItem(
   try {
     let admin;
     try {
+      console.log(`[Queue] Creating admin client for ${shopDomain} (item ${item.id})`);
       ({ admin } = await shopify.unauthenticated.admin(shopDomain));
+      console.log(`[Queue] Admin client OK for ${shopDomain}`);
     } catch (e: any) {
-      if (e?.message?.includes("Session not found") || e?.response?.status === 401) {
+      const msg = e?.message || "";
+      console.error(`[Queue] Failed to create admin client for ${shopDomain}:`, msg);
+      if (msg.includes("Session not found") || e?.response?.status === 401 || msg.includes("Unauthorized")) {
         console.error(`[Queue] No valid session for ${shopDomain}, skipping import ${item.id}`);
         await prisma.importQueue.update({
           where: { id: item.id },
