@@ -6,7 +6,14 @@ import { handleBulkOperationFinish } from "~/lib/bulk-import.server";
 import { enforcePlanLimits, upsertSubscription } from "~/lib/billing.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { topic, shop, session, payload } = await authenticate.webhook(request);
+  let topic: string, shop: string, session: any, payload: any;
+  try {
+    ({ topic, shop, session, payload } = await authenticate.webhook(request));
+  } catch (err: any) {
+    // Invalid HMAC → return 401 (required for App Store review)
+    console.warn(`[Webhook] HMAC validation failed: ${err?.message || err}`);
+    throw new Response(null, { status: 401 });
+  }
   console.log(`[Webhook] Received: topic=${topic}, shop=${shop}, session=${session ? "present" : "null"}`);
 
   if (!session) {
