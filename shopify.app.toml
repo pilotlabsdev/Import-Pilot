@@ -1,32 +1,35 @@
-# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
 client_id = "0266903e6bdd1744c8cea256d89ff230"
-name = "import-pilot"
-handle = "import-pilot"
-application_url = "https://import-pilot-production.up.railway.app"
+extension_directories = [ ]
+name = "Import Pilot"
+application_url = "https://import-pilot-production.up.railway.app/app"
 embedded = true
-extension_directories = []
+handle = "import-pilot"
 
-[access_scopes]
-scopes = "read_channels,write_channels,write_inventory,read_inventory,read_locations,read_markets,write_markets,read_metaobject_definitions,write_metaobject_definitions,read_metaobjects,write_metaobjects,read_product_listings,write_product_listings,read_products,write_products,read_script_tags,write_script_tags"
-
-[auth]
-redirect_urls = [
-  "https://localhost:3000/auth/callback",
-  "https://localhost:5173/auth/callback",
-  "https://import-pilot-production.up.railway.app/auth/callback",
-]
+[build]
+automatically_update_urls_on_dev = true
 
 [webhooks]
 api_version = "2026-07"
 
-[[webhooks.subscriptions]]
-topics = ["products/update", "products/delete", "inventory_items/update", "app/uninstalled"]
-uri = "/webhooks"
+  [[webhooks.subscriptions]]
+  topics = [
+  "app/uninstalled",
+  "inventory_items/update",
+  "products/delete",
+  "products/update"
+]
+  uri = "/webhooks"
+  compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
 
-[[webhooks.subscriptions]]
-compliance_topics = ["customers/redact", "customers/data_request", "shop/redact"]
-uri = "/webhooks"
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_channels,write_channels,write_inventory,read_inventory,read_locations,read_markets,write_markets,read_metaobject_definitions,write_metaobject_definitions,read_metaobjects,write_metaobjects,read_product_listings,write_product_listings,read_products,write_products,read_script_tags,write_script_tags"
+optional_scopes = [ ]
+use_legacy_install_flow = false
 
-[build]
-automatically_update_urls_on_dev = true
+[auth]
+redirect_urls = [
+  "https://import-pilot-production.up.railway.app/auth/callback"
+]
