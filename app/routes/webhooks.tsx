@@ -4,47 +4,54 @@ import { prisma, ensureSingleSession } from "~/lib/db.server";
 import shopify from "~/shopify.server";
 import { handleBulkOperationFinish } from "~/lib/bulk-import.server";
 import { enforcePlanLimits, upsertSubscription } from "~/lib/billing.server";
+import crypto from "node:crypto";
 
 const COMPLIANCE_TOPICS = new Set(["customers/data_request", "customers/redact", "shop/redact"]);
 
-export const action = async ({ request }: ActionFunctionArgs) => {
-  // Read topic from header first — compliance webhooks may arrive without a session
-  const topicHeader = request.headers.get("X-Shopify-Topic") || "";
-  const isCompliance = COMPLIANCE_TOPICS.has(topicHeader);
+function verifyHmac(body: string, hmacHeader: string): boolean {
+  const secret = process.env.SHOPIFY_API_SECRET || "";
+  const calculated = crypto.createHmac("sha256", secret).update(body, "utf8").digest("base64");
+  try {
+    return crypto.timingSafeEqual(Buffer.from(calculated, "base64"), Buffer.from(hmacHeader, "base64"));
+  } catch {
+    return false;
+  }
+}
 
+export const action = async ({ request }: ActionFunctionArgs) => {
+  const topicHeader = request.headers.get("X-Shopify-Topic") || "";
+  const hmacHeader = request.headers.get("X-Shopify-Hmac-SHA256") || "";
+
+  // Compliance webhooks: validate HMAC manually, return 200 always
+  // (they arrive after app uninstall when session no longer exists)
+  if (COMPLIANCE_TOPICS.has(topicHeader)) {
+    const rawBody = await request.text();
+    if (!verifyHmac(rawBody, hmacHeader)) {
+      console.warn(`[Webhook] Compliance HMAC invalid for ${topicHeader}`);
+      throw new Response(null, { status: 401 });
+    }
+    const payload = JSON.parse(rawBody);
+    const shop = payload.shop_domain || "unknown";
+    console.log(`[Webhook] Compliance: ${topicHeader} from ${shop} — OK (200)`);
+    throw new Response(null, { status: 200 });
+  }
+
+  // All other webhooks: use library authentication (validates HMAC + finds session)
   let topic: string, shop: string, session: any, payload: any;
   try {
     ({ topic, shop, session, payload } = await authenticate.webhook(request));
   } catch (err: any) {
-    // If it's a compliance webhook, return 200 even if session lookup fails
-    // (compliance webhooks are sent after app uninstall when session no longer exists)
-    if (isCompliance) {
-      console.log(`[Webhook] Compliance webhook ${topicHeader} (session lookup failed, returning 200)`);
-      throw new Response(null, { status: 200 });
-    }
-    // Invalid HMAC → return 401 (required for App Store review)
     console.warn(`[Webhook] HMAC validation failed: ${err?.message || err}`);
     throw new Response(null, { status: 401 });
   }
   console.log(`[Webhook] Received: topic=${topic}, shop=${shop}, session=${session ? "present" : "null"}`);
 
-  const graphqlTopic = topic.toUpperCase();
-
-  // Compliance webhooks: always return 200 (may arrive without session after uninstall)
-  if (COMPLIANCE_TOPICS.has(topic)) {
-    if (graphqlTopic === "SHOP_REDACT") {
-      console.log(`[Webhook] SHOP_REDACT: ${shop} — datos eliminados definitivamente`);
-    } else {
-      console.log(`[Webhook] ${graphqlTopic}: shop=${shop} — no almacenamos datos de clientes`);
-    }
-    throw new Response(null, { status: 200 });
-  }
-
-  // All other webhooks require a valid session
   if (!session) {
     console.warn(`[Webhook] No session for ${shop}, returning 410`);
     throw new Response(null, { status: 410 });
   }
+
+  const graphqlTopic = topic.toUpperCase();
 
   switch (graphqlTopic) {
     case "APP_UNINSTALLED": {
