@@ -13,6 +13,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const ruleId = url.searchParams.get("ruleId") || "";
   const mappingId = url.searchParams.get("mappingId") || "";
   const limit = Math.min(parseInt(url.searchParams.get("limit") || "20"), 50);
+  const scanLimit = Math.min(parseInt(url.searchParams.get("scanLimit") || "5000"), 10000);
 
   if (!configIdParam) return data({ error: "configId requerido" }, { status: 400 });
 
@@ -37,9 +38,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     const items: any[] = [];
     let count = 0;
+    let scanned = 0;
 
     for await (const item of streamFile(getEffectiveUrl(config), config.csvDelimiter)) {
-      if (items.length >= limit) break;
+      if (items.length >= limit || scanned >= scanLimit) break;
+      scanned++;
       const { row } = item;
       const sku = row["sku"] || "";
       if (!sku) continue;
@@ -80,7 +83,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       count++;
     }
 
-    return data({ items, total: count, ruleName: rule.name, ruleType: rule.ruleType });
+    return data({ items, total: count, scanned, ruleName: rule.name, ruleType: rule.ruleType });
   }
 
   if (mappingId) {
@@ -89,9 +92,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     const items: any[] = [];
     let count = 0;
+    let scanned = 0;
 
     for await (const item of streamFile(getEffectiveUrl(config), config.csvDelimiter)) {
-      if (items.length >= limit) break;
+      if (items.length >= limit || scanned >= scanLimit) break;
+      scanned++;
       const { row } = item;
       const category = getField(row, "category");
       if (category.toLowerCase() !== mapping.csvCategory.toLowerCase()) continue;
@@ -106,7 +111,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       count++;
     }
 
-    return data({ items, total: count, csvCategory: mapping.csvCategory, collectionName: mapping.collectionName });
+    return data({ items, total: count, scanned, csvCategory: mapping.csvCategory, collectionName: mapping.collectionName });
   }
 
   return data({ error: "Se necesita ruleId o mappingId" }, { status: 400 });

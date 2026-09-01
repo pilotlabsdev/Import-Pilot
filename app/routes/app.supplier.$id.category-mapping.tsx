@@ -178,6 +178,7 @@ export default function CategoryMapping() {
   const [previewItems, setPreviewItems] = useState<any[]>([]);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewTotal, setPreviewTotal] = useState(0);
+  const [previewScanned, setPreviewScanned] = useState(0);
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; category: string } | null>(null);
 
   const loadPreview = useCallback(async (mapping: any) => {
@@ -185,12 +186,14 @@ export default function CategoryMapping() {
     setPreviewLoading(true);
     setPreviewItems([]);
     setPreviewTotal(0);
+    setPreviewScanned(0);
     try {
-      const params = new URLSearchParams({ configId, mappingId: mapping.id, limit: "20" });
+      const params = new URLSearchParams({ configId, mappingId: mapping.id, limit: "20", scanLimit: "5000" });
       const res = await fetch(`/api/rule-preview?${params}`);
       const d = await res.json();
       setPreviewItems(d.items || []);
       setPreviewTotal(d.total || 0);
+      setPreviewScanned(d.scanned || 0);
     } catch {} finally {
       setPreviewLoading(false);
     }
@@ -496,6 +499,9 @@ export default function CategoryMapping() {
               <>
                 <Text as="p" tone="subdued">
                   {t("categories.showingProducts", { count: previewItems.length, total: previewTotal, category: previewMapping.csvCategory })}
+                  {previewScanned > 0 && previewItems.length < previewTotal && (
+                    <> — primeras {previewScanned.toLocaleString()} filas</>
+                  )}
                 </Text>
                 <DataTable
                   columnContentTypes={["text", "text", "text"]}
