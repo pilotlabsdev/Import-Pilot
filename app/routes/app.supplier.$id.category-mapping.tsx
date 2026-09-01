@@ -184,48 +184,7 @@ export default function CategoryMapping() {
   const [selectedProductType, setSelectedProductType] = useState("");
   const [editingCategory, setEditingCategory] = useState<string | null>(null);
   const [previewMapping, setPreviewMapping] = useState<any>(null);
-  const [previewItems, setPreviewItems] = useState<any[]>([]);
-  const [previewLoading, setPreviewLoading] = useState(false);
-  const [previewTotal, setPreviewTotal] = useState(0);
-  const [previewScanned, setPreviewScanned] = useState(0);
-  const [previewLimit, setPreviewLimit] = useState(100);
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; category: string } | null>(null);
-
-  const loadPreview = useCallback(async (mapping: any, limit = 100) => {
-    setPreviewMapping(mapping);
-    setPreviewLoading(true);
-    setPreviewItems([]);
-    setPreviewTotal(0);
-    setPreviewScanned(0);
-    setPreviewLimit(limit);
-    try {
-      const params = new URLSearchParams({ configId, mappingId: mapping.id, limit: String(limit) });
-      const res = await fetch(`/api/rule-preview?${params}`);
-      const d = await res.json();
-      setPreviewItems(d.items || []);
-      setPreviewTotal(d.total || 0);
-      setPreviewScanned(d.scanned || 0);
-    } catch {} finally {
-      setPreviewLoading(false);
-    }
-  }, [configId]);
-
-  const loadMorePreview = useCallback(async () => {
-    if (!previewMapping) return;
-    const newLimit = previewLimit + 100;
-    setPreviewLimit(newLimit);
-    setPreviewLoading(true);
-    try {
-      const params = new URLSearchParams({ configId, mappingId: previewMapping.id, limit: String(newLimit) });
-      const res = await fetch(`/api/rule-preview?${params}`);
-      const d = await res.json();
-      setPreviewItems(d.items || []);
-      setPreviewTotal(d.total || 0);
-      setPreviewScanned(d.scanned || 0);
-    } catch {} finally {
-      setPreviewLoading(false);
-    }
-  }, [previewMapping, previewLimit, configId]);
 
   useEffect(() => {
     const loadCategories = async () => {
@@ -477,7 +436,7 @@ export default function CategoryMapping() {
                         {m.tags ? (
                           <Badge tone="info">{m.tags}</Badge>
                         ) : null}
-                        <Button size="slim" icon={ViewIcon} onClick={() => loadPreview(m)}>
+                        <Button size="slim" icon={ViewIcon} onClick={() => setPreviewMapping(m)}>
                           {t("common.view")}
                         </Button>
                         <Form method="post" style={{ display: "inline" }}>
@@ -517,43 +476,38 @@ export default function CategoryMapping() {
         <Modal
           open
           onClose={() => setPreviewMapping(null)}
-          title={t("categories.preview", { category: previewMapping.csvCategory, collection: previewMapping.collectionName })}
+          title={t("categories.previewTitle")}
           secondaryActions={[{ content: t("common.close"), onAction: () => setPreviewMapping(null) }]}
         >
           <Modal.Section>
-            {previewLoading ? (
+            <BlockStack gap="300">
               <InlineStack gap="200" blockAlign="center">
-                <Spinner size="small" />
-                <Text as="p">{t("categories.previewLoading")}</Text>
+                <Text as="p" variant="bodyMd" fontWeight="semibold">{t("categories.fileCategory")}:</Text>
+                <Badge>{previewMapping.csvCategory}</Badge>
               </InlineStack>
-            ) : previewItems.length === 0 ? (
-              <Text as="p" tone="subdued">{t("categories.noProducts")}</Text>
-            ) : (
-              <>
-                <Text as="p" tone="subdued">
-                  {t("categories.showingProducts", { count: previewItems.length, total: previewTotal, category: previewMapping.csvCategory })}
-                  {previewScanned > 0 && (
-                    <> — {t("categories.scannedRows", { count: previewScanned.toLocaleString() })}</>
-                  )}
-                </Text>
-                <DataTable
-                  columnContentTypes={["text", "text", "text"]}
-                  headings={[t("common.sku"), t("common.name"), t("common.category")]}
-                  rows={previewItems.map((item: any) => [
-                    <code key={`s-${item.sku}`}>{item.sku}</code>,
-                    item.name,
-                    item.category,
-                  ])}
-                />
-                {previewItems.length < previewTotal && (
-                  <div style={{ marginTop: "12px", textAlign: "center" }}>
-                    <Button onClick={loadMorePreview} disabled={previewLoading}>
-                      {previewLoading ? t("common.loading") : t("categories.showMore")}
-                    </Button>
-                  </div>
-                )}
-              </>
-            )}
+              <InlineStack gap="200" blockAlign="center">
+                <Text as="p" variant="bodyMd" fontWeight="semibold">{t("categories.shopifyCollection")}:</Text>
+                <Badge tone="success">{previewMapping.collectionName || previewMapping.collectionId}</Badge>
+              </InlineStack>
+              {previewMapping.shopifyProductType && (
+                <InlineStack gap="200" blockAlign="center">
+                  <Text as="p" variant="bodyMd" fontWeight="semibold">{t("categories.shopifyType")}:</Text>
+                  <Badge tone="info">{previewMapping.shopifyProductType}</Badge>
+                </InlineStack>
+              )}
+              {previewMapping.tags && (
+                <InlineStack gap="200" blockAlign="center">
+                  <Text as="p" variant="bodyMd" fontWeight="semibold">Tags:</Text>
+                  <Badge tone="attention">{previewMapping.tags}</Badge>
+                </InlineStack>
+              )}
+              <InlineStack gap="200" blockAlign="center">
+                <Text as="p" variant="bodyMd" fontWeight="semibold">{t("common.status")}:</Text>
+                <Badge tone={previewMapping.isActive ? "success" : "critical"}>
+                  {previewMapping.isActive ? t("categories.active") : t("categories.inactive")}
+                </Badge>
+              </InlineStack>
+            </BlockStack>
           </Modal.Section>
         </Modal>
       )}
