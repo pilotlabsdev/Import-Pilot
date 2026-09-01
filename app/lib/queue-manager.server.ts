@@ -1,4 +1,4 @@
-import { prisma, getConfigById, cleanupOldLogs, ensureSingleSession } from "./db.server";
+import { prisma, getConfigById, cleanupOldLogs, ensureSingleSession, ensureFreshToken } from "./db.server";
 import { isImportActive, tryAcquireImport, releaseImport } from "./import-locks.server";
 import shopify from "~/shopify.server";
 import { runImport } from "./import-engine.server";
@@ -150,6 +150,16 @@ async function processQueueItem(
     try {
       // Deduplicate sessions before getting admin client
       await ensureSingleSession(shopDomain);
+      // Refresh token if about to expire
+      const freshToken = await ensureFreshToken(shopDomain);
+      if (!freshToken) {
+        console.error(`[Queue] Token expirado para ${shopDomain}, saltando importación ${item.id}`);
+        await prisma.importQueue.update({
+          where: { id: item.id },
+          data: { status: "failed", finishedAt: new Date() },
+        });
+        return;
+      }
       console.log(`[Queue] Creating admin client for ${shopDomain} (item ${item.id})`);
       ({ admin } = await shopify.unauthenticated.admin(shopDomain));
       console.log(`[Queue] Admin client OK for ${shopDomain}`);

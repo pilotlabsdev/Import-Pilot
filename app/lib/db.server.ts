@@ -15,6 +15,8 @@ if (process.env.NODE_ENV !== "production") {
 
 export { prisma };
 
+const TOKEN_EXPIRY_WARNING_MS = 10 * 60 * 1000; // 10 minutes before expiry
+
 /**
  * Returns the effective data source URL for a config.
  * If dataSource is "file", returns localFilePath. Otherwise returns csvUrl.
@@ -170,4 +172,116 @@ export async function cleanupOldLogs(configId: string): Promise<number> {
 
   console.log(`[Cleanup] Deleted ${result.count} old logs for config ${configId}`);
   return result.count;
+}
+
+/**
+ * Refresh an expiring offline access token using its refresh_token.
+ * Returns the new accessToken, or null if refresh failed.
+ * Called before bulk imports when the token is about to expire.
+ *
+ * Flow: POST https://{shop}/admin/oauth/access_token
+ *   grant_type=refresh_token
+ *   client_id={SHOPIFY_API_KEY}
+ *   client_secret={SHOPIFY_API_SECRET}
+ *   refresh_token={stored refresh token}
+ */
+export async function refreshAccessToken(shop: string): Promise<string | null> {
+  const session = await prisma.session.findFirst({
+    where: { shop },
+    select: { id: true, refreshToken: true, refreshTokenExpires: true },
+    orderBy: { expires: "desc" },
+  });
+
+  if (!session?.refreshToken) {
+    console.error(`[Token Refresh] No refresh token for ${shop}. Merchant must reinstall app.`);
+    return null;
+  }
+
+  // Check if refresh token itself is expired
+  if (session.refreshTokenExpires && new Date(session.refreshTokenExpires) < new Date()) {
+    console.error(`[Token Refresh] Refresh token expired for ${shop} (expired: ${session.refreshTokenExpires}). Merchant must reinstall app.`);
+    return null;
+  }
+
+  console.log(`[Token Refresh] Refreshing token for ${shop}...`);
+
+  try {
+    const response = await fetch(`https://${shop}/admin/oauth/access_token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        client_id: process.env.SHOPIFY_API_KEY!,
+        client_secret: process.env.SHOPIFY_API_SECRET!,
+        refresh_token: session.refreshToken,
+      }),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      console.error(`[Token Refresh] Failed for ${shop}: HTTP ${response.status} - ${body}`);
+      return null;
+    }
+
+    const data = await response.json();
+    const { access_token, refresh_token, expires_in, refresh_token_expires_in } = data;
+
+    // Update session in DB
+    const expiresAt = expires_in ? new Date(Date.now() + expires_in * 1000) : null;
+    const refreshExpiresAt = refresh_token_expires_in ? new Date(Date.now() + refresh_token_expires_in * 1000) : null;
+
+    await prisma.session.update({
+      where: { id: session.id },
+      data: {
+        accessToken: access_token,
+        expires: expiresAt,
+        refreshToken: refresh_token || session.refreshToken,
+        refreshTokenExpires: refreshExpiresAt || session.refreshTokenExpires,
+      },
+    });
+
+    console.log(`[Token Refresh] OK for ${shop}: new token, expires=${expiresAt?.toISOString() || "null"}, refreshExpires=${refreshExpiresAt?.toISOString() || "null"}`);
+    return access_token;
+  } catch (err: any) {
+    console.error(`[Token Refresh] Error for ${shop}: ${err?.message || err}`);
+    return null;
+  }
+}
+
+/**
+ * Check if a session token needs refreshing and do it if so.
+ * Returns the (possibly refreshed) accessToken, or null if token is unusable.
+ *
+ * - Token expired or expiring within 10 min → refresh
+ * - Refresh token expired → return null (merchant must reinstall)
+ * - No refresh token → return null
+ */
+export async function ensureFreshToken(shop: string): Promise<string | null> {
+  const session = await prisma.session.findFirst({
+    where: { shop },
+    select: { accessToken: true, expires: true, refreshToken: true, refreshTokenExpires: true },
+    orderBy: { expires: "desc" },
+  });
+
+  if (!session) {
+    console.error(`[Token] No session for ${shop}`);
+    return null;
+  }
+
+  const now = Date.now();
+  const expiresAt = session.expires ? new Date(session.expires).getTime() : Infinity;
+  const msUntilExpiry = expiresAt - now;
+
+  // Token still valid and not about to expire
+  if (msUntilExpiry > TOKEN_EXPIRY_WARNING_MS) {
+    return session.accessToken;
+  }
+
+  // Token expired or expiring soon → refresh
+  if (msUntilExpiry <= TOKEN_EXPIRY_WARNING_MS) {
+    console.log(`[Token] Token for ${shop} expiring in ${Math.round(msUntilExpiry / 1000)}s, refreshing...`);
+    return refreshAccessToken(shop);
+  }
+
+  return session.accessToken;
 }

@@ -3,7 +3,7 @@ import { createWriteStream } from "node:fs";
 import { Readable } from "node:stream";
 import path from "node:path";
 import os from "node:os";
-import { prisma, getOrCreateConfig, getEffectiveUrl, getSourceKey, cleanupOldLogs, ensureSingleSession } from "./db.server";
+import { prisma, getOrCreateConfig, getEffectiveUrl, getSourceKey, cleanupOldLogs, ensureSingleSession, ensureFreshToken } from "./db.server";
 import { streamFile, isExcluded, parseExcludeFieldRules, getExcludedFields } from "./csv-parser.server";
 import { getActivePriceRules, calculatePriceSync } from "./price-rules.server";
 import { checkDuplicate, logDuplicate, logExternalDuplicate } from "./duplicate-detection.server";
@@ -239,6 +239,15 @@ export async function runBulkImport({
   if (!bestSession) {
     throw new Error(`No hay sesión para ${shopDomain}. Instala la app desde el admin de Shopify.`);
   }
+
+  // Check if token is about to expire and refresh proactively.
+  // Access tokens last 1 hour; refresh tokens last 90 days.
+  // authenticate.admin() auto-refreshes, but unauthenticated.admin() doesn't.
+  const freshToken = await ensureFreshToken(shopDomain);
+  if (!freshToken) {
+    throw new Error(`Token expirado o inválido para ${shopDomain}. El merchant debe acceder al admin de Shopify para renovar el token (o reinstalar la app si el refresh token expiró).`);
+  }
+
   console.log(`[Bulk] Best session for ${shopDomain}: id=${bestSession.id}, expires=${bestSession.expires?.toISOString() || "null"}`);
 
   const { admin } = await shopify.unauthenticated.admin(shopDomain);
