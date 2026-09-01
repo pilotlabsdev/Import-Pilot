@@ -22,7 +22,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         create: { shopDomain: shop, active: false, uninstalledAt: new Date() },
       });
       await prisma.session.deleteMany({ where: { shop } });
-      console.log(`[Webhook] APP_UNINSTALLED: ${shop} marcado como inactivo, sesiones eliminadas`);
+      await prisma.importQueue.updateMany({
+        where: { shopDomain: shop, status: { in: ["queued", "running"] } },
+        data: { status: "cancelled", finishedAt: new Date() },
+      });
+      console.log(`[Webhook] APP_UNINSTALLED: ${shop} marcado como inactivo, sesiones y cola eliminadas`);
       break;
     }
     case "SHOP_REDACT": {

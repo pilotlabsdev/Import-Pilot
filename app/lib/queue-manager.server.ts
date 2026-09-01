@@ -146,7 +146,20 @@ async function processQueueItem(
   const startTime = Date.now();
 
   try {
-    const { admin } = await shopify.unauthenticated.admin(shopDomain);
+    let admin;
+    try {
+      ({ admin } = await shopify.unauthenticated.admin(shopDomain));
+    } catch (e: any) {
+      if (e?.message?.includes("Session not found") || e?.response?.status === 401) {
+        console.error(`[Queue] No valid session for ${shopDomain}, skipping import ${item.id}`);
+        await prisma.importQueue.update({
+          where: { id: item.id },
+          data: { status: "failed", finishedAt: new Date() },
+        });
+        return;
+      }
+      throw e;
+    }
 
     if (item.importMode === "bulk") {
       const bulkResult = await runBulkImport({
