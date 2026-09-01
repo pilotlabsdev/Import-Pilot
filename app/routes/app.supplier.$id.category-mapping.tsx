@@ -1,7 +1,7 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
 import { data } from "react-router";
 
-import { useLoaderData, useActionData, Form, useRevalidator } from "react-router";
+import { useLoaderData, useActionData, Form, useRevalidator, useFetcher } from "react-router";
 import { useState, useCallback, useEffect } from "react";
 import {
   Banner,
@@ -149,6 +149,7 @@ export default function CategoryMapping() {
     | { error?: string; success?: boolean; savedCategory?: string }
     | undefined;
   const { revalidate } = useRevalidator();
+  const fetcher = useFetcher();
   const { t } = useTranslation();
 
   useEffect(() => {
@@ -164,6 +165,12 @@ export default function CategoryMapping() {
       revalidate();
     }
   }, [actionData]);
+
+  useEffect(() => {
+    if (fetcher.data?.success) {
+      revalidate();
+    }
+  }, [fetcher.data]);
 
   const [csvCategories, setCsvCategories] = useState<string[]>([]);
   const [loadingCategories, setLoadingCategories] = useState(true);
@@ -551,10 +558,10 @@ export default function CategoryMapping() {
           primaryAction={{
             content: t("common.delete"),
             onAction: () => {
-              const form = new FormData();
-              form.set("intent", "delete");
-              form.set("mappingId", deleteConfirm.id);
-              fetch(window.location.href, { method: "POST", body: form });
+              fetcher.submit(
+                { intent: "delete", mappingId: deleteConfirm.id },
+                { method: "post" }
+              );
               setDeleteConfirm(null);
             },
             destructive: true,
