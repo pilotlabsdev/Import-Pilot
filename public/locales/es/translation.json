@@ -323,7 +323,7 @@
   "categories.noProducts": "No se encontraron productos en esta categoría.",
   "categories.showingProducts": "Mostrando {{count}} de {{total}} productos en \"{{category}}\".",
   "categories.showMore": "Mostrar más",
-  "categories.scannedRows": "primeras {{count}} filas",
+  "categories.scannedRows": "primeros {{count}} productos",
   "categories.deleteMapping": "Eliminar mapeo",
   "categories.deleteConfirm": "¿Eliminar el mapeo de {{category}}? Esta acción no se puede deshacer.",
   "categories.categoryLabel": "Categoría del archivo: {{category}}",

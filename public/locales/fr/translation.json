@@ -304,7 +304,7 @@
   "categories.noProducts": "Aucun produit trouvé dans cette catégorie.",
   "categories.showingProducts": "Affichage de {{count}} sur {{total}} produits dans « {{category}} ».",
   "categories.showMore": "Afficher plus",
-  "categories.scannedRows": "premières {{count}} lignes",
+  "categories.scannedRows": "premiers {{count}} produits",
   "categories.deleteMapping": "Supprimer le mappage",
   "categories.deleteConfirm": "Supprimer le mappage de {{category}} ? Cette action est irréversible.",
   "categories.categoryLabel": "Catégorie du fichier : {{category}}",

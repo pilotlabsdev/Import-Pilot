@@ -13,7 +13,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const ruleId = url.searchParams.get("ruleId") || "";
   const mappingId = url.searchParams.get("mappingId") || "";
   const limit = Math.min(parseInt(url.searchParams.get("limit") || "20"), 50);
-  const scanLimit = Math.min(parseInt(url.searchParams.get("scanLimit") || "50000"), 250000);
+  const scanLimitParam = parseInt(url.searchParams.get("scanLimit") || "0");
+  const scanLimit = scanLimitParam > 0 ? Math.min(scanLimitParam, 250000) : Infinity;
 
   if (!configIdParam) return data({ error: "configId requerido" }, { status: 400 });
 
@@ -41,7 +42,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     let scanned = 0;
 
     for await (const item of streamFile(getEffectiveUrl(config), config.csvDelimiter)) {
-      if (items.length >= limit || scanned >= scanLimit) break;
+      if (items.length >= limit || (scanLimit !== Infinity && scanned >= scanLimit)) break;
       scanned++;
       const { row } = item;
       const sku = row["sku"] || "";
@@ -95,7 +96,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     let scanned = 0;
 
     for await (const item of streamFile(getEffectiveUrl(config), config.csvDelimiter)) {
-      if (items.length >= limit || scanned >= scanLimit) break;
+      if (items.length >= limit || (scanLimit !== Infinity && scanned >= scanLimit)) break;
       scanned++;
       const { row } = item;
       const category = getField(row, "category");

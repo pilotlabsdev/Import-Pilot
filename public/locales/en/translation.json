@@ -304,7 +304,7 @@
   "categories.noProducts": "No products found in this category.",
   "categories.showingProducts": "Showing {{count}} of {{total}} products in \"{{category}}\".",
   "categories.showMore": "Show more",
-  "categories.scannedRows": "first {{count}} rows",
+  "categories.scannedRows": "first {{count}} products",
   "categories.deleteMapping": "Delete mapping",
   "categories.deleteConfirm": "Delete mapping for {{category}}? This action cannot be undone.",
   "categories.categoryLabel": "File category: {{category}}",

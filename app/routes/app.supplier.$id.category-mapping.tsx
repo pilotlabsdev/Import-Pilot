@@ -199,7 +199,7 @@ export default function CategoryMapping() {
     setPreviewScanned(0);
     setPreviewLimit(limit);
     try {
-      const params = new URLSearchParams({ configId, mappingId: mapping.id, limit: String(limit), scanLimit: "50000" });
+      const params = new URLSearchParams({ configId, mappingId: mapping.id, limit: String(limit) });
       const res = await fetch(`/api/rule-preview?${params}`);
       const d = await res.json();
       setPreviewItems(d.items || []);
@@ -216,7 +216,7 @@ export default function CategoryMapping() {
     setPreviewLimit(newLimit);
     setPreviewLoading(true);
     try {
-      const params = new URLSearchParams({ configId, mappingId: previewMapping.id, limit: String(newLimit), scanLimit: "50000" });
+      const params = new URLSearchParams({ configId, mappingId: previewMapping.id, limit: String(newLimit) });
       const res = await fetch(`/api/rule-preview?${params}`);
       const d = await res.json();
       setPreviewItems(d.items || []);
