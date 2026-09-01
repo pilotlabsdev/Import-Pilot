@@ -435,6 +435,7 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
               unchanged: result.unchanged,
               excludedCount: excludedCount + result.excluded,
               lastSku: result.lastSku || null,
+              lastProgressAt: new Date(),
             },
           }).catch(() => {});
         }

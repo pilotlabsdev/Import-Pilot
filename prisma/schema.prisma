@@ -161,6 +161,7 @@ model ImportLog {
    errors          String?
   previewData     String?
   lastSku         String?
+  lastProgressAt  DateTime?
   startedAt       DateTime @default(now())
   completedAt     DateTime?
   config          ImportConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
