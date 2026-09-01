@@ -16,12 +16,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
   console.log(`[Webhook] Received: topic=${topic}, shop=${shop}, session=${session ? "present" : "null"}`);
 
+  const graphqlTopic = topic.toUpperCase();
+
+  // Compliance webhooks must be processed even without a session
+  // (they're sent after app uninstall when session no longer exists)
+  if (graphqlTopic === "CUSTOMERS_DATA_REQUEST" || graphqlTopic === "CUSTOMERS_REDACT" || graphqlTopic === "SHOP_REDACT") {
+    if (graphqlTopic === "SHOP_REDACT") {
+      console.log(`[Webhook] SHOP_REDACT: ${shop} — datos eliminados definitivamente`);
+    } else {
+      console.log(`[Webhook] ${graphqlTopic}: shop=${shop} — no almacenamos datos de clientes`);
+    }
+    throw new Response(null, { status: 200 });
+  }
+
+  // All other webhooks require a valid session
   if (!session) {
     console.warn(`[Webhook] No session for ${shop}, returning 410`);
     throw new Response(null, { status: 410 });
   }
-
-  const graphqlTopic = topic.toUpperCase();
 
   switch (graphqlTopic) {
     case "APP_UNINSTALLED": {
@@ -216,16 +228,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
 
       console.log(`[Webhook] APP_SUBSCRIPTIONS_UPDATE: ${shop} → plan=${validPlan}, status=${newStatus}`);
-      break;
-    }
-    case "CUSTOMERS_DATA_REQUEST": {
-      const customerId = payload.customer_id ? `gid://shopify/Customer/${payload.customer_id}` : null;
-      console.log(`[Webhook] CUSTOMERS_DATA_REQUEST: shop=${shop}, customer=${customerId} — no almacenamos datos de clientes`);
-      break;
-    }
-    case "CUSTOMERS_REDACT": {
-      const customerId = payload.customer_id ? `gid://shopify/Customer/${payload.customer_id}` : null;
-      console.log(`[Webhook] CUSTOMERS_REDACT: shop=${shop}, customer=${customerId} — no almacenamos datos de clientes`);
       break;
     }
     default:
