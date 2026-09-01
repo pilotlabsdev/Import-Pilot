@@ -5,11 +5,23 @@ import shopify from "~/shopify.server";
 import { handleBulkOperationFinish } from "~/lib/bulk-import.server";
 import { enforcePlanLimits, upsertSubscription } from "~/lib/billing.server";
 
+const COMPLIANCE_TOPICS = new Set(["customers/data_request", "customers/redact", "shop/redact"]);
+
 export const action = async ({ request }: ActionFunctionArgs) => {
+  // Read topic from header first — compliance webhooks may arrive without a session
+  const topicHeader = request.headers.get("X-Shopify-Topic") || "";
+  const isCompliance = COMPLIANCE_TOPICS.has(topicHeader);
+
   let topic: string, shop: string, session: any, payload: any;
   try {
     ({ topic, shop, session, payload } = await authenticate.webhook(request));
   } catch (err: any) {
+    // If it's a compliance webhook, return 200 even if session lookup fails
+    // (compliance webhooks are sent after app uninstall when session no longer exists)
+    if (isCompliance) {
+      console.log(`[Webhook] Compliance webhook ${topicHeader} (session lookup failed, returning 200)`);
+      throw new Response(null, { status: 200 });
+    }
     // Invalid HMAC → return 401 (required for App Store review)
     console.warn(`[Webhook] HMAC validation failed: ${err?.message || err}`);
     throw new Response(null, { status: 401 });
@@ -18,9 +30,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const graphqlTopic = topic.toUpperCase();
 
-  // Compliance webhooks must be processed even without a session
-  // (they're sent after app uninstall when session no longer exists)
-  if (graphqlTopic === "CUSTOMERS_DATA_REQUEST" || graphqlTopic === "CUSTOMERS_REDACT" || graphqlTopic === "SHOP_REDACT") {
+  // Compliance webhooks: always return 200 (may arrive without session after uninstall)
+  if (COMPLIANCE_TOPICS.has(topic)) {
     if (graphqlTopic === "SHOP_REDACT") {
       console.log(`[Webhook] SHOP_REDACT: ${shop} — datos eliminados definitivamente`);
     } else {
