@@ -64,7 +64,7 @@ export default function PrivacyPolicy() {
 
       <h2>9. Contact</h2>
       <p>
-        If you have questions about this Privacy Policy, please contact us through the support feature within the Import Pilot app, or email us at support@pilotlabsdev@gmail.com.
+        If you have questions about this Privacy Policy, please contact us through the support feature within the Import Pilot app, or email us at pilotlabsdev@gmail.com.
       </p>
     </div>
   );
