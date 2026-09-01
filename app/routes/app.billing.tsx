@@ -52,7 +52,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     if (chargeId && !currentSubscription.isDeveloper) {
       try {
         const { hasActivePayment } = await billing.check({
-          plans: [planHandle],
+          plans: [planHandle as any],
         });
         if (!hasActivePayment) {
           console.log(`[Billing] Loader: charge ${chargeId} not approved for ${shopDomain}`);
@@ -126,7 +126,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
 
       if (currentSubscription.isDeveloper) {
-        console.log("[Billing Action] Dev store — activando sin cobro real");
+        console.log("[Billing Action] Dev store — activando suscripción de prueba sin cobro real");
         const isTrial = newTrialDays > 0;
         const status = isTrial ? "trial" : "active";
         const trialEndsAt = isTrial
@@ -137,24 +137,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         return { success: true };
       }
 
-      const isUnpublished = error?.message?.includes("400") ||
-        error?.message?.includes("Bad Request") ||
-        error?.message?.includes("without a public distribution") ||
-        error?.statusCode === 400;
-
-      if (isUnpublished && process.env.BILLING_BYPASS === "true") {
-        console.log("[Billing Action] App no publicada + BILLING_BYPASS=true — activando para desarrollo");
-        const isTrial = newTrialDays > 0;
-        const status = isTrial ? "trial" : "active";
-        const trialEndsAt = isTrial
-          ? new Date(Date.now() + newTrialDays * 24 * 60 * 60 * 1000)
-          : undefined;
-        await upsertSubscription(shopDomain, planHandle, status, trialEndsAt, billingType);
-        await enforcePlanLimits(shopDomain);
-        return { success: true };
-      }
-
-      console.error("[Billing Action] Error real en billing.request:", error.message);
+      console.error("[Billing Action] Error en billing.request:", error.message);
       return { success: false, error: "billing.paymentError" };
     }
 

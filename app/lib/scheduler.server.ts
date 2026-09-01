@@ -14,6 +14,7 @@ let refreshing = false;
 let reconcileCounter = 0;
 const RECONCILE_INTERVAL = 720;
 const configStaggerOffset = new Map<string, number>();
+const configLocks = new Set<string>();
 
 function getFrequencyMs(frequency: string): number | null {
   const map: Record<string, number> = {
@@ -61,7 +62,6 @@ function scheduleNext(configId: string, frequency: string, lastImportAt: Date | 
   console.log(`[Scheduler] ${configId.slice(0, 8)} próximo import en ${Math.round(delay / 60_000)} min (${nextRunAt.toLocaleTimeString("es-ES")})`);
 
   const timer = setTimeout(() => {
-    timers.delete(configId);
     void runScheduledImport(configId);
   }, delay);
 
@@ -96,6 +96,15 @@ export function startScheduler() {
     }).then(async (configs) => {
       for (const config of configs) {
         if (timers.has(config.id) || config.dataSource === "file") continue;
+        if (configLocks.has(config.id)) continue;
+
+        const activeQueueItem = await prisma.importQueue.findFirst({
+          where: { configId: config.id, status: { in: ["queued", "running"] } },
+          select: { id: true },
+        }).catch(() => null);
+        if (activeQueueItem) {
+          continue;
+        }
 
         // Cooldown check: don't reschedule if there's a recent import
         const recentLog = await prisma.importLog.findFirst({
@@ -117,6 +126,17 @@ export function startScheduler() {
 
         console.log(`[Scheduler] Heartbeat: ${config.name} sin timer, reprogramando (${config.frequency})`);
         scheduleNext(config.id, config.frequency, config.lastImportAt);
+      }
+
+      const STALE_QUEUED_MS = 30 * 60 * 1000;
+      const staleQueued = await prisma.importQueue.deleteMany({
+        where: {
+          status: "queued",
+          createdAt: { lt: new Date(Date.now() - STALE_QUEUED_MS) },
+        },
+      }).catch(() => ({ count: 0 }));
+      if (staleQueued.count > 0) {
+        console.log(`[Scheduler] Heartbeat: limpiados ${staleQueued.count} items stale en cola`);
       }
     }).catch(() => {});
   }, 60_000);
@@ -168,7 +188,7 @@ export async function refreshSchedules() {
         continue;
       }
 
-      if (isImportActive(config.id)) {
+      if (isImportActive(config.id) || configLocks.has(config.id)) {
         continue;
       }
 
@@ -189,78 +209,97 @@ export async function refreshSchedules() {
 }
 
 async function runScheduledImport(configId: string) {
-  pendingRetries.delete(configId);
+  if (configLocks.has(configId)) {
+    console.log(`[Scheduler] ${configId.slice(0, 8)} ya está en proceso, skip`);
+    return;
+  }
+  configLocks.add(configId);
 
-  // DB-level cooldown: check if another process already ran this config recently
-  const recentLog = await prisma.importLog.findFirst({
-    where: { configId, status: { in: ["running", "completed", "completed_with_errors"] } },
-    orderBy: { startedAt: "desc" },
-    select: { startedAt: true, completedAt: true, status: true },
-  });
-  if (recentLog) {
-    const referenceTime = recentLog.completedAt || recentLog.startedAt;
-    if (referenceTime) {
-      const elapsed = Date.now() - referenceTime.getTime();
-      if (elapsed < IMPORT_COOLDOWN_MS) {
-        const remaining = IMPORT_COOLDOWN_MS - elapsed;
-        console.log(`[Scheduler] ${configId.slice(0, 8)} importación reciente (${Math.round(elapsed / 1000)}s atrás), cooldown ${Math.round(remaining / 1000)}s`);
-        scheduleNext(configId, scheduledFrequencies.get(configId) || "4h", null, remaining + 5_000);
-        return;
+  try {
+    pendingRetries.delete(configId);
+
+    const activeQueueItem = await prisma.importQueue.findFirst({
+      where: { configId, status: { in: ["queued", "running"] } },
+      select: { id: true, status: true },
+    }).catch(() => null);
+    if (activeQueueItem) {
+      console.log(`[Scheduler] ${configId.slice(0, 8)} ya tiene item en cola/running (${activeQueueItem.status}), skip`);
+      scheduleNext(configId, scheduledFrequencies.get(configId) || "4h", null);
+      return;
+    }
+
+    const recentLog = await prisma.importLog.findFirst({
+      where: { configId, status: { in: ["running", "completed", "completed_with_errors"] } },
+      orderBy: { startedAt: "desc" },
+      select: { startedAt: true, completedAt: true, status: true },
+    });
+    if (recentLog) {
+      const referenceTime = recentLog.completedAt || recentLog.startedAt;
+      if (referenceTime) {
+        const elapsed = Date.now() - referenceTime.getTime();
+        if (elapsed < IMPORT_COOLDOWN_MS) {
+          const remaining = IMPORT_COOLDOWN_MS - elapsed;
+          console.log(`[Scheduler] ${configId.slice(0, 8)} importación reciente (${Math.round(elapsed / 1000)}s atrás), cooldown ${Math.round(remaining / 1000)}s`);
+          scheduleNext(configId, scheduledFrequencies.get(configId) || "4h", null, remaining + 5_000);
+          return;
+        }
       }
     }
+
+    const config = await prisma.importConfig.findUnique({ where: { id: configId } });
+
+    if (!config || !config.isActive) {
+      scheduleNext(configId, scheduledFrequencies.get(configId) || "4h", null);
+      return;
+    }
+
+    if (config.planPaused) {
+      console.log(`[Scheduler] ${config.name} pausado por límite de plan, skip`);
+      scheduleNext(configId, scheduledFrequencies.get(configId) || "4h", null);
+      return;
+    }
+
+    const subscription = await getSubscriptionInfo(config.shopDomain);
+    if (!subscription.hasActiveSubscription && !subscription.isTrial) {
+      console.log(`[Scheduler] ${config.name} sin suscripción activa, skip`);
+      scheduleNext(configId, scheduledFrequencies.get(configId) || "4h", null);
+      return;
+    }
+
+    if (subscription.isTrial && subscription.trialDaysRemaining <= 0) {
+      console.log(`[Scheduler] ${config.name} trial expirado, ejecutando enforcePlanLimits`);
+      await enforcePlanLimits(config.shopDomain);
+      scheduleNext(configId, scheduledFrequencies.get(configId) || "4h", null);
+      return;
+    }
+
+    if (!isUrlSource(config)) {
+      scheduleNext(configId, scheduledFrequencies.get(configId) || "4h", null);
+      return;
+    }
+
+    const sourceLabel = config.dataSource === "file"
+      ? config.localFilePath?.split(/[/\\]/).pop() || "Archivo local"
+      : config.csvUrl || "URL";
+
+    console.log(`[Scheduler] ${config.name} encolando importación (${config.importMode})`);
+
+    await enqueue({
+      shopDomain: config.shopDomain,
+      configId: config.id,
+      supplierName: config.name,
+      sourceLabel,
+      triggerType: "scheduled",
+      importMode: config.importMode,
+      filterType: config.filterType || undefined,
+      filterSkus: config.filterSkus || undefined,
+      filterCategories: config.filterCategories || undefined,
+    });
+
+    scheduleNext(configId, config.frequency, new Date());
+  } finally {
+    configLocks.delete(configId);
   }
-
-  const config = await prisma.importConfig.findUnique({ where: { id: configId } });
-
-  if (!config || !config.isActive) {
-    scheduleNext(configId, scheduledFrequencies.get(configId) || "4h", null);
-    return;
-  }
-
-  if (config.planPaused) {
-    console.log(`[Scheduler] ${config.name} pausado por límite de plan, skip`);
-    scheduleNext(configId, scheduledFrequencies.get(configId) || "4h", null);
-    return;
-  }
-
-  const subscription = await getSubscriptionInfo(config.shopDomain);
-  if (!subscription.hasActiveSubscription && !subscription.isTrial) {
-    console.log(`[Scheduler] ${config.name} sin suscripción activa, skip`);
-    scheduleNext(configId, scheduledFrequencies.get(configId) || "4h", null);
-    return;
-  }
-
-  if (subscription.isTrial && subscription.trialDaysRemaining <= 0) {
-    console.log(`[Scheduler] ${config.name} trial expirado, ejecutando enforcePlanLimits`);
-    await enforcePlanLimits(config.shopDomain);
-    scheduleNext(configId, scheduledFrequencies.get(configId) || "4h", null);
-    return;
-  }
-
-  if (!isUrlSource(config)) {
-    scheduleNext(configId, scheduledFrequencies.get(configId) || "4h", null);
-    return;
-  }
-
-  const sourceLabel = config.dataSource === "file"
-    ? config.localFilePath?.split(/[/\\]/).pop() || "Archivo local"
-    : config.csvUrl || "URL";
-
-  console.log(`[Scheduler] ${config.name} encolando importación (${config.importMode})`);
-
-  await enqueue({
-    shopDomain: config.shopDomain,
-    configId: config.id,
-    supplierName: config.name,
-    sourceLabel,
-    triggerType: "scheduled",
-    importMode: config.importMode,
-    filterType: config.filterType || undefined,
-    filterSkus: config.filterSkus || undefined,
-    filterCategories: config.filterCategories || undefined,
-  });
-
-  scheduleNext(configId, config.frequency, new Date());
 }
 
 export function stopAllSchedulers() {
@@ -268,6 +307,7 @@ export function stopAllSchedulers() {
     clearTimeout(timer);
   }
   timers.clear();
+  configLocks.clear();
   pendingRetries.clear();
   started = false;
 }

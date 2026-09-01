@@ -29,14 +29,6 @@ function normalizeLocale(raw: string | undefined | null): string {
   return "en";
 }
 
-function getLocaleFromCookie(): string | null {
-  if (typeof document === "undefined") return null;
-  const match = document.cookie.match(/(?:^|;\s*)shop_locale=([^;]*)/);
-  const val = match?.[1];
-  if (val && SUPPORTED.includes(val)) return val;
-  return null;
-}
-
 function detectLocale(shopifyLocale: string | null, cookieLocale: string | null): string {
   if (shopifyLocale) {
     const map: Record<string, string> = {
@@ -98,26 +90,36 @@ export function Layout({ children }: { children: React.ReactNode }) {
 export default function App() {
   const { locale: serverLocale } = useLoaderData<typeof loader>();
   const { i18n } = useTranslation();
-  const [appBridgeLocale, setAppBridgeLocale] = useState<string | null>(null);
+  const [clientLocale, setClientLocale] = useState<string | null>(null);
 
   useEffect(() => {
     try {
       const shopify = (window as any).shopify;
       if (shopify?.config?.locale) {
         const normalized = normalizeLocale(shopify.config.locale);
-        setAppBridgeLocale(normalized);
+        setClientLocale(normalized);
+        return;
+      }
+    } catch {}
+
+    try {
+      const match = document.cookie.match(/(?:^|;\s*)shop_locale=([^;]*)/);
+      const val = match?.[1];
+      if (val && SUPPORTED.includes(val)) {
+        setClientLocale(val);
+        return;
       }
     } catch {}
   }, []);
 
   useEffect(() => {
-    const bestLocale = appBridgeLocale || getLocaleFromCookie() || serverLocale || "en";
+    const bestLocale = clientLocale || serverLocale || "en";
     if (SUPPORTED.includes(bestLocale) && i18n.language !== bestLocale) {
       i18n.changeLanguage(bestLocale);
     }
-  }, [appBridgeLocale, serverLocale, i18n]);
+  }, [clientLocale, serverLocale, i18n]);
 
-  const effectiveLocale = appBridgeLocale || getLocaleFromCookie() || serverLocale || "en";
+  const effectiveLocale = clientLocale || serverLocale || "en";
 
   return (
     <PolarisAppProvider i18n={polarisTranslations[effectiveLocale] || enPolaris}>

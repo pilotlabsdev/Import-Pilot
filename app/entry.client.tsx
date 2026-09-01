@@ -21,19 +21,22 @@ const SUPPORTED = ["es", "en", "pt", "fr", "de", "it"];
 
 function getClientLocale(): string {
   try {
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlLocale = urlParams.get("locale");
+    if (urlLocale) {
+      const map: Record<string, string> = {
+        es: "es", "es-ES": "es", en: "en", "en-US": "en", "en-GB": "en",
+        pt: "pt", "pt-BR": "pt", fr: "fr", de: "de", it: "it",
+      };
+      if (map[urlLocale]) return map[urlLocale];
+      const base = urlLocale.split("-")[0].toLowerCase();
+      if (SUPPORTED.includes(base)) return base;
+    }
+
     const cookieMatch = document.cookie.match(/(?:^|;\s*)shop_locale=([^;]*)/);
     const cookieLocale = cookieMatch?.[1];
     if (cookieLocale && SUPPORTED.includes(cookieLocale)) return cookieLocale;
-
-    const savedLocale = localStorage.getItem("shop_locale");
-    if (savedLocale && SUPPORTED.includes(savedLocale)) return savedLocale;
   } catch {}
-
-  const htmlLang = document.documentElement.lang;
-  if (htmlLang) {
-    const base = htmlLang.split("-")[0].toLowerCase();
-    if (SUPPORTED.includes(base)) return base;
-  }
 
   return "en";
 }
@@ -43,7 +46,7 @@ const detectedLng = getClientLocale();
 i18next.use(initReactI18next).init({
   resources,
   lng: detectedLng,
-  fallbackLng: "en",
+  fallbackLng: "es",
   interpolation: { escapeValue: false },
 });
 

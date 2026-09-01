@@ -49,19 +49,27 @@ export async function enqueue(params: {
   const existingForConfig = await prisma.importQueue.findMany({
     where: { configId: params.configId, status: { in: ["queued", "running"] } },
     select: { id: true, status: true },
+    orderBy: { createdAt: "asc" },
   });
 
   const hasRunning = existingForConfig.some((i) => i.status === "running");
-  const hasQueued = existingForConfig.some((i) => i.status === "queued");
+  const existingQueued = existingForConfig.find((i) => i.status === "queued");
 
-  if (hasRunning && hasQueued) {
+  if (hasRunning && existingQueued) {
     console.log(`[Queue] Skip enqueue for ${params.configId}: already 1 running + 1 queued`);
-    return existingForConfig.find((i) => i.status === "queued") as QueueItem;
+    return existingQueued as QueueItem;
   }
 
-  if (hasRunning) {
-    const existingQueued = existingForConfig.find((i) => i.status === "queued");
-    if (existingQueued) return existingQueued as QueueItem;
+  if (hasRunning && !existingQueued) {
+    if (existingForConfig.length >= 2) {
+      console.log(`[Queue] Skip enqueue for ${params.configId}: already running, will queue next`);
+      return existingForConfig[0] as QueueItem;
+    }
+  }
+
+  if (existingQueued) {
+    console.log(`[Queue] Skip enqueue for ${params.configId}: already ${existingForConfig.length} queued/running`);
+    return existingQueued as QueueItem;
   }
 
   const maxPos = await prisma.importQueue.aggregate({
