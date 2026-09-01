@@ -111,6 +111,14 @@ const shopify = shopifyApp({
       // is created instead of updating the old one. This leaves stale expired sessions
       // in the DB. findSessionsByShop returns the oldest (or newest) — if stale,
       // bulk mode gets 401. Fix: delete ALL other sessions for this shop after auth.
+
+      // Log all existing sessions before cleanup
+      const existingSessions = await prisma.session.findMany({
+        where: { shop: session.shop },
+        select: { id: true, expires: true, accessToken: true, isOnline: true },
+      });
+      console.log(`[Shopify] afterAuth: ${session.shop} has ${existingSessions.length} existing session(s) before cleanup: [${existingSessions.map(s => `id=${s.id},expires=${s.expires?.toISOString() || "null"},isOnline=${s.isOnline}`).join("; ")}]`);
+
       const deletedSessions = await prisma.session.deleteMany({
         where: {
           shop: session.shop,
@@ -120,6 +128,13 @@ const shopify = shopifyApp({
       if (deletedSessions.count > 0) {
         console.log(`[Shopify] Cleaned up ${deletedSessions.count} stale session(s) for ${session.shop}`);
       }
+
+      // Verify final state
+      const finalSessions = await prisma.session.findMany({
+        where: { shop: session.shop },
+        select: { id: true, expires: true, accessToken: true },
+      });
+      console.log(`[Shopify] afterAuth: ${session.shop} now has ${finalSessions.length} session(s): [${finalSessions.map(s => `id=${s.id},expires=${s.expires?.toISOString() || "null"},token=${s.accessToken ? "present" : "MISSING"}`).join("; ")}]`);
 
       const existingSettings = await prisma.shopSettings.findUnique({
         where: { shopDomain: session.shop },

@@ -297,6 +297,7 @@ export async function getQueueStatus(shopDomain: string): Promise<{
     triggerType: string;
     importMode: string;
     logId: string | null;
+    bulkJobId?: string | null;
     progress: {
       totalProducts: number;
       processedProducts: number;
@@ -325,6 +326,7 @@ export async function getQueueStatus(shopDomain: string): Promise<{
     triggerType: string;
     importMode: string;
     logId: string | null;
+    bulkJobId?: string | null;
     progress: any;
   }> = [];
   const seenConfigIds = new Set<string>();

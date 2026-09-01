@@ -55,28 +55,62 @@ export async function cleanupDuplicateSessions(shop: string, keepSessionId: stri
 
 /**
  * Ensure there's only one valid session for a shop.
- * Returns the best session (the one with the latest expiry), or null.
+ * Returns the best session (the one most likely to have a valid token), or null.
  * Called before bulk import to guarantee the correct token is used.
+ *
+ * Ordering strategy (PostgreSQL NULLS LAST workaround):
+ * 1. Non-expired sessions with concrete expiry first (ordered by latest expiry)
+ * 2. Non-expired sessions with null expiry (offline sessions)
+ * 3. Expired sessions with concrete expiry
+ * 4. Expired sessions with null expiry
+ *
+ * PrismaSessionStorage upserts by session.id, so reinstalls create new rows.
+ * This function keeps only the best and deletes the rest.
  */
 export async function ensureSingleSession(shop: string): Promise<{ id: string; accessToken: string; expires: Date | null } | null> {
+  const now = new Date();
   const sessions = await prisma.session.findMany({
     where: { shop },
-    orderBy: { expires: "desc" },
     select: { id: true, accessToken: true, expires: true },
   });
 
-  if (sessions.length === 0) return null;
-
-  // If more than one session exists, delete all but the newest
-  if (sessions.length > 1) {
-    const [best, ...stale] = sessions;
-    const idsToDelete = stale.map((s) => s.id);
-    await prisma.session.deleteMany({ where: { id: { in: idsToDelete } } });
-    console.log(`[Session] Deduped ${idsToDelete.length} stale session(s) for ${shop}, kept ${best.id}`);
-    return best;
+  if (sessions.length === 0) {
+    console.log(`[Session] No sessions found for ${shop}`);
+    return null;
   }
 
-  return sessions[0];
+  if (sessions.length === 1) {
+    const s = sessions[0];
+    const isExpired = s.expires ? new Date(s.expires) < now : false;
+    console.log(`[Session] Single session for ${shop}: id=${s.id}, expires=${s.expires?.toISOString() || "null"}, isExpired=${isExpired}`);
+    return s;
+  }
+
+  // Multiple sessions: pick the best one
+  // Priority: non-expired with concrete expiry > non-expired null expiry > expired with concrete expiry > expired null expiry
+  const scored = sessions.map((s) => {
+    const isExpired = s.expires ? new Date(s.expires) < now : false;
+    const hasConcreteExpiry = s.expires !== null;
+    // Score: higher is better
+    // non-expired + concrete = 3, non-expired + null = 2, expired + concrete = 1, expired + null = 0
+    let score = isExpired ? 0 : 2;
+    if (!isExpired && hasConcreteExpiry) score = 3;
+    if (isExpired && hasConcreteExpiry) score = 1;
+    return { ...s, score, isExpired, expiresTime: s.expires ? new Date(s.expires).getTime() : 0 };
+  });
+
+  scored.sort((a, b) => {
+    // Higher score first
+    if (b.score !== a.score) return b.score - a.score;
+    // Same score: later expiry first
+    return b.expiresTime - a.expiresTime;
+  });
+
+  const [best, ...stale] = scored;
+  const idsToDelete = stale.map((s) => s.id);
+  await prisma.session.deleteMany({ where: { id: { in: idsToDelete } } });
+  console.log(`[Session] Deduped ${idsToDelete.length} stale session(s) for ${shop}: kept id=${best.id} (score=${best.score}, expired=${best.isExpired}), deleted [${idsToDelete.join(", ")}]`);
+  return best;
 }
 
 /**

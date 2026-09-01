@@ -54,16 +54,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const items = await prisma.importQueue.findMany({
       where: { configId, status: { in: ["queued", "running"] } },
     });
-    if (items.length === 0) {
-      console.log(`[Queue API] cancel-scheduled: no items found for configId=${configId}`);
-      return data({ success: false, message: "No se encontró importación activa o en cola" });
-    }
     await prisma.importQueue.updateMany({
       where: { configId, status: { in: ["queued", "running"] } },
       data: { status: "cancelled", finishedAt: new Date() },
     });
-    console.log(`[Queue API] cancel-scheduled: cancelled ${items.length} items for configId=${configId}`);
-    return data({ success: true, message: `${items.length} importación(es) cancelada(s)` });
+    // Also cancel stuck ImportLogs (they appear in schedulerActive without queue items)
+    const stuckLogs = await prisma.importLog.updateMany({
+      where: { configId, status: "running" },
+      data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "Cancelado manualmente", lineNumber: 0 }]) },
+    });
+    console.log(`[Queue API] cancel-scheduled: cancelled ${items.length} queue items and ${stuckLogs.count} logs for configId=${configId}`);
+    return data({ success: true, message: `${items.length} en cola, ${stuckLogs.count} logs cancelados` });
   }
 
   if (intent === "cancel-bulk") {
@@ -88,11 +89,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
     // Force mark as failed
     await prisma.bulkJobOp.updateMany({
-      where: { jobId: bulkJob.id, status: { in: ["pending", "launched", "processing"] } },
+      where: { jobId: job.id, status: { in: ["pending", "launched", "processing"] } },
       data: { status: "failed" },
     });
     await prisma.bulkJob.update({
-      where: { id: bulkJob.id },
+      where: { id: job.id },
       data: { phase: "failed" },
     });
     const log = await prisma.importLog.findUnique({ where: { id: job.logId } });

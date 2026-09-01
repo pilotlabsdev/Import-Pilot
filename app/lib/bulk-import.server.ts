@@ -52,7 +52,27 @@ export async function cancelBulkImport(configId: string, shopDomain: string): Pr
   const activeJob = await prisma.bulkJob.findFirst({
     where: { configId, phase: { in: ["lookup", "mutations", "finalizing"] } },
   });
-  if (!activeJob) return { success: false, message: "No hay job bulk activo" };
+
+  if (!activeJob) {
+    // No active BulkJob — but ImportQueue items might be stuck
+    const stuckQueueItems = await prisma.importQueue.updateMany({
+      where: { configId, shopDomain, status: { in: ["queued", "running"] } },
+      data: { status: "cancelled", finishedAt: new Date() },
+    });
+
+    // Also fail any "running" ImportLogs for this config
+    const stuckLogs = await prisma.importLog.updateMany({
+      where: { configId, status: "running" },
+      data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "Cancelado manualmente (no había job bulk activo)", lineNumber: 0 }]) },
+    });
+
+    if (stuckQueueItems.count > 0 || stuckLogs.count > 0) {
+      console.log(`[Bulk] cancelBulkImport: no active BulkJob but cleaned up ${stuckQueueItems.count} queue item(s) and ${stuckLogs.count} log(s) for configId=${configId}`);
+      return { success: true, message: `Cancelado: ${stuckQueueItems.count} en cola, ${stuckLogs.count} logs` };
+    }
+
+    return { success: false, message: "No hay importación activa para esta configuración" };
+  }
 
   // Deduplicate sessions before getting admin client
   await ensureSingleSession(shopDomain);
@@ -1514,7 +1534,7 @@ export async function forceCleanupStuckBulkJobs(shopDomain?: string): Promise<{ 
     }
   }
 
-  // Also clean running ImportLogs that have no associated queue item
+  // Also clean running ImportLogs that have no associated queue item or active BulkJob
   const orphanLogs = await prisma.importLog.findMany({
     where: { status: "running" },
     orderBy: { startedAt: "asc" },
@@ -1522,8 +1542,11 @@ export async function forceCleanupStuckBulkJobs(shopDomain?: string): Promise<{ 
   });
   for (const log of orphanLogs) {
     const ageMs = Date.now() - new Date(log.startedAt).getTime();
-    if (ageMs > 30 * 60 * 1000) {
-      const reason = `orphan ImportLog running por ${Math.round(ageMs/60000)}min`;
+    // Clean if running for >5 minutes with no progress (created+updated+unchanged = 0)
+    // or >15 minutes regardless
+    const noProgress = (log.created || 0) + (log.updated || 0) + (log.unchanged || 0) === 0;
+    if ((noProgress && ageMs > 5 * 60 * 1000) || ageMs > 15 * 60 * 1000) {
+      const reason = `orphan ImportLog running por ${Math.round(ageMs/60000)}min (sin progreso: ${noProgress})`;
       console.log(`[Bulk] Force cleanup: orphan log ${log.id.slice(0,8)} — ${reason}`);
       await prisma.importLog.update({ where: { id: log.id }, data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: reason, lineNumber: 0 }]) } });
       details.push(`Log ${log.id.slice(0,8)}: ${reason}`);
