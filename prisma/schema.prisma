@@ -258,8 +258,6 @@ model BulkJobOp {
   kind        String   // lookup | create | update
   index       Int      @default(0)
   status      String?  // pending | launched | processing | processed | failed
-  resultUrl   String?
-  resultPath  String?
   startedAt   DateTime?
   createdAt   DateTime @default(now())
   job         BulkJob  @relation(fields: [jobId], references: [id], onDelete: Cascade)

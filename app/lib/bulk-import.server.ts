@@ -1205,7 +1205,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
 
   await prisma.bulkJobOp.update({
     where: { id: op.id },
-    data: { status: "processed", resultPath: null },
+    data: { status: "processed" },
   });
 
   await prisma.bulkJob.update({
