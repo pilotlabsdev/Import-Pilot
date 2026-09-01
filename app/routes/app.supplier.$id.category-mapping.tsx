@@ -179,16 +179,18 @@ export default function CategoryMapping() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewTotal, setPreviewTotal] = useState(0);
   const [previewScanned, setPreviewScanned] = useState(0);
+  const [previewLimit, setPreviewLimit] = useState(5);
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; category: string } | null>(null);
 
-  const loadPreview = useCallback(async (mapping: any) => {
+  const loadPreview = useCallback(async (mapping: any, limit = 5) => {
     setPreviewMapping(mapping);
     setPreviewLoading(true);
     setPreviewItems([]);
     setPreviewTotal(0);
     setPreviewScanned(0);
+    setPreviewLimit(limit);
     try {
-      const params = new URLSearchParams({ configId, mappingId: mapping.id, limit: "20", scanLimit: "5000" });
+      const params = new URLSearchParams({ configId, mappingId: mapping.id, limit: String(limit), scanLimit: "5000" });
       const res = await fetch(`/api/rule-preview?${params}`);
       const d = await res.json();
       setPreviewItems(d.items || []);
@@ -198,6 +200,23 @@ export default function CategoryMapping() {
       setPreviewLoading(false);
     }
   }, [configId]);
+
+  const loadMorePreview = useCallback(async () => {
+    if (!previewMapping) return;
+    const newLimit = previewLimit + 20;
+    setPreviewLimit(newLimit);
+    setPreviewLoading(true);
+    try {
+      const params = new URLSearchParams({ configId, mappingId: previewMapping.id, limit: String(newLimit), scanLimit: "5000" });
+      const res = await fetch(`/api/rule-preview?${params}`);
+      const d = await res.json();
+      setPreviewItems(d.items || []);
+      setPreviewTotal(d.total || 0);
+      setPreviewScanned(d.scanned || 0);
+    } catch {} finally {
+      setPreviewLoading(false);
+    }
+  }, [previewMapping, previewLimit, configId]);
 
   useEffect(() => {
     const loadCategories = async () => {
@@ -499,8 +518,8 @@ export default function CategoryMapping() {
               <>
                 <Text as="p" tone="subdued">
                   {t("categories.showingProducts", { count: previewItems.length, total: previewTotal, category: previewMapping.csvCategory })}
-                  {previewScanned > 0 && previewItems.length < previewTotal && (
-                    <> — primeras {previewScanned.toLocaleString()} filas</>
+                  {previewScanned > 0 && (
+                    <> — {t("categories.scannedRows", { count: previewScanned.toLocaleString() })}</>
                   )}
                 </Text>
                 <DataTable
@@ -512,6 +531,13 @@ export default function CategoryMapping() {
                     item.category,
                   ])}
                 />
+                {previewItems.length < previewTotal && (
+                  <div style={{ marginTop: "12px", textAlign: "center" }}>
+                    <Button onClick={loadMorePreview} disabled={previewLoading}>
+                      {previewLoading ? t("common.loading") : t("categories.showMore")}
+                    </Button>
+                  </div>
+                )}
               </>
             )}
           </Modal.Section>
