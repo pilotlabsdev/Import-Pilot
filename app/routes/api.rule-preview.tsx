@@ -12,7 +12,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const configIdParam = url.searchParams.get("configId") || "";
   const ruleId = url.searchParams.get("ruleId") || "";
   const mappingId = url.searchParams.get("mappingId") || "";
-  const limit = Math.min(parseInt(url.searchParams.get("limit") || "20"), 50);
+  const limit = Math.min(parseInt(url.searchParams.get("limit") || "20"), 1000);
   const scanLimitParam = parseInt(url.searchParams.get("scanLimit") || "0");
   const scanLimit = scanLimitParam > 0 ? Math.min(scanLimitParam, 250000) : Infinity;
 
