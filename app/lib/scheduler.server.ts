@@ -88,9 +88,9 @@ export function startScheduler() {
       );
     }
 
-    // Clean stale queue items (queued >30min, running >10min)
+    // Clean stale queue items (queued >30min, running >30min)
     const STALE_QUEUED_MS = 30 * 60 * 1000;
-    const STALE_RUNNING_MS = 10 * 60 * 1000;
+    const STALE_RUNNING_MS = 30 * 60 * 1000;
     void prisma.importQueue.deleteMany({
       where: {
         status: "queued",
@@ -135,7 +135,7 @@ export function startScheduler() {
         if (!hasQueueItem) {
           await prisma.importLog.update({
             where: { id: log.id },
-            data: { status: "failed", completedAt: new Date(), errorMessage: "Timeout: orphan running log >10min" },
+            data: { status: "failed", completedAt: new Date(), errorMessage: "Timeout: orphan running log >30min" },
           }).catch(() => {});
           console.log(`[Scheduler] Limpiado orphan ImportLog ${log.id.slice(0, 8)}`);
         }
@@ -228,7 +228,7 @@ async function runScheduledImport(configId: string) {
       // If running for >10 minutes, it's stuck — clean it up
       if (activeQueueItem.status === "running" && activeQueueItem.startedAt) {
         const stuckMs = Date.now() - activeQueueItem.startedAt.getTime();
-        if (stuckMs > 600_000) {
+        if (stuckMs > 1_800_000) {
           console.log(`[Scheduler] ${configId.slice(0, 8)} tiene item running stale (${Math.round(stuckMs / 60_000)}min), limpiando`);
           await prisma.importQueue.update({
             where: { id: activeQueueItem.id },
@@ -237,7 +237,7 @@ async function runScheduledImport(configId: string) {
           if (activeQueueItem.logId) {
             await prisma.importLog.update({
               where: { id: activeQueueItem.logId },
-              data: { status: "failed", completedAt: new Date(), errorMessage: "Timeout: import stuck >10min" },
+            data: { status: "failed", completedAt: new Date(), errorMessage: "Timeout: import stuck >30min" },
             }).catch(() => {});
           }
         } else {
