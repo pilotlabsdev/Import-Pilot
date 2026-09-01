@@ -345,21 +345,23 @@ export async function getQueueStatus(shopDomain: string): Promise<{
       where: { id: log.configId },
       select: { id: true, name: true, csvUrl: true, importMode: true, dataSource: true, localFilePath: true },
     });
-    if (!config) continue;
 
-    const sourceLabel = config.dataSource === "file"
-      ? config.localFilePath?.split(/[/\\]/).pop() || "Archivo local"
-      : config.csvUrl || "URL";
+    // Show even if config was deleted — otherwise it's invisible
+    const sourceLabel = !config
+      ? "Configuración eliminada"
+      : config.dataSource === "file"
+        ? config.localFilePath?.split(/[/\\]/).pop() || "Archivo local"
+        : config.csvUrl || "URL";
 
     const processed = (log.created || 0) + (log.updated || 0) + (log.unchanged || 0) + (log.excludedCount || 0);
     const errorCount = log.errors ? (JSON.parse(log.errors) as any[]).length : 0;
 
     schedulerActive.push({
-      configId: config.id,
-      supplierName: config.name,
+      configId: log.configId,
+      supplierName: config?.name || null,
       sourceLabel,
       triggerType: log.triggerType || "scheduled",
-      importMode: config.importMode || "chunks",
+      importMode: config?.importMode || "chunks",
       logId: log.id,
       progress: {
         totalProducts: log.totalProducts || 0,
@@ -385,11 +387,13 @@ export async function getQueueStatus(shopDomain: string): Promise<{
       where: { id: bulkJob.configId },
       select: { id: true, name: true, csvUrl: true, importMode: true, dataSource: true, localFilePath: true },
     });
-    if (!config) continue;
 
-    const sourceLabel = config.dataSource === "file"
-      ? config.localFilePath?.split(/[/\\]/).pop() || "Archivo local"
-      : config.csvUrl || "URL";
+    // Show BulkJob even if config was deleted — otherwise it's invisible and unkillable
+    const sourceLabel = !config
+      ? "Configuración eliminada"
+      : config.dataSource === "file"
+        ? config.localFilePath?.split(/[/\\]/).pop() || "Archivo local"
+        : config.csvUrl || "URL";
 
     let progress = null;
     if (bulkJob.logId) {
@@ -414,12 +418,13 @@ export async function getQueueStatus(shopDomain: string): Promise<{
     }
 
     schedulerActive.push({
-      configId: config.id,
-      supplierName: config.name,
+      configId: bulkJob.configId,
+      supplierName: config?.name || null,
       sourceLabel,
       triggerType: "scheduled",
       importMode: "bulk",
       logId: bulkJob.logId,
+      bulkJobId: bulkJob.id,
       progress,
     });
   }

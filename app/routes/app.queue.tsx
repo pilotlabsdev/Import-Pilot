@@ -87,6 +87,20 @@ export default function QueuePage() {
     );
   };
 
+  const cancelBulkJob = (bulkJobId: string) => {
+    fetcher.submit(
+      { intent: "cancel-bulk-job", bulkJobId },
+      { method: "POST", action: `/api/import-queue?shop=${shopDomain}` }
+    );
+  };
+
+  const cancelLog = (logId: string) => {
+    fetcher.submit(
+      { intent: "cancel-log", logId },
+      { method: "POST", action: `/api/import-queue?shop=${shopDomain}` }
+    );
+  };
+
   const forceCleanup = () => {
     fetcher.submit(
       { intent: "force-cleanup" },
@@ -198,7 +212,19 @@ export default function QueuePage() {
                       ) : (
                         <Text as="span" variant="bodySm" tone="subdued">{t("queue.starting")}</Text>
                       )}
-                      <Button size="slim" tone="critical" onClick={() => cancelScheduled(item.configId, item.importMode)}>
+                      <Button
+                        size="slim"
+                        tone="critical"
+                        onClick={() => {
+                          if (item.bulkJobId) {
+                            cancelBulkJob(item.bulkJobId);
+                          } else if (item.logId && !item.configId) {
+                            cancelLog(item.logId);
+                          } else {
+                            cancelScheduled(item.configId, item.importMode);
+                          }
+                        }}
+                      >
                         {t("common.cancel")}
                       </Button>
                     </BlockStack>

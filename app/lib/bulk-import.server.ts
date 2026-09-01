@@ -1205,7 +1205,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
 
   await prisma.bulkJobOp.update({
     where: { id: op.id },
-    data: { status: "processed", resultPath },
+    data: { status: "processed", resultPath: null },
   });
 
   await prisma.bulkJob.update({
@@ -1472,6 +1472,7 @@ export async function forceCleanupStuckBulkJobs(shopDomain?: string): Promise<{ 
       console.log(`[Bulk] Force cleanup: job ${job.id.slice(0,8)} — ${reason}`);
       await prisma.bulkJobOp.deleteMany({ where: { jobId: job.id } });
       await prisma.bulkJob.update({ where: { id: job.id }, data: { phase: "failed" } });
+      if (job.workDir) await fs.rm(job.workDir, { recursive: true, force: true }).catch(() => {});
       const log = await prisma.importLog.findUnique({ where: { id: job.logId } });
       if (log && log.status === "running") {
         await prisma.importLog.update({ where: { id: log.id }, data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: reason, lineNumber: 0 }]) } });
@@ -1487,6 +1488,7 @@ export async function forceCleanupStuckBulkJobs(shopDomain?: string): Promise<{ 
       console.log(`[Bulk] Force cleanup: job ${job.id.slice(0,8)} — ${reason}`);
       await prisma.bulkJobOp.deleteMany({ where: { jobId: job.id } });
       await prisma.bulkJob.update({ where: { id: job.id }, data: { phase: "failed" } });
+      if (job.workDir) await fs.rm(job.workDir, { recursive: true, force: true }).catch(() => {});
       const log = await prisma.importLog.findUnique({ where: { id: job.logId } });
       if (log && log.status === "running") {
         await prisma.importLog.update({ where: { id: log.id }, data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: reason, lineNumber: 0 }]) } });
@@ -1502,6 +1504,7 @@ export async function forceCleanupStuckBulkJobs(shopDomain?: string): Promise<{ 
       console.log(`[Bulk] Force cleanup: job ${job.id.slice(0,8)} — ${reason}`);
       await prisma.bulkJobOp.deleteMany({ where: { jobId: job.id } });
       await prisma.bulkJob.update({ where: { id: job.id }, data: { phase: "failed" } });
+      if (job.workDir) await fs.rm(job.workDir, { recursive: true, force: true }).catch(() => {});
       const log = await prisma.importLog.findUnique({ where: { id: job.logId } });
       if (log && log.status === "running") {
         await prisma.importLog.update({ where: { id: log.id }, data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: reason, lineNumber: 0 }]) } });
