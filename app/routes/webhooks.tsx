@@ -7,8 +7,10 @@ import { enforcePlanLimits, upsertSubscription } from "~/lib/billing.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { topic, shop, session, payload } = await authenticate.webhook(request);
+  console.log(`[Webhook] Received: topic=${topic}, shop=${shop}, session=${session ? "present" : "null"}`);
 
   if (!session) {
+    console.warn(`[Webhook] No session for ${shop}, returning 410`);
     throw new Response(null, { status: 410 });
   }
 

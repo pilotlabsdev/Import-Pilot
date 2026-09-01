@@ -1565,10 +1565,31 @@ export async function reconcileStaleBulkJobs(): Promise<void> {
       continue;
     }
 
+    // If lookup phase has lookupOpId but no mutations after 15 minutes → webhook never arrived
+    if (job.phase === "lookup" && job.lookupOpId && ageMs > 15 * 60 * 1000) {
+      console.error(`[Bulk] Job ${job.id.slice(0,8)} stuck in lookup phase with lookupOpId=${job.lookupOpId} after ${Math.round(ageMs/60000)}min (webhook never arrived) → failing`);
+      await failJob(job, `Webhook BULK_OPERATIONS_FINISH nunca llegó para lookup ${job.lookupOpId}. Verifica que la app esté instalada y los webhooks registrados.`);
+      continue;
+    }
+
     // If mutations phase has no manifestPath after 10 minutes → fail it
     if (job.phase === "mutations" && !job.manifestPath && ageMs > 10 * 60 * 1000) {
       console.error(`[Bulk] Job ${job.id.slice(0,8)} stuck in mutations phase with no manifestPath after ${Math.round(ageMs/60000)}min → failing`);
       await failJob(job, "Mutations sin manifest (posible fallo durante preparación).");
+      continue;
+    }
+
+    // If mutations phase with no progress (mutationOpsDone = 0) after 20 minutes → webhook failing
+    if (job.phase === "mutations" && job.manifestPath && (job.mutationOpsDone || 0) === 0 && ageMs > 20 * 60 * 1000) {
+      console.error(`[Bulk] Job ${job.id.slice(0,8)} stuck in mutations phase with 0 ops done after ${Math.round(ageMs/60000)}min → failing`);
+      await failJob(job, "Mutations sin progreso (webhooks de mutaciones no llegaron). Verifica los webhooks.");
+      continue;
+    }
+
+    // Any job older than 1 hour → fail it
+    if (ageMs > 60 * 60 * 1000) {
+      console.error(`[Bulk] Job ${job.id.slice(0,8)} alive for ${Math.round(ageMs/60000)}min → failing (max lifetime exceeded)`);
+      await failJob(job, `Job excedió tiempo máximo de vida (${Math.round(ageMs/60000)}min).`);
       continue;
     }
 
@@ -1585,7 +1606,7 @@ export async function reconcileStaleBulkJobs(): Promise<void> {
       }
     } catch (error: any) {
       const msg = error?.message || "";
-      const isAuth = msg.includes("Token inválido") || msg.includes("Session not found") || msg.includes("Unauthorized");
+      const isAuth = msg.includes("Token inválido") || msg.includes("Session not found") || msg.includes("Unauthorized") || msg.includes("No se pudo crear admin client");
       console.error(
         `[Bulk] Error reanudando job ${job.id} (fase ${job.phase}):`,
         msg || error
@@ -1594,6 +1615,7 @@ export async function reconcileStaleBulkJobs(): Promise<void> {
         console.error(`[Bulk] Auth error in reconcile → failing job ${job.id.slice(0,8)}: ${msg}`);
         await failJob(job, `Token inválido: ${msg}. Reinstala la app para obtener un nuevo token.`);
       }
+      // Non-auth errors: log but continue to next reconcile cycle
     }
   }
 }
