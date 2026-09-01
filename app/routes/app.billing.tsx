@@ -116,7 +116,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         plan: planHandle as any,
         isTest,
         trialDays: newTrialDays,
-        returnUrl: `${process.env.SHOPIFY_APP_URL}/app/billing`,
+        returnUrl: `${process.env.SHOPIFY_APP_URL}/app/billing?plan_handle=${encodeURIComponent(planHandle)}`,
       });
     } catch (error: any) {
       console.log("[Billing Action] billing.request catch:", error?.constructor?.name, error?.message);
