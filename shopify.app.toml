@@ -8,7 +8,7 @@ embedded = true
 extension_directories = []
 
 [access_scopes]
-scopes = "write_products,read_products,read_inventory,write_inventory,read_locations,write_product_listings,read_product_listings,read_channels,write_channels,read_metaobject_definitions,write_metaobject_definitions,read_metaobjects,write_metaobjects,write_files"
+scopes = "read_channels,write_channels,write_inventory,read_inventory,read_locations,read_markets,write_markets,read_metaobject_definitions,write_metaobject_definitions,read_metaobjects,write_metaobjects,read_product_listings,write_product_listings,read_products,write_products,read_script_tags,write_script_tags"
 
 [auth]
 redirect_urls = [
