@@ -100,10 +100,30 @@ export function startScheduler() {
 
         const activeQueueItem = await prisma.importQueue.findFirst({
           where: { configId: config.id, status: { in: ["queued", "running"] } },
-          select: { id: true },
+          select: { id: true, status: true, startedAt: true, logId: true },
         }).catch(() => null);
         if (activeQueueItem) {
-          continue;
+          // If running for >10 minutes, it's stuck — clean it up
+          if (activeQueueItem.status === "running" && activeQueueItem.startedAt) {
+            const stuckMs = Date.now() - activeQueueItem.startedAt.getTime();
+            if (stuckMs > 600_000) {
+              console.log(`[Scheduler] Heartbeat: ${config.name} tiene item running stale (${Math.round(stuckMs / 60_000)}min), limpiando`);
+              await prisma.importQueue.update({
+                where: { id: activeQueueItem.id },
+                data: { status: "failed", finishedAt: new Date() },
+              }).catch(() => {});
+              if (activeQueueItem.logId) {
+                await prisma.importLog.update({
+                  where: { id: activeQueueItem.logId },
+                  data: { status: "failed", completedAt: new Date(), errorMessage: "Timeout: import stuck >10min" },
+                }).catch(() => {});
+              }
+            } else {
+              continue;
+            }
+          } else {
+            continue;
+          }
         }
 
         // Cooldown check: don't reschedule if there's a recent import
@@ -137,6 +157,31 @@ export function startScheduler() {
       }).catch(() => ({ count: 0 }));
       if (staleQueued.count > 0) {
         console.log(`[Scheduler] Heartbeat: limpiados ${staleQueued.count} items stale en cola`);
+      }
+
+      // Clean stale "running" queue items (stuck after process restart/crash)
+      const STALE_RUNNING_MS = 10 * 60 * 1000;
+      const staleRunningItems = await prisma.importQueue.findMany({
+        where: {
+          status: "running",
+          startedAt: { lt: new Date(Date.now() - STALE_RUNNING_MS) },
+        },
+        select: { id: true, configId: true, logId: true },
+      }).catch(() => []);
+      if (staleRunningItems.length > 0) {
+        console.log(`[Scheduler] Heartbeat: limpiando ${staleRunningItems.length} items running stale (>10min)`);
+        for (const item of staleRunningItems) {
+          await prisma.importQueue.update({
+            where: { id: item.id },
+            data: { status: "failed", finishedAt: new Date() },
+          }).catch(() => {});
+          if (item.logId) {
+            await prisma.importLog.update({
+              where: { id: item.logId },
+              data: { status: "failed", completedAt: new Date(), errorMessage: "Timeout: import stuck >10min" },
+            }).catch(() => {});
+          }
+        }
       }
     }).catch(() => {});
   }, 60_000);
@@ -220,12 +265,34 @@ async function runScheduledImport(configId: string) {
 
     const activeQueueItem = await prisma.importQueue.findFirst({
       where: { configId, status: { in: ["queued", "running"] } },
-      select: { id: true, status: true },
+      select: { id: true, status: true, startedAt: true, logId: true },
     }).catch(() => null);
     if (activeQueueItem) {
-      console.log(`[Scheduler] ${configId.slice(0, 8)} ya tiene item en cola/running (${activeQueueItem.status}), skip`);
-      scheduleNext(configId, scheduledFrequencies.get(configId) || "4h", null);
-      return;
+      // If running for >10 minutes, it's stuck — clean it up
+      if (activeQueueItem.status === "running" && activeQueueItem.startedAt) {
+        const stuckMs = Date.now() - activeQueueItem.startedAt.getTime();
+        if (stuckMs > 600_000) {
+          console.log(`[Scheduler] ${configId.slice(0, 8)} tiene item running stale (${Math.round(stuckMs / 60_000)}min), limpiando`);
+          await prisma.importQueue.update({
+            where: { id: activeQueueItem.id },
+            data: { status: "failed", finishedAt: new Date() },
+          }).catch(() => {});
+          if (activeQueueItem.logId) {
+            await prisma.importLog.update({
+              where: { id: activeQueueItem.logId },
+              data: { status: "failed", completedAt: new Date(), errorMessage: "Timeout: import stuck >10min" },
+            }).catch(() => {});
+          }
+        } else {
+          console.log(`[Scheduler] ${configId.slice(0, 8)} ya tiene item en cola/running (${activeQueueItem.status}), skip`);
+          scheduleNext(configId, scheduledFrequencies.get(configId) || "4h", null);
+          return;
+        }
+      } else {
+        console.log(`[Scheduler] ${configId.slice(0, 8)} ya tiene item en cola/running (${activeQueueItem.status}), skip`);
+        scheduleNext(configId, scheduledFrequencies.get(configId) || "4h", null);
+        return;
+      }
     }
 
     const recentLog = await prisma.importLog.findFirst({

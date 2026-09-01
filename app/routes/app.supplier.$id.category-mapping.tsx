@@ -108,7 +108,31 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   if (intent === "delete") {
     const id = formData.get("mappingId") as string;
-    await prisma.categoryCollectionMapping.delete({ where: { id } });
+    if (id === "group") {
+      // Delete all mappings whose group matches any of the categories in the group
+      // We find the group by looking up any existing mapping and using the same group key
+      const categoryParam = formData.get("categories") as string;
+      if (categoryParam) {
+        const cats = categoryParam.split(",").map((c) => c.trim());
+        const existingMappings = await prisma.categoryCollectionMapping.findMany({
+          where: { configId, csvCategory: { in: cats } },
+        });
+        if (existingMappings.length > 0) {
+          const first = existingMappings[0];
+          const groupKey = [first.collectionId, first.shopifyProductType || "", first.tags || ""].join("::");
+          const allMappings = await prisma.categoryCollectionMapping.findMany({ where: { configId } });
+          const toDelete = allMappings.filter((m) => {
+            const key = [m.collectionId, m.shopifyProductType || "", m.tags || ""].join("::");
+            return key === groupKey;
+          });
+          await prisma.categoryCollectionMapping.deleteMany({
+            where: { id: { in: toDelete.map((m) => m.id) } },
+          });
+        }
+      }
+    } else {
+      await prisma.categoryCollectionMapping.delete({ where: { id } });
+    }
     return data({ success: true });
   }
 
@@ -121,6 +145,17 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         data: { isActive: !current.isActive },
       });
     }
+    return data({ success: true });
+  }
+
+  if (intent === "toggleGroup") {
+    const ids = formData.getAll("mappingIds") as string[];
+    const mappings = await prisma.categoryCollectionMapping.findMany({ where: { id: { in: ids } } });
+    const allActive = mappings.every((m) => m.isActive);
+    await prisma.categoryCollectionMapping.updateMany({
+      where: { id: { in: ids } },
+      data: { isActive: !allActive },
+    });
     return data({ success: true });
   }
 
@@ -417,7 +452,9 @@ export default function CategoryMapping() {
                 {t("categories.noMappings")}
               </Text>
             ) : (
-              Object.entries(groupedMappings).map(([groupKey, catMappings]) => (
+              Object.entries(groupedMappings).map(([groupKey, catMappings]) => {
+                const allActive = catMappings.every((m) => m.isActive);
+                return (
                 <BlockStack key={groupKey} gap="200">
                   <Divider />
                   <InlineStack gap="300" blockAlign="center">
@@ -439,23 +476,22 @@ export default function CategoryMapping() {
                     <Button size="slim" onClick={() => setEditingCategory(catMappings[0].csvCategory)}>
                       {t("common.edit")}
                     </Button>
-                    {catMappings.map((m) => (
-                      <Form key={m.id} method="post" style={{ display: "inline" }}>
-                        <input type="hidden" name="intent" value="toggle" />
-                        <input type="hidden" name="mappingId" value={m.id} />
-                        <Button submit size="slim" variant={m.isActive ? "primary" : "secondary"}>
-                          {m.isActive ? t("categories.active") : t("categories.inactive")}
-                        </Button>
-                      </Form>
-                    ))}
-                    {catMappings.map((m) => (
-                      <Button key={`del-${m.id}`} size="slim" variant="primary" tone="critical" onClick={() => setDeleteConfirm({ id: m.id, category: m.csvCategory })}>
-                        ×
+                    <Form method="post" style={{ display: "inline" }}>
+                      <input type="hidden" name="intent" value="toggleGroup" />
+                      {catMappings.map((m) => (
+                        <input key={m.id} type="hidden" name="mappingIds" value={m.id} />
+                      ))}
+                      <Button submit size="slim" variant={allActive ? "primary" : "secondary"}>
+                        {allActive ? t("categories.active") : t("categories.inactive")}
                       </Button>
-                    ))}
+                    </Form>
+                    <Button size="slim" variant="primary" tone="critical" onClick={() => setDeleteConfirm({ id: "group", category: catMappings.map((m) => m.csvCategory).join(", ") })}>
+                      ×
+                    </Button>
                   </div>
                 </BlockStack>
-              ))
+                );
+              })
             )}
           </BlockStack>
         </Card>
@@ -518,10 +554,11 @@ export default function CategoryMapping() {
           primaryAction={{
             content: t("common.delete"),
             onAction: () => {
-              fetcher.submit(
-                { intent: "delete", mappingId: deleteConfirm.id },
-                { method: "post" }
-              );
+              const submitData: Record<string, string> = { intent: "delete", mappingId: deleteConfirm.id };
+              if (deleteConfirm.id === "group") {
+                submitData.categories = deleteConfirm.category;
+              }
+              fetcher.submit(submitData, { method: "post" });
               setDeleteConfirm(null);
             },
             destructive: true,
