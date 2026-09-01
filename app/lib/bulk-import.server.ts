@@ -47,6 +47,33 @@ async function gql(admin: any, query: string, varsOrOptions?: any): Promise<any>
   }
 }
 
+// Like gql() but auto-refreshes token on 401 and retries with new admin client.
+// Used in long-running operations (bulk mutations, chunks) where token may expire mid-import.
+async function gqlWithRefresh(shopDomain: string, adminRef: { current: any }, query: string, varsOrOptions?: any): Promise<any> {
+  const vars = varsOrOptions?.variables !== undefined ? varsOrOptions.variables : varsOrOptions;
+  try {
+    return await rateLimitedGraphql(adminRef.current, query, vars || {});
+  } catch (e: any) {
+    const msg = e?.message || "";
+    const isAuth = msg.includes("Unauthorized") || msg.includes("Session not found") || e?.response?.status === 401;
+    if (!isAuth) throw e;
+
+    // Token expired mid-import → refresh and retry once
+    console.log(`[Bulk] Token expired mid-import for ${shopDomain}, refreshing...`);
+    const newToken = await refreshAccessToken(shopDomain);
+    if (!newToken) {
+      throw new Error(`Token expirado para ${shopDomain} y no se pudo refrescar. El merchant debe acceder al admin para renovar.`);
+    }
+
+    // Recreate admin client with new token
+    const { admin: newAdmin } = await shopify.unauthenticated.admin(shopDomain);
+    adminRef.current = newAdmin;
+    console.log(`[Bulk] Token refreshed mid-import for ${shopDomain}, retrying...`);
+
+    return rateLimitedGraphql(adminRef.current, query, vars || {});
+  }
+}
+
 export async function cancelBulkImport(configId: string, shopDomain: string): Promise<{ success: boolean; message: string }> {
   // Find active BulkJob for this config
   const activeJob = await prisma.bulkJob.findFirst({

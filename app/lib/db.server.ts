@@ -187,7 +187,7 @@ export async function cleanupOldLogs(configId: string): Promise<number> {
  */
 export async function refreshAccessToken(shop: string): Promise<string | null> {
   const session = await prisma.session.findFirst({
-    where: { shop },
+    where: { shop, isOnline: false },
     select: { id: true, refreshToken: true, refreshTokenExpires: true },
     orderBy: { expires: "desc" },
   });
@@ -257,8 +257,9 @@ export async function refreshAccessToken(shop: string): Promise<string | null> {
  * - No refresh token → return null
  */
 export async function ensureFreshToken(shop: string): Promise<string | null> {
+  // Always use offline token for background jobs (bulk imports, webhooks, etc.)
   const session = await prisma.session.findFirst({
-    where: { shop },
+    where: { shop, isOnline: false },
     select: { accessToken: true, expires: true, refreshToken: true, refreshTokenExpires: true },
     orderBy: { expires: "desc" },
   });
