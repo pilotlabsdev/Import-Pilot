@@ -28,8 +28,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const getField = (row: Record<string, string | undefined>, field: string) => {
     const m = (columnMaps || []).find((c: any) => c.shopifyField === field);
-    if (!m || !m.csvColumn) return m?.defaultValue || "";
-    return row[m.csvColumn] || m.defaultValue || "";
+    if (m?.csvColumn) return row[m.csvColumn] || m.defaultValue || "";
+    const fallbackKeys = ["category", "categories", "tipo_producto", "product_type"];
+    for (const key of fallbackKeys) {
+      if (row[key]) return row[key];
+    }
+    return m?.defaultValue || "";
   };
 
   if (ruleId) {

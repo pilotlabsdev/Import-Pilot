@@ -67,7 +67,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   if (!config || config.shopDomain !== shopDomain) throw new Response("Not found", { status: 404 });
 
   if (intent === "save") {
-    const csvCategoriesForm = formData.getAll("csvCategories") as string[];
+    const csvCategoriesForm = (formData.getAll("csvCategories") as string[]).map(c => c.trim());
     const collectionIds = formData.getAll("collectionIds") as string[];
     const collectionNames = formData.getAll("collectionNames") as string[];
     const categoryTags = formData.getAll("categoryTags") as string[];
@@ -169,10 +169,10 @@ export default function CategoryMapping() {
   }, [actionData]);
 
   useEffect(() => {
-    if (fetcher.data?.success) {
+    if (fetcher.state === "idle" && fetcher.data) {
       revalidate();
     }
-  }, [fetcher.data]);
+  }, [fetcher.state, fetcher.data]);
 
   const [csvCategories, setCsvCategories] = useState<string[]>([]);
   const [loadingCategories, setLoadingCategories] = useState(true);
