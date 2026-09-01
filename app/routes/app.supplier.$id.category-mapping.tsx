@@ -263,7 +263,7 @@ export default function CategoryMapping() {
 
   const mappedCategories = new Set(mappings.map((m) => m.csvCategory.toLowerCase()));
   const filteredCategories = csvCategories.filter((c) =>
-    !mappedCategories.has(c.toLowerCase()) && c.toLowerCase().includes(catSearch.toLowerCase())
+    c.toLowerCase().includes(catSearch.toLowerCase())
   );
 
   const groupedMappings = mappings.reduce<Record<string, typeof mappings>>((acc, m) => {
@@ -346,15 +346,19 @@ export default function CategoryMapping() {
                         {t("categories.noFound")}
                       </Listbox.Option>
                     )}
-                    {filteredCategories.map((cat) => (
-                      <Listbox.Option
-                        key={cat}
-                        value={cat}
-                        selected={selectedCategories.includes(cat)}
-                      >
-                        {cat}
-                      </Listbox.Option>
-                    ))}
+                    {filteredCategories.map((cat) => {
+                      const isMapped = mappedCategories.has(cat.toLowerCase());
+                      return (
+                        <Listbox.Option
+                          key={cat}
+                          value={cat}
+                          selected={selectedCategories.includes(cat)}
+                          disabled={isMapped}
+                        >
+                          {isMapped ? `✓ ${cat}` : cat}
+                        </Listbox.Option>
+                      );
+                    })}
                   </Listbox>
                 </Combobox>
                 </div>

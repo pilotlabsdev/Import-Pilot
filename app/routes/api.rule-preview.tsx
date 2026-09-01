@@ -100,7 +100,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       scanned++;
       const { row } = item;
       const category = getField(row, "category");
-      if (!category.trim().toLowerCase().startsWith(mapping.csvCategory.trim().toLowerCase())) continue;
+      if (category.trim().toLowerCase() !== mapping.csvCategory.trim().toLowerCase()) continue;
 
       const sku = row["sku"] || "";
       items.push({
