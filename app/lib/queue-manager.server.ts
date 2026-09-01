@@ -149,7 +149,7 @@ async function processQueueItem(
     const { admin } = await shopify.unauthenticated.admin(shopDomain);
 
     if (item.importMode === "bulk") {
-      await runBulkImport({
+      const bulkResult = await runBulkImport({
         shopDomain,
         configId: item.configId,
         triggerType: item.triggerType,
@@ -159,12 +159,12 @@ async function processQueueItem(
         forceUpdate: item.forceUpdate,
       });
 
-      const duration = `${Math.round((Date.now() - startTime) / 1000)}s`;
       await prisma.importQueue.update({
         where: { id: item.id },
-        data: { status: "completed", finishedAt: new Date() },
+        data: { status: "completed", finishedAt: new Date(), logId: bulkResult.logId },
       });
 
+      const duration = `${Math.round((Date.now() - startTime) / 1000)}s`;
       await sendNotification({
         shopDomain,
         status: "completed",
