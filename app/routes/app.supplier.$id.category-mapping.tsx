@@ -226,10 +226,11 @@ export default function CategoryMapping() {
   );
 
   const groupedMappings = mappings.reduce<Record<string, typeof mappings>>((acc, m) => {
-    if (!acc[m.csvCategory]) acc[m.csvCategory] = [];
-    acc[m.csvCategory].push(m);
+    const key = `${m.collectionId}|${m.shopifyProductType || ""}|${m.tags || ""}`;
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(m);
     return acc;
-  }, {});
+  }, {} as Record<string, typeof mappings>);
 
   const allCollectionIds = Object.keys(selectedCollections);
 
@@ -416,44 +417,42 @@ export default function CategoryMapping() {
                 {t("categories.noMappings")}
               </Text>
             ) : (
-              Object.entries(groupedMappings).map(([category, catMappings]) => (
-                <BlockStack key={category} gap="200">
+              Object.entries(groupedMappings).map(([groupKey, catMappings]) => (
+                <BlockStack key={groupKey} gap="200">
                   <Divider />
                   <InlineStack gap="300" blockAlign="center">
                     <Text as="h3" variant="headingSm">
-                      {category}
+                      {catMappings.map((m) => m.csvCategory).join(", ")}
                     </Text>
+                    <Badge tone="success">→ {catMappings[0]?.collectionName || catMappings[0]?.collectionId}</Badge>
                     {catMappings[0]?.shopifyProductType ? (
-                      <Badge tone="success">{t("categories.typeLabel", { type: catMappings[0].shopifyProductType })}</Badge>
+                      <Badge tone="info">{t("categories.typeLabel", { type: catMappings[0].shopifyProductType })}</Badge>
                     ) : null}
                   </InlineStack>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
-                    {catMappings.map((m) => (
-                      <InlineStack key={m.id} gap="200" blockAlign="center">
-                        <Text as="span" variant="bodySm">
-                          → {m.collectionName || m.collectionId}
-                        </Text>
-                        {m.tags ? (
-                          <Badge tone="info">{m.tags}</Badge>
-                        ) : null}
-                        <Button size="slim" icon={ViewIcon} onClick={() => setPreviewMapping(m)}>
-                          {t("common.view")}
-                        </Button>
-                        <Form method="post" style={{ display: "inline" }}>
-                          <input type="hidden" name="intent" value="toggle" />
-                          <input type="hidden" name="mappingId" value={m.id} />
-                          <Button submit size="slim" variant={m.isActive ? "primary" : "secondary"}>
-                            {m.isActive ? t("categories.active") : t("categories.inactive")}
-                          </Button>
-                        </Form>
-                        <Button size="slim" variant="primary" tone="critical" onClick={() => setDeleteConfirm({ id: m.id, category })}>
-                          ×
-                        </Button>
-                      </InlineStack>
-                    ))}
-                    <Button size="slim" onClick={() => setEditingCategory(category)}>
+                    {catMappings[0]?.tags ? (
+                      <Badge tone="attention">{catMappings[0].tags}</Badge>
+                    ) : null}
+                    <Button size="slim" icon={ViewIcon} onClick={() => setPreviewMapping(catMappings[0])}>
+                      {t("common.view")}
+                    </Button>
+                    <Button size="slim" onClick={() => setEditingCategory(catMappings[0].csvCategory)}>
                       {t("common.edit")}
                     </Button>
+                    {catMappings.map((m) => (
+                      <Form key={m.id} method="post" style={{ display: "inline" }}>
+                        <input type="hidden" name="intent" value="toggle" />
+                        <input type="hidden" name="mappingId" value={m.id} />
+                        <Button submit size="slim" variant={m.isActive ? "primary" : "secondary"}>
+                          {m.isActive ? t("categories.active") : t("categories.inactive")}
+                        </Button>
+                      </Form>
+                    ))}
+                    {catMappings.map((m) => (
+                      <Button key={`del-${m.id}`} size="slim" variant="primary" tone="critical" onClick={() => setDeleteConfirm({ id: m.id, category: m.csvCategory })}>
+                        ×
+                      </Button>
+                    ))}
                   </div>
                 </BlockStack>
               ))
@@ -465,7 +464,7 @@ export default function CategoryMapping() {
       {editingCategory && (
         <EditCategoryModal
           csvCategory={editingCategory}
-          catMappings={groupedMappings[editingCategory] || []}
+          catMappings={Object.values(groupedMappings).find(group => group.some(m => m.csvCategory === editingCategory)) || []}
           shopifyCollections={shopifyCollections}
           shopifyProductTypes={shopifyProductTypes}
           shopDomain={shopDomain}

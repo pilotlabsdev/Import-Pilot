@@ -253,6 +253,7 @@ export default function Preview() {
 
     return [
       <code key={`s-${p.sku}`}>{p.sku}</code>,
+      p.ean || "—",
       p.name,
       <Badge
         key={`a-${p.sku}`}
@@ -451,8 +452,8 @@ export default function Preview() {
             <div data-tutorial="preview-table">
             <Card padding="0">
                 <DataTable
-                  columnContentTypes={["text", "text", "text", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "text", "text"]}
-                  headings={[t("common.sku"), t("common.name"), t("preview.action"), t("preview.cost"), t("common.price"), t("preview.comparison"), t("preview.priceComparison"), t("preview.compareShopify"), t("preview.stockCsv"), t("preview.stockShopify"), t("preview.stockTotal"), t("common.category"), t("common.errors")]}
+                  columnContentTypes={["text", "text", "text", "text", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "text", "text"]}
+                  headings={[t("common.sku"), t("common.ean"), t("common.name"), t("preview.action"), t("preview.cost"), t("common.price"), t("preview.comparison"), t("preview.priceComparison"), t("preview.compareShopify"), t("preview.stockCsv"), t("preview.stockShopify"), t("preview.stockTotal"), t("common.category"), t("common.errors")]}
                   rows={tableRows}
                 />
               </Card>

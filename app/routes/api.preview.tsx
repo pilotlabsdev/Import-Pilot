@@ -457,6 +457,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
       builtPageItems.push({
         sku,
+        ean,
         name: getFieldVal("title") || "Sin nombre",
         action: exclusion.excluded ? "excluded" : skipForStock ? "skip" : action,
         costPrice,
