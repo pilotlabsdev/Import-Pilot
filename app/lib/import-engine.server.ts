@@ -1348,6 +1348,27 @@ async function processProduct({
     }
   }
   if (existing) {
+    // === CHANGE DETECTION: compare against last known values ===
+    const lastPrice = existing.lastPrice ?? null;
+    const lastQty = existing.lastQuantity ?? null;
+    const lastCost = existing.lastCost ?? null;
+
+    const priceChanged = updateOpts.has("price") && (lastPrice === null || lastPrice !== prices.regularPrice);
+    const stockChanged = updateOpts.has("stock") && existing.shopifyInventoryItemId && (lastQty === null || lastQty !== newQty);
+    const costChanged = costPrice > 0 && existing.shopifyInventoryItemId && Math.abs((lastCost ?? 0) - costPrice) > 0.001;
+
+    const imagesChanged = updateOpts.has("images") && productInput.files.length > 0;
+
+    // Only count as "unchanged" if price/stock/cost/images didn't change
+    // Data fields are always sent (idempotent) but don't count toward "updated"
+    if (!priceChanged && !stockChanged && !costChanged && !imagesChanged) {
+      console.log(`[Import] SKU ${sku}: unchanged (lastPrice=${lastPrice}, csvPrice=${prices.regularPrice}, lastQty=${lastQty}, csvQty=${newQty})`);
+      result.unchanged++;
+      return;
+    }
+
+    console.log(`[Import] SKU ${sku}: updating (priceChanged=${priceChanged}, stockChanged=${stockChanged}, costChanged=${costChanged}, imagesChanged=${imagesChanged})`);
+
     const productPatch: any = { id: existing.shopifyProductId };
     if (updateOpts.has("name")) productPatch.title = productInput.title;
     if (updateOpts.has("description")) {
@@ -1384,7 +1405,7 @@ async function processProduct({
       }
     }
 
-    if (updateOpts.has("images") && productInput.files.length > 0) {
+    if (imagesChanged) {
       try {
         await graphqlWithRetry(admin,
           `#graphql
@@ -1398,7 +1419,7 @@ async function processProduct({
       }
     }
 
-    if (updateOpts.has("price")) {
+    if (priceChanged) {
       const ean = getField(row, columnMaps, "ean");
       await graphqlWithRetry(admin,
         `#graphql
@@ -1420,7 +1441,7 @@ async function processProduct({
       );
     }
 
-    if (updateOpts.has("stock") && existing.shopifyInventoryItemId) {
+    if (stockChanged && existing.shopifyInventoryItemId) {
       if (config.skipZeroStockCreate && newQty <= 0) {
         console.log(`[Import] Stock skip zero: SKU ${sku}, newQty=${newQty}`);
       } else if (processedInventoryItems.has(existing.shopifyInventoryItemId)) {
@@ -1433,49 +1454,33 @@ async function processProduct({
           console.error("[Import] Error ajustando inventario:", error);
         }
       }
-    } else if (updateOpts.has("stock")) {
+    } else if (stockChanged) {
       console.log(`[Import] Stock skip: no inventoryItemId (existing.shopifyInventoryItemId=${existing.shopifyInventoryItemId})`);
     }
 
-    if (existing.shopifyInventoryItemId) {
+    if (costChanged && existing.shopifyInventoryItemId) {
       const costo = getField(row, columnMaps, "price");
       const costValue = costo ? parseFloat(costo.replace(",", ".")) || 0 : 0;
-      let shopifyCost = 0;
       try {
-        const costRes = await graphqlWithRetry(admin,
+        await graphqlWithRetry(admin,
           `#graphql
-          query invCost($id: ID!) {
-            inventoryItem(id: $id) {
-              unitCost { amount }
+          mutation inventoryItemUpdate($id: ID!, $input: InventoryItemInput!) {
+            inventoryItemUpdate(id: $id, input: $input) {
+              inventoryItem { id unitCost { amount } }
+              userErrors { field message }
             }
           }`,
-          { id: existing.shopifyInventoryItemId }
+          {
+            id: existing.shopifyInventoryItemId,
+            input: { cost: String(costValue) },
+          }
         );
-        shopifyCost = parseFloat(costRes.data?.inventoryItem?.unitCost?.amount) || 0;
-      } catch {}
-      console.log(`[Import] SKU ${sku}: cost check: costValue=${costValue}, shopifyCost=${shopifyCost}, lastCost=${existing.lastCost}`);
-      if (costValue > 0 && costValue !== shopifyCost) {
-        try {
-          await graphqlWithRetry(admin,
-            `#graphql
-            mutation inventoryItemUpdate($id: ID!, $input: InventoryItemInput!) {
-              inventoryItemUpdate(id: $id, input: $input) {
-                inventoryItem { id unitCost { amount } }
-                userErrors { field message }
-              }
-            }`,
-            {
-              id: existing.shopifyInventoryItemId,
-              input: { cost: String(costValue) },
-            }
-          );
-          await prisma.productMapping.update({
-            where: { id: existing.id },
-            data: { lastCost: costValue },
-          });
-        } catch (error: any) {
-          console.error("[Import] Error seteando costo:", error?.message || error);
-        }
+        await prisma.productMapping.update({
+          where: { id: existing.id },
+          data: { lastCost: costValue },
+        });
+      } catch (error: any) {
+        console.error("[Import] Error seteando costo:", error?.message || error);
       }
     }
 
