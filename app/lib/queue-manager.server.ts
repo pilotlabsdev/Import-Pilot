@@ -184,12 +184,13 @@ async function processQueueItem(
         filterCategories: item.filterCategories || undefined,
         triggerType: item.triggerType,
         signal: lock.signal,
+        queueItemId: item.id,
       });
 
       const duration = `${Math.round((Date.now() - startTime) / 1000)}s`;
       await prisma.importQueue.update({
         where: { id: item.id },
-        data: { status: "completed", finishedAt: new Date() },
+        data: { status: "completed", finishedAt: new Date(), logId: result.logId },
       });
 
       await sendNotification({

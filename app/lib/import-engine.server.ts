@@ -211,9 +211,10 @@ interface ImportOptions {
   signal?: AbortSignal;
   triggerType?: string;
   configId?: string;
+  queueItemId?: string;
 }
 
-export async function runImport({ shopDomain, admin, filterType, filterSkus, filterCategories, signal, triggerType, configId }: ImportOptions): Promise<ImportResult> {
+export async function runImport({ shopDomain, admin, filterType, filterSkus, filterCategories, signal, triggerType, configId, queueItemId }: ImportOptions): Promise<ImportResult> {
   let config;
   const sourceKey = getSourceKey(configId ? await prisma.importConfig.findUnique({ where: { id: configId } }) || {} : await getOrCreateConfig(shopDomain));
   if (configId) {
@@ -261,6 +262,13 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
       triggerType: triggerType || "scheduled",
     },
   });
+
+  if (queueItemId) {
+    await prisma.importQueue.update({
+      where: { id: queueItemId },
+      data: { logId: log.id },
+    }).catch(() => {});
+  }
 
   const result: ImportResult = {
     logId: log.id,
