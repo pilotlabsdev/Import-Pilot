@@ -79,9 +79,11 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
     await prisma.$transaction(async (tx) => {
       for (const csvCategory of csvCategoriesForm) {
-        await tx.categoryCollectionMapping.deleteMany({
-          where: { configId: config.id, csvCategory },
-        });
+        for (const cId of collectionIds) {
+          await tx.categoryCollectionMapping.deleteMany({
+            where: { configId: config.id, csvCategory, collectionId: cId },
+          });
+        }
       }
 
       if (collectionIds.length > 0) {
