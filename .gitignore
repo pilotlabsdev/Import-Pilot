@@ -6,3 +6,4 @@ build/
 uploads/
 *.log
 .react-router/
+.shopify

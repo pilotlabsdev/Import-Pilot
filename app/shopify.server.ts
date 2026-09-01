@@ -113,6 +113,42 @@ const shopify = shopifyApp({
         console.error(`[Shopify] afterAuth: webhook registration failed for ${session.shop}: ${err?.message || err}`);
       }
 
+      // Register compliance webhooks via GraphQL API (required for App Store review)
+      try {
+        const { admin } = await shopify.unauthenticated.admin(session.shop);
+        const complianceTopics = [
+          "CUSTOMERS_DATA_REQUEST",
+          "CUSTOMERS_REDACT",
+          "SHOP_REDACT",
+        ];
+        for (const topic of complianceTopics) {
+          try {
+            await admin.graphql(`
+              mutation webhookSubscriptionCreate($topic: WebhookSubscriptionTopic!, $callbackUrl: URL!) {
+                webhookSubscriptionCreate(topic: $topic, callbackUrl: $callbackUrl, format: JSON) {
+                  webhookSubscription { id }
+                  userErrors { field message }
+                }
+              }
+            `, {
+              variables: {
+                topic,
+                callbackUrl: `${process.env.SHOPIFY_APP_URL}/webhooks`,
+              },
+            });
+          } catch (e: any) {
+            // Subscription may already exist — that's fine
+            const msg = e?.message || "";
+            if (!msg.includes("already exists") && !msg.includes("AlreadyExists")) {
+              console.error(`[Shopify] Compliance webhook ${topic} failed for ${session.shop}: ${msg}`);
+            }
+          }
+        }
+        console.log(`[Shopify] Compliance webhooks registered for ${session.shop}`);
+      } catch (err: any) {
+        console.error(`[Shopify] Compliance webhook registration error for ${session.shop}: ${err?.message || err}`);
+      }
+
       try {
         const existingSessions = await prisma.session.findMany({
           where: { shop: session.shop },
