@@ -106,6 +106,21 @@ const shopify = shopifyApp({
     afterAuth: async ({ session }) => {
       await shopify.registerWebhooks({ session });
 
+      // CRITICAL: PrismaSessionStorage upserts by session.id (PK), not by shop.
+      // When a merchant reinstalls, the new OAuth gives a new session ID → new row
+      // is created instead of updating the old one. This leaves stale expired sessions
+      // in the DB. findSessionsByShop returns the oldest (or newest) — if stale,
+      // bulk mode gets 401. Fix: delete ALL other sessions for this shop after auth.
+      const deletedSessions = await prisma.session.deleteMany({
+        where: {
+          shop: session.shop,
+          id: { not: session.id },
+        },
+      });
+      if (deletedSessions.count > 0) {
+        console.log(`[Shopify] Cleaned up ${deletedSessions.count} stale session(s) for ${session.shop}`);
+      }
+
       const existingSettings = await prisma.shopSettings.findUnique({
         where: { shopDomain: session.shop },
       });
@@ -118,7 +133,7 @@ const shopify = shopifyApp({
         console.log(`[Shopify] Shop ${session.shop} reactivado tras reinstalación`);
       }
 
-      console.log("[Shopify] Webhooks registered via SDK");
+      console.log(`[Shopify] afterAuth complete: shop=${session.shop}, scope=${session.scope}, accessToken=${session.accessToken ? "present" : "MISSING"}`);
     },
   },
 });

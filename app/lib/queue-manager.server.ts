@@ -1,4 +1,4 @@
-import { prisma, getConfigById, cleanupOldLogs } from "./db.server";
+import { prisma, getConfigById, cleanupOldLogs, ensureSingleSession } from "./db.server";
 import { isImportActive, tryAcquireImport, releaseImport } from "./import-locks.server";
 import shopify from "~/shopify.server";
 import { runImport } from "./import-engine.server";
@@ -148,6 +148,8 @@ async function processQueueItem(
   try {
     let admin;
     try {
+      // Deduplicate sessions before getting admin client
+      await ensureSingleSession(shopDomain);
       console.log(`[Queue] Creating admin client for ${shopDomain} (item ${item.id})`);
       ({ admin } = await shopify.unauthenticated.admin(shopDomain));
       console.log(`[Queue] Admin client OK for ${shopDomain}`);

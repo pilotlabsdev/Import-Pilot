@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from "~/shopify.server";
-import { prisma } from "~/lib/db.server";
+import { prisma, ensureSingleSession } from "~/lib/db.server";
 import shopify from "~/shopify.server";
 import { handleBulkOperationFinish } from "~/lib/bulk-import.server";
 import { enforcePlanLimits, upsertSubscription } from "~/lib/billing.server";
@@ -48,14 +48,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const opStatus = (payload.status as string) || "unknown";
       console.log(`[Webhook] BULK_OPERATIONS_FINISH: opId=${opId}, status=${opStatus}, shop=${shop}`);
       if (opId) {
-        // Diagnostic: check session before creating admin client
-        const latestSession = await prisma.session.findFirst({
-          where: { shop },
-          orderBy: { expires: "desc" },
-          select: { accessToken: true, expires: true, scope: true },
-        });
-        const isExpired = latestSession?.expires ? new Date(latestSession.expires) < new Date() : true;
-        console.log(`[Webhook] Session for bulk finish: shop=${shop}, sessionExpired=${isExpired}, scope=${latestSession?.scope || "null"}, accessToken=${latestSession?.accessToken ? "present" : "MISSING"}`);
+        // Deduplicate sessions before getting admin client
+        const bestSession = await ensureSingleSession(shop);
+        const isExpired = bestSession?.expires ? new Date(bestSession.expires) < new Date() : true;
+        console.log(`[Webhook] Session for bulk finish: shop=${shop}, sessionExpired=${isExpired}, accessToken=${bestSession?.accessToken ? "present" : "MISSING"}`);
+
+        if (!bestSession) {
+          console.error(`[Webhook] No session for ${shop} after dedup, returning 410`);
+          throw new Response(null, { status: 410 });
+        }
 
         try {
           const { admin } = await shopify.unauthenticated.admin(shop);
@@ -149,6 +150,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       if (!mapping) break;
 
       try {
+        await ensureSingleSession(shop);
         const { admin } = await shopify.unauthenticated.admin(shop);
         const costRes = await admin.graphql(
           `#graphql

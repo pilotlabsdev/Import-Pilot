@@ -1,9 +1,10 @@
-import { prisma } from "./db.server";
+import { prisma, ensureSingleSession } from "./db.server";
 import shopify from "~/shopify.server";
 
 const BATCH_SIZE = 50;
 
 export async function reconcileOrphanedMappings(shopDomain: string): Promise<{ checked: number; deleted: number }> {
+  await ensureSingleSession(shopDomain);
   const { admin } = await shopify.unauthenticated.admin(shopDomain);
 
   const mappings = await prisma.productMapping.findMany({

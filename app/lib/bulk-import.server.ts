@@ -3,7 +3,7 @@ import { createWriteStream } from "node:fs";
 import { Readable } from "node:stream";
 import path from "node:path";
 import os from "node:os";
-import { prisma, getOrCreateConfig, getEffectiveUrl, getSourceKey, cleanupOldLogs } from "./db.server";
+import { prisma, getOrCreateConfig, getEffectiveUrl, getSourceKey, cleanupOldLogs, ensureSingleSession } from "./db.server";
 import { streamFile, isExcluded, parseExcludeFieldRules, getExcludedFields } from "./csv-parser.server";
 import { getActivePriceRules, calculatePriceSync } from "./price-rules.server";
 import { checkDuplicate, logDuplicate, logExternalDuplicate } from "./duplicate-detection.server";
@@ -54,27 +54,17 @@ export async function cancelBulkImport(configId: string, shopDomain: string): Pr
   });
   if (!activeJob) return { success: false, message: "No hay job bulk activo" };
 
+  // Deduplicate sessions before getting admin client
+  await ensureSingleSession(shopDomain);
+
   // Cancel any active ops via Shopify API
   const pendingOps = await prisma.bulkJobOp.findMany({
     where: { jobId: activeJob.id, status: { in: ["pending", "launched", "processing"] } },
   });
+  const { admin } = await shopify.unauthenticated.admin(shopDomain);
   for (const op of pendingOps) {
     if (op.shopifyOpId) {
       try {
-  // Diagnostic: log session state before creating admin client
-  const latestSession = await prisma.session.findFirst({
-    where: { shop: shopDomain },
-    orderBy: { expires: "desc" },
-    select: { id: true, shop: true, accessToken: true, expires: true, scope: true, state: true, isOnline: true },
-  });
-  if (latestSession) {
-    const isExpired = latestSession.expires ? new Date(latestSession.expires) < new Date() : false;
-    console.log(`[Bulk] Session for ${shopDomain}: id=${latestSession.id}, expires=${latestSession.expires?.toISOString() || "null"}, isExpired=${isExpired}, scope=${latestSession.scope || "null"}, isOnline=${latestSession.isOnline}`);
-  } else {
-    console.error(`[Bulk] NO session found for ${shopDomain}!`);
-  }
-
-  const { admin } = await shopify.unauthenticated.admin(shopDomain);
         await gql(admin, `#graphql
           mutation bulkOperationCancel($id: ID!) {
             bulkOperationCancel(id: $id) {
@@ -220,6 +210,16 @@ export async function runBulkImport({
   if (activeJob) {
     throw new Error("Ya hay una importación en curso para esta tienda");
   }
+
+  // CRITICAL: Deduplicate sessions before getting admin client.
+  // PrismaSessionStorage upserts by session.id (PK), not by shop.
+  // Reinstalls create new rows → stale sessions accumulate → bulk gets 401.
+  // ensureSingleSession deletes stale ones and returns the best one.
+  const bestSession = await ensureSingleSession(shopDomain);
+  if (!bestSession) {
+    throw new Error(`No hay sesión para ${shopDomain}. Instala la app desde el admin de Shopify.`);
+  }
+  console.log(`[Bulk] Best session for ${shopDomain}: id=${bestSession.id}, expires=${bestSession.expires?.toISOString() || "null"}`);
 
   const { admin } = await shopify.unauthenticated.admin(shopDomain);
   console.log(`[Bulk] Admin client created for ${shopDomain}`);
@@ -1600,6 +1600,7 @@ export async function reconcileStaleBulkJobs(): Promise<void> {
       } else if (job.phase === "mutations") {
         await reconcileMutationsPhase(job);
       } else if (job.phase === "finalizing") {
+        await ensureSingleSession(job.shopDomain);
         const { admin } = await shopify.unauthenticated.admin(job.shopDomain);
         console.log(`[Bulk] Reconcile finalizing: admin client created for ${job.shopDomain}`);
         await finalizeBulkImport(job, admin);
@@ -1665,13 +1666,15 @@ async function resetStaleProcessing(row: any): Promise<boolean> {
 }
 
 async function reconcileLookupPhase(job: any): Promise<void> {
-  const diagSession = await prisma.session.findFirst({
-    where: { shop: job.shopDomain },
-    orderBy: { expires: "desc" },
-    select: { accessToken: true, expires: true, scope: true },
-  });
-  const isExpired = diagSession?.expires ? new Date(diagSession.expires) < new Date() : true;
-  console.log(`[Bulk] Reconcile lookup: shop=${job.shopDomain}, sessionExpired=${isExpired}, scope=${diagSession?.scope || "null"}`);
+  // Deduplicate sessions before getting admin client
+  const bestSession = await ensureSingleSession(job.shopDomain);
+  const isExpired = bestSession?.expires ? new Date(bestSession.expires) < new Date() : true;
+  console.log(`[Bulk] Reconcile lookup: shop=${job.shopDomain}, sessionExpired=${isExpired}, accessToken=${bestSession?.accessToken ? "present" : "MISSING"}`);
+
+  if (!bestSession) {
+    console.error(`[Bulk] Reconcile lookup: No session for ${job.shopDomain}, aborting`);
+    return;
+  }
 
   const { admin } = await shopify.unauthenticated.admin(job.shopDomain);
 
@@ -1720,13 +1723,15 @@ async function reconcileMutationsPhase(job: any): Promise<void> {
     return;
   }
 
-  const diagSession = await prisma.session.findFirst({
-    where: { shop: job.shopDomain },
-    orderBy: { expires: "desc" },
-    select: { accessToken: true, expires: true, scope: true },
-  });
-  const isExpired = diagSession?.expires ? new Date(diagSession.expires) < new Date() : true;
-  console.log(`[Bulk] Reconcile mutations: shop=${job.shopDomain}, sessionExpired=${isExpired}, scope=${diagSession?.scope || "null"}`);
+  // Deduplicate sessions before getting admin client
+  const bestSession = await ensureSingleSession(job.shopDomain);
+  const isExpired = bestSession?.expires ? new Date(bestSession.expires) < new Date() : true;
+  console.log(`[Bulk] Reconcile mutations: shop=${job.shopDomain}, sessionExpired=${isExpired}, accessToken=${bestSession?.accessToken ? "present" : "MISSING"}`);
+
+  if (!bestSession) {
+    await failJob(job, `No hay sesión para ${job.shopDomain}. Instala la app desde el admin.`);
+    return;
+  }
 
   const { admin } = await shopify.unauthenticated.admin(job.shopDomain);
   const manifest = JSON.parse(await fs.readFile(job.manifestPath, "utf-8"));

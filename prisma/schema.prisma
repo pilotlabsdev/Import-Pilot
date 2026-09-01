@@ -29,6 +29,7 @@ model Session {
   refreshTokenExpires DateTime?
 
   @@unique([shop, id])
+  @@index([shop])
 }
 
 // Configuración de importación por proveedor

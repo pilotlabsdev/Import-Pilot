@@ -34,6 +34,52 @@ export function isUrlSource(config: { dataSource?: string | null }): boolean {
 }
 
 /**
+ * Delete all sessions for a shop except the given one.
+ * Called after OAuth (afterAuth hook) to prevent stale sessions from
+ * accumulating when a merchant reinstalls. The PrismaSessionStorage
+ * upserts by session.id (PK), not by shop — so reinstalling creates
+ * a new row instead of updating the old one.
+ */
+export async function cleanupDuplicateSessions(shop: string, keepSessionId: string): Promise<number> {
+  const result = await prisma.session.deleteMany({
+    where: {
+      shop,
+      id: { not: keepSessionId },
+    },
+  });
+  if (result.count > 0) {
+    console.log(`[Session] Cleaned up ${result.count} stale session(s) for ${shop}`);
+  }
+  return result.count;
+}
+
+/**
+ * Ensure there's only one valid session for a shop.
+ * Returns the best session (the one with the latest expiry), or null.
+ * Called before bulk import to guarantee the correct token is used.
+ */
+export async function ensureSingleSession(shop: string): Promise<{ id: string; accessToken: string; expires: Date | null } | null> {
+  const sessions = await prisma.session.findMany({
+    where: { shop },
+    orderBy: { expires: "desc" },
+    select: { id: true, accessToken: true, expires: true },
+  });
+
+  if (sessions.length === 0) return null;
+
+  // If more than one session exists, delete all but the newest
+  if (sessions.length > 1) {
+    const [best, ...stale] = sessions;
+    const idsToDelete = stale.map((s) => s.id);
+    await prisma.session.deleteMany({ where: { id: { in: idsToDelete } } });
+    console.log(`[Session] Deduped ${idsToDelete.length} stale session(s) for ${shop}, kept ${best.id}`);
+    return best;
+  }
+
+  return sessions[0];
+}
+
+/**
  * Returns a unique key for the current data source.
  * Used to scope column mappings per source (URL vs file).
  */
