@@ -261,8 +261,9 @@ export default function CategoryMapping() {
     );
   }, []);
 
+  const mappedCategories = new Set(mappings.map((m) => m.csvCategory.toLowerCase()));
   const filteredCategories = csvCategories.filter((c) =>
-    c.toLowerCase().includes(catSearch.toLowerCase())
+    !mappedCategories.has(c.toLowerCase()) && c.toLowerCase().includes(catSearch.toLowerCase())
   );
 
   const groupedMappings = mappings.reduce<Record<string, typeof mappings>>((acc, m) => {
