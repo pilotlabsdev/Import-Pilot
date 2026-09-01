@@ -38,7 +38,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     let csvHeaders: string[] = [];
     try {
       const url = getEffectiveUrl(config);
-      if (url) csvHeaders = await getCachedHeaders(config.id, url, config.csvDelimiter || "|");
+      if (url) csvHeaders = await getCachedHeaders(config.id, url, config.csvDelimiter || "auto");
     } catch {}
     const headerSet = new Set(csvHeaders);
 

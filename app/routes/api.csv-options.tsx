@@ -12,7 +12,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const configIdParam = url.searchParams.get("configId") || "";
   const type = url.searchParams.get("type") || "sku";
   const search = url.searchParams.get("q") || undefined;
-  const limit = Math.min(parseInt(url.searchParams.get("limit") || "200"), 500);
+  const limit = Math.min(parseInt(url.searchParams.get("limit") || "200"), 5000);
   const offset = Math.max(parseInt(url.searchParams.get("offset") || "0"), 0);
   const selectedParam = url.searchParams.get("selected") || "";
   const selectedValues = selectedParam ? selectedParam.split(",").filter(Boolean) : [];
@@ -43,7 +43,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
     const effectiveUrl = getEffectiveUrl(config);
     if (type === "headers") {
-      const headers = await getCachedHeaders(config.id, effectiveUrl, config.csvDelimiter || "|");
+      const headers = await getCachedHeaders(config.id, effectiveUrl, config.csvDelimiter || "auto");
       return data({ headers, total: headers.length });
     }
 
@@ -58,7 +58,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       const allCategories = await getCachedCategories(
         config.id,
         effectiveUrl,
-        config.csvDelimiter || "|",
+        config.csvDelimiter || "auto",
         catColumn
       );
       const filtered = search
@@ -79,7 +79,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       const allBrands = await getCachedBrands(
         config.id,
         effectiveUrl,
-        config.csvDelimiter || "|",
+        config.csvDelimiter || "auto",
         brandColumn
       );
       const filtered = search
@@ -104,7 +104,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const allSkus = await getCachedSkus(
       config.id,
       effectiveUrl,
-      config.csvDelimiter || "|",
+      config.csvDelimiter || "auto",
       skuColumn,
       titleColumn,
       undefined,

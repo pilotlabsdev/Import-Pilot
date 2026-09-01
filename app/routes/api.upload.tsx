@@ -93,7 +93,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const currentFileName = config.localFilePath?.split(/[/\\]/).pop() || undefined;
       const newFileName = filePath.split(/[/\\]/).pop() || undefined;
 
-      const currentDelimiter = config.csvDelimiter || "|";
+      const currentDelimiter = config.csvDelimiter || "auto";
       if (config.filterType !== "all" || config.filterSkus || config.filterCategories || currentDelimiter !== "|") {
         const existingIdx = currentPresets.findIndex(
           (p) => p.dataSource === config.dataSource && (p.fileName || undefined) === currentFileName

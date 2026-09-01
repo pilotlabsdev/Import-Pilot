@@ -5,7 +5,7 @@ extension_directories = [ ]
 name = "Import Pilot"
 application_url = "https://import-pilot-production.up.railway.app/app"
 embedded = true
-handle = "import-pilot"
+handle = "import-pilot-official"
 
 [build]
 automatically_update_urls_on_dev = true
@@ -20,7 +20,7 @@ api_version = "2026-07"
   "products/delete",
   "products/update"
 ]
-  uri = "/webhooks"
+  uri = "https://import-pilot-production.up.railway.app/webhooks"
   compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
 
 [access_scopes]

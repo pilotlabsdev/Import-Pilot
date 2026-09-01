@@ -105,7 +105,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const newFileName = newLocalFilePath?.split(/[/\\]/).pop() || undefined;
 
     // Guardar preset de la fuente actual si hay filtros activos o delimiter custom
-    const currentDelimiter = config.csvDelimiter || "|";
+    const currentDelimiter = config.csvDelimiter || "auto";
     if (config.filterType !== "all" || config.filterSkus || config.filterCategories || currentDelimiter !== "|") {
       const existingIdx = currentPresets.findIndex(
         (p) => p.dataSource === config.dataSource && (p.fileName || undefined) === currentFileName

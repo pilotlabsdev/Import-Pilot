@@ -40,7 +40,7 @@ model ImportConfig {
   csvUrl          String   @default("")
   dataSource      String   @default("url") // "url" o "file"
   localFilePath   String?
-  csvDelimiter    String   @default("|")
+  csvDelimiter    String   @default("auto")
   frequency       String   @default("12h")
   cronExpression  String   @default("0 */12 * * *")
   productStatus   String   @default("DRAFT")

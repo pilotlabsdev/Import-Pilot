@@ -199,7 +199,7 @@ export default function CategoryMapping() {
   useEffect(() => {
     const loadCategories = async () => {
       try {
-        const params = new URLSearchParams({ shop: shopDomain, type: "category", limit: "500", configId });
+        const params = new URLSearchParams({ shop: shopDomain, type: "category", limit: "5000", configId });
         const res = await fetch(`/api/csv-options?${params}`);
         const data = await res.json();
         setCsvCategories((data.options || []).map((o: any) => typeof o === "string" ? o : o.value));
