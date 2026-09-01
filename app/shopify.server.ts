@@ -64,6 +64,9 @@ const shopify = shopifyApp({
   apiVersion: ApiVersion.July26,
   sessionStorage: new PrismaSessionStorage(prisma),
   billing: BILLING_PLANS,
+  future: {
+    unstable_newEmbeddedAuthStrategy: true,
+  },
   webhooks: {
     APP_UNINSTALLED: {
       deliveryMethod: DeliveryMethod.Http,
