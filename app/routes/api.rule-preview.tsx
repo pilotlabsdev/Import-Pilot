@@ -13,7 +13,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const ruleId = url.searchParams.get("ruleId") || "";
   const mappingId = url.searchParams.get("mappingId") || "";
   const limit = Math.min(parseInt(url.searchParams.get("limit") || "20"), 50);
-  const scanLimit = Math.min(parseInt(url.searchParams.get("scanLimit") || "5000"), 10000);
+  const scanLimit = Math.min(parseInt(url.searchParams.get("scanLimit") || "50000"), 250000);
 
   if (!configIdParam) return data({ error: "configId requerido" }, { status: 400 });
 
@@ -89,7 +89,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   if (mappingId) {
     const mapping = await prisma.categoryCollectionMapping.findUnique({ where: { id: mappingId } });
     if (!mapping || mapping.configId !== config.id) return data({ error: "Mapeo no encontrado" }, { status: 404 });
-    console.log(`[Preview] mapping.csvCategory="${mapping.csvCategory}", columnMaps=${JSON.stringify(columnMaps.map(c => ({field: c.shopifyField, col: c.csvColumn})))}`);
 
     const items: any[] = [];
     let count = 0;
@@ -100,9 +99,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       scanned++;
       const { row } = item;
       const category = getField(row, "category");
-      if (scanned <= 3) {
-        console.log(`[Preview] scanned=${scanned}, csvCategory="${mapping.csvCategory}", rowCategory="${category}", rowKeys=${Object.keys(row).join(",")}`);
-      }
       if (category.trim().toLowerCase() !== mapping.csvCategory.trim().toLowerCase()) continue;
 
       const sku = row["sku"] || "";
