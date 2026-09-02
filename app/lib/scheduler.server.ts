@@ -1,5 +1,5 @@
 import { prisma, isUrlSource } from "./db.server";
-import { enqueue } from "./queue-manager.server";
+import { enqueue, processNext } from "./queue-manager.server";
 import { reconcileStaleBulkJobs, cleanupFinishedBulkJobs } from "./bulk-import.server";
 import { reconcileAllShops } from "./reconciliation.server";
 import { isImportActive } from "./import-locks.server";
@@ -66,6 +66,68 @@ function scheduleNext(configId: string, frequency: string, lastImportAt: Date | 
   }, delay);
 
   timers.set(configId, timer);
+}
+
+async function resumeInterruptedJobs() {
+  try {
+    // Find ImportQueue items stuck in "running" (interrupted by crash/restart)
+    const runningItems = await prisma.importQueue.findMany({
+      where: { status: "running" },
+      select: { id: true, shopDomain: true, configId: true },
+    });
+
+    if (runningItems.length > 0) {
+      console.log(`[Scheduler] Reanudando ${runningItems.length} imports interrumpidos`);
+      // Reset to queued so processNext picks them up
+      for (const item of runningItems) {
+        await prisma.importQueue.update({
+          where: { id: item.id },
+          data: { status: "queued" },
+        }).catch(() => {});
+      }
+      // Trigger processing for each affected shop
+      const shops = [...new Set(runningItems.map((i) => i.shopDomain))];
+      for (const shop of shops) {
+        void processNext(shop).catch(() => {});
+      }
+    }
+
+    // Also find orphan ImportLogs (status "running" with no queue item)
+    const orphanLogs = await prisma.importLog.findMany({
+      where: { status: "running" },
+      select: { id: true, shopDomain: true, configId: true, triggerType: true },
+    });
+
+    for (const log of orphanLogs) {
+      const hasQueueItem = await prisma.importQueue.findFirst({
+        where: { logId: log.id },
+        select: { id: true },
+      }).catch(() => null);
+      if (!hasQueueItem) {
+        // Create new queue item to resume
+        const config = await prisma.importConfig.findUnique({
+          where: { id: log.configId },
+          select: { name: true, csvUrl: true, importMode: true, localFilePath: true, dataSource: true },
+        }).catch(() => null);
+        if (config) {
+          const sourceLabel = config.dataSource === "file"
+            ? config.localFilePath?.split(/[/\\]/).pop() || "Archivo local"
+            : config.csvUrl || "URL";
+          console.log(`[Scheduler] Reanudando orphan log ${log.id.slice(0, 8)} (${config.name})`);
+          await enqueue({
+            shopDomain: log.shopDomain,
+            configId: log.configId,
+            supplierName: config.name,
+            sourceLabel,
+            triggerType: log.triggerType || "scheduled",
+            importMode: config.importMode,
+          }).catch(() => {});
+        }
+      }
+    }
+  } catch (error) {
+    console.error("[Scheduler] Error resuming interrupted jobs:", error);
+  }
 }
 
 export function startScheduler() {
@@ -159,6 +221,10 @@ export function startScheduler() {
 
   void refreshSchedules().catch((error: any) =>
     console.error("[Scheduler] Error al inicializar:", error)
+  );
+
+  void resumeInterruptedJobs().catch((error: any) =>
+    console.error("[Scheduler] Error al reanudar imports interrumpidos:", error)
   );
 }
 
