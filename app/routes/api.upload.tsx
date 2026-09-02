@@ -158,6 +158,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const supplierDir = path.join(UPLOAD_BASE, shopDomain, configId);
     await fs.mkdir(supplierDir, { recursive: true });
 
+    // Límite de 3 archivos por proveedor: borrar el más viejo si se excede
+    const existingFiles = (await fs.readdir(supplierDir).catch(() => []))
+      .filter((f) => !f.startsWith("."));
+    if (existingFiles.length >= 3) {
+      // Ordenar por nombre (timestamp al inicio) y borrar el más viejo
+      const sorted = existingFiles.sort();
+      const oldest = sorted[0];
+      try { await fs.unlink(path.join(supplierDir, oldest)); } catch {}
+    }
+
     const timestamp = Date.now();
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
     const fileName = `${timestamp}_${safeName}`;

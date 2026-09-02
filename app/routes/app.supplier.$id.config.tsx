@@ -1,7 +1,7 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
 import { data } from "react-router";
 
-import { useLoaderData, useActionData, Form, useFetcher } from "react-router";
+import { useLoaderData, useActionData, Form, useFetcher, useRevalidator } from "react-router";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useAppBridge, SaveBar } from "@shopify/app-bridge-react";
 import fs from "node:fs/promises";
@@ -205,6 +205,7 @@ export default function Config() {
   const { config, shopDomain, channels, markets, fileExists } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>() as { success?: boolean } | undefined;
   const fetcher = useFetcher();
+  const { revalidate } = useRevalidator();
   const { t } = useTranslation();
 
   const configId = config.id;
@@ -311,6 +312,7 @@ export default function Config() {
         setDataSource("file");
         setFileSwitched(true);
         fetchUploadedFiles();
+        revalidate();
       }
     } catch {} finally {
       setUploading(false);
