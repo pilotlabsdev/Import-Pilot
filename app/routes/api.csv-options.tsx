@@ -1,6 +1,7 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { data } from "react-router";
 import { prisma, getOrCreateConfig, getEffectiveUrl, getSourceKey } from "~/lib/db.server";
+import { resolveFileUrl } from "~/lib/storage.server";
 import { fetchCSVSkus, fetchCSVCategories, fetchCSVBrands, fetchCSVHeaders } from "~/lib/csv-parser.server";
 import { getCachedCategories, getCachedBrands, getCachedSkus, getCachedHeaders } from "~/lib/csv-cache.server";
 import { authenticate } from "~/shopify.server";
@@ -41,7 +42,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   console.log(`[api.csv-options] configId=${config.id}, type=${type}, effectiveUrl=${getEffectiveUrl(config)?.substring(0, 60)}`);
   try {
-    const effectiveUrl = getEffectiveUrl(config);
+    const effectiveUrl = await resolveFileUrl(getEffectiveUrl(config));
     if (type === "headers") {
       const headers = await getCachedHeaders(config.id, effectiveUrl, config.csvDelimiter || "auto");
       return data({ headers, total: headers.length });

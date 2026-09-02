@@ -1,4 +1,5 @@
 import { prisma, getOrCreateConfig, getEffectiveUrl, getSourceKey, cleanupOldLogs } from "./db.server";
+import { resolveFileUrl } from "./storage.server";
 import { streamFile, isExcluded, parseExcludeFieldRules, getExcludedFields } from "./csv-parser.server";
 import { calculatePrices } from "./price-rules.server";
 import { mapCsvRowToProductSet, parseUpdateOptions, getField } from "./product-mapper.server";
@@ -335,7 +336,7 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
     let skipping = !!resumeFromSku;
     const resumeSkuLower = resumeFromSku?.toLowerCase();
 
-    for await (const item of streamFile(getEffectiveUrl(config), config.csvDelimiter, 3, signal)) {
+    for await (const item of streamFile(await resolveFileUrl(getEffectiveUrl(config)), config.csvDelimiter, 3, signal)) {
       const { row } = item;
       const rowSku = (getField(row, columnMaps, "sku") || row["sku"] || "").trim().toLowerCase();
 

@@ -1,6 +1,7 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { data } from "react-router";
 import { prisma, getOrCreateConfig, getEffectiveUrl, getSourceKey } from "~/lib/db.server";
+import { resolveFileUrl } from "~/lib/storage.server";
 import { isExcluded, parseExcludeFieldRules, getExcludedFields } from "~/lib/csv-parser.server";
 import { getCachedCsvRows } from "~/lib/csv-cache.server";
 import { calculatePriceSync, getActivePriceRules } from "~/lib/price-rules.server";
@@ -291,7 +292,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       : null;
     const hasAnyImportFilter = importSkuSet !== null || importCatSet !== null;
     const fieldRules = parseExcludeFieldRules(config.excludeFieldRules);
-    const effectiveUrl = getEffectiveUrl(config)!;
+    const effectiveUrl = await resolveFileUrl(getEffectiveUrl(config)!);
 
     let totalRows = 0;
     let filteredTotal = 0;

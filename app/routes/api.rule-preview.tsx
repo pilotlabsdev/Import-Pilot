@@ -1,6 +1,7 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { data } from "react-router";
 import { prisma, getConfigById, getEffectiveUrl, getSourceKey } from "~/lib/db.server";
+import { resolveFileUrl } from "~/lib/storage.server";
 import { streamFile } from "~/lib/csv-parser.server";
 import { calculatePrices } from "~/lib/price-rules.server";
 import { authenticate } from "~/shopify.server";
@@ -41,7 +42,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     let count = 0;
     let scanned = 0;
 
-    for await (const item of streamFile(getEffectiveUrl(config), config.csvDelimiter)) {
+    for await (const item of streamFile(await resolveFileUrl(getEffectiveUrl(config)), config.csvDelimiter)) {
       if (items.length >= limit || (scanLimit !== Infinity && scanned >= scanLimit)) break;
       scanned++;
       const { row } = item;
@@ -95,7 +96,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     let count = 0;
     let scanned = 0;
 
-    for await (const item of streamFile(getEffectiveUrl(config), config.csvDelimiter)) {
+    for await (const item of streamFile(await resolveFileUrl(getEffectiveUrl(config)), config.csvDelimiter)) {
       if (items.length >= limit || (scanLimit !== Infinity && scanned >= scanLimit)) break;
       scanned++;
       const { row } = item;

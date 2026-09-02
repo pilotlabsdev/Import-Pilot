@@ -4,6 +4,7 @@ import { Readable } from "node:stream";
 import path from "node:path";
 import os from "node:os";
 import { prisma, getOrCreateConfig, getEffectiveUrl, getSourceKey, cleanupOldLogs, ensureSingleSession, ensureFreshToken, refreshAccessToken } from "./db.server";
+import { resolveFileUrl } from "./storage.server";
 import { streamFile, isExcluded, parseExcludeFieldRules, getExcludedFields } from "./csv-parser.server";
 import { getActivePriceRules, calculatePriceSync } from "./price-rules.server";
 import { checkDuplicate, logDuplicate, logExternalDuplicate } from "./duplicate-detection.server";
@@ -644,7 +645,7 @@ async function prepareAndLaunch(
 
   const seenSkus = new Set<string>();
 
-  for await (const item of streamFile(getEffectiveUrl(config), config.csvDelimiter)) {
+  for await (const item of streamFile(await resolveFileUrl(getEffectiveUrl(config)), config.csvDelimiter)) {
     const { row, lineNumber } = item;
     const sku = (getField(row, columnMaps, "sku") || row["sku"] || "").trim();
     allSkus.push(sku);

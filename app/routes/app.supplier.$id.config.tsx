@@ -22,6 +22,7 @@ import {
 } from "@shopify/polaris";
 import { NoteIcon } from "@shopify/polaris-icons";
 import { prisma, getConfigById } from "~/lib/db.server";
+import { isBucketKey, fileExistsInStorage } from "~/lib/storage.server";
 import { authenticate, unauthenticated } from "~/shopify.server";
 import { refreshSchedules } from "~/lib/scheduler.server";
 import { getChannels, getMarkets } from "~/lib/channels.server";
@@ -62,10 +63,14 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
   let fileExists = false;
   if (config.localFilePath) {
-    try {
-      await fs.access(config.localFilePath);
-      fileExists = true;
-    } catch {}
+    if (isBucketKey(config.localFilePath)) {
+      fileExists = await fileExistsInStorage(config.localFilePath);
+    } else {
+      try {
+        await fs.access(config.localFilePath);
+        fileExists = true;
+      } catch {}
+    }
   }
 
   let channels: Array<{ id: string; name: string }> = [];
