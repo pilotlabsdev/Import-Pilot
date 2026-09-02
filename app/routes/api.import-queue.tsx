@@ -96,19 +96,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       where: { id: job.id },
       data: { phase: "failed" },
     });
-    const log = await prisma.importLog.findUnique({ where: { id: job.logId } });
-    if (log && log.status === "running") {
-      await prisma.importLog.update({
-        where: { id: log.id },
-        data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "Cancelado manualmente", lineNumber: 0 }]) },
-      });
-    }
+    // Cancel ALL running ImportLogs for this config (not just the one linked to the job — logId may be null)
+    const stuckLogs = await prisma.importLog.updateMany({
+      where: { configId: job.configId, status: "running" },
+      data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "Cancelado manualmente", lineNumber: 0 }]) },
+    });
     // Also cancel any associated queue items so they don't stay stuck
     await prisma.importQueue.updateMany({
       where: { configId: job.configId, shopDomain, status: { in: ["queued", "running"] } },
       data: { status: "cancelled", finishedAt: new Date() },
     });
-    console.log(`[Queue API] cancel-bulk-job: job ${bulkJobId} marked as failed`);
+    console.log(`[Queue API] cancel-bulk-job: job ${bulkJobId} marked as failed, ${stuckLogs.count} logs cancelled`);
     return data({ success: true, message: "Job bulk cancelado" });
   }
 
