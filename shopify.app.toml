@@ -16,6 +16,7 @@ api_version = "2026-07"
   [[webhooks.subscriptions]]
   topics = [
   "app/uninstalled",
+  "bulk_operations/finish",
   "inventory_items/update",
   "products/delete",
   "products/update"
