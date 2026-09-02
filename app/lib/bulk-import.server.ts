@@ -924,6 +924,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
   }
 
   const config = await prisma.importConfig.findUnique({ where: { id: job.configId } });
+  const sourceKey = config ? getSourceKey(config) : null;
   const manifest = JSON.parse(await fs.readFile(job.manifestPath, "utf-8"));
   const workDir = job.workDir;
 
@@ -1915,6 +1916,9 @@ async function resumeOrRebuildCreateOp(
   const workDir = job.workDir;
   const metaPath = path.join(workDir, `create-meta-${index}.jsonl`);
 
+  const sourceKeyConfig = await prisma.importConfig.findUnique({ where: { id: job.configId } });
+  const sourceKey = sourceKeyConfig ? getSourceKey(sourceKeyConfig) : null;
+
   const ghosts = await findGhostMutationOps(job, admin);
   if (ghosts.some((g) => g.status === "CREATED" || g.status === "RUNNING")) {
     return; // la op fantasma puede seguir creando: esperar al siguiente ciclo
@@ -1950,7 +1954,7 @@ async function resumeOrRebuildCreateOp(
           lastComparePrice: meta.compareAtPrice,
           lastQuantity: meta.stockQty,
           lastCost: meta.costPrice > 0 ? meta.costPrice : null,
-          lastImportSource: getSourceKey(await prisma.importConfig.findUnique({ where: { id: job.configId } }) || {}),
+          lastImportSource: sourceKey,
         },
         update: {
           shopifyProductId: match.productId,
@@ -1960,7 +1964,7 @@ async function resumeOrRebuildCreateOp(
           lastComparePrice: meta.compareAtPrice,
           lastQuantity: meta.stockQty,
           lastCost: meta.costPrice > 0 ? meta.costPrice : undefined,
-          lastImportSource: getSourceKey(await prisma.importConfig.findUnique({ where: { id: job.configId } }) || {}),
+          lastImportSource: sourceKey,
         },
       });
       if (match.inventoryItemId) {
