@@ -1,5 +1,5 @@
 import { prisma, getConfigById, cleanupOldLogs, ensureSingleSession, ensureFreshToken } from "./db.server";
-import { isImportActive, tryAcquireImport, releaseImport } from "./import-locks.server";
+import { isImportActive, tryAcquireImport, releaseImport, abortImport } from "./import-locks.server";
 import shopify from "~/shopify.server";
 import { runImport } from "./import-engine.server";
 import { runBulkImport } from "./bulk-import.server";
@@ -302,13 +302,20 @@ export async function cancelQueueItem(itemId: string, shopDomain: string): Promi
   }
 
   if (item.status === "running") {
-    // Can't directly abort the import, but we can mark it
-    // The import will finish its current product and check the signal
+    // Abort the actual import process
+    const aborted = abortImport(item.configId);
     await prisma.importQueue.update({
       where: { id: itemId },
       data: { status: "cancelled", finishedAt: new Date() },
     });
-    return { success: true, message: "Importación marcada para cancelar (terminará el producto actual)" };
+    // Also mark the ImportLog as failed
+    if (item.logId) {
+      await prisma.importLog.update({
+        where: { id: item.logId },
+        data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "Cancelado manualmente", lineNumber: 0 }]) },
+      }).catch(() => {});
+    }
+    return { success: true, message: aborted ? "Importación abortada" : "Importación marcada para cancelar" };
   }
 
   return { success: false, message: `No se puede cancelar: estado "${item.status}"` };

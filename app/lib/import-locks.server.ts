@@ -11,6 +11,15 @@ export function releaseImport(configId: string) {
   activeImports.delete(configId);
 }
 
+export function abortImport(configId: string): boolean {
+  const controller = activeImports.get(configId);
+  if (controller) {
+    controller.abort();
+    return true;
+  }
+  return false;
+}
+
 export function isImportActive(configId: string): boolean {
   return activeImports.has(configId);
 }
