@@ -373,6 +373,7 @@
   "queue.andMore": "…et {{count}} de plus",
   "queue.products": "produits",
   "queue.lastSku": "Dernier SKU :",
+  "queue.finalizingInventory": "Finalisation de l'inventaire…",
   "queue.number": "#",
   
   "billing.title": "Abonnements",

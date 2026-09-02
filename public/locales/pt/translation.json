@@ -373,6 +373,7 @@
   "queue.andMore": "…e {{count}} mais",
   "queue.products": "produtos",
   "queue.lastSku": "Último SKU:",
+  "queue.finalizingInventory": "Finalizando inventário…",
   "queue.number": "#",
 
   "billing.title": "Planos",

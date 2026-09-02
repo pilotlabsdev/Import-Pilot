@@ -373,6 +373,7 @@
   "queue.andMore": "…e {{count}} altri",
   "queue.products": "prodotti",
   "queue.lastSku": "Ultimo SKU:",
+  "queue.finalizingInventory": "Finalizzazione inventario…",
   "queue.number": "#",
   
   "billing.title": "Piani",

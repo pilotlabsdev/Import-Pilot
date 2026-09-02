@@ -149,9 +149,18 @@ export default function QueuePage() {
                               <Text as="span" variant="bodySm">
                                 {progress.processedProducts} / {progress.totalProducts} {t("queue.products")}
                               </Text>
-                              <Text as="span" variant="bodySm" tone="subdued">
-                                {t("queue.lastSku")} {progress.lastSku || "—"}
-                              </Text>
+                              {item.importMode === "bulk" ? (
+                                <Text as="span" variant="bodySm" tone="subdued">
+                                  {progress.phase === "finalizing"
+                                    ? t("queue.finalizingInventory")
+                                    : `${t("common.created")}: ${progress.created || 0} · ${t("common.updated")}: ${progress.updated || 0} · ${t("common.unchanged")}: ${progress.unchanged || 0}`
+                                  }
+                                </Text>
+                              ) : (
+                                <Text as="span" variant="bodySm" tone="subdued">
+                                  {t("queue.lastSku")} {progress.lastSku || "—"}
+                                </Text>
+                              )}
                               {progress.errors > 0 && (
                                 <Badge tone="critical">{`${progress.errors} ${t("common.errors")}`}</Badge>
                               )}
