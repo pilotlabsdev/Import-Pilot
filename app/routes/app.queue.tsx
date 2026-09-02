@@ -110,6 +110,8 @@ export default function QueuePage() {
   const recent = queueData?.recent || [];
   const schedulerActive = queueData?.schedulerActive || [];
 
+  const allRunning = [...active, ...schedulerActive];
+
   return (
     <Page
       title={t("queue.title")}
@@ -123,14 +125,14 @@ export default function QueuePage() {
             <Card>
               <BlockStack gap="300">
                 <Text as="h2" variant="headingMd">{t("queue.inProgress")}</Text>
-                {active.length > 0 ? (
-                  active.map((item: any) => {
+                {allRunning.length > 0 ? (
+                  allRunning.map((item: any) => {
                     const progress = item.progress;
                     const pct = progress && progress.totalProducts > 0
                       ? Math.round((progress.processedProducts / progress.totalProducts) * 100)
                       : 0;
                     return (
-                      <BlockStack key={item.id} gap="200">
+                      <BlockStack key={item.id || item.configId} gap="200">
                         <InlineStack gap="200" blockAlign="center">
                           <Badge tone="attention">{t("common.processing")}</Badge>
                           <Text as="span" variant="bodyMd" fontWeight="semibold">
@@ -158,7 +160,21 @@ export default function QueuePage() {
                         ) : (
                           <Text as="span" variant="bodySm" tone="subdued">{t("queue.starting")}</Text>
                         )}
-                        <Button size="slim" tone="critical" onClick={() => cancel(item.id)}>
+                        <Button
+                          size="slim"
+                          tone="critical"
+                          onClick={() => {
+                            if (item.bulkJobId) {
+                              cancelBulkJob(item.bulkJobId);
+                            } else if (item.id) {
+                              cancel(item.id);
+                            } else if (item.logId) {
+                              cancelLog(item.logId);
+                            } else {
+                              cancelScheduled(item.configId, item.importMode);
+                            }
+                          }}
+                        >
                           {t("common.cancel")}
                         </Button>
                       </BlockStack>
@@ -170,68 +186,6 @@ export default function QueuePage() {
               </BlockStack>
             </Card>
           </div>
-
-          <Card>
-            <BlockStack gap="300">
-              <Text as="h2" variant="headingMd">{t("queue.inProgressCron")}</Text>
-              {schedulerActive.length > 0 ? (
-                schedulerActive.map((item: any) => {
-                  const progress = item.progress;
-                  const pct = progress && progress.totalProducts > 0
-                    ? Math.round((progress.processedProducts / progress.totalProducts) * 100)
-                    : 0;
-                  return (
-                    <BlockStack key={item.configId} gap="200">
-                      <InlineStack gap="200" blockAlign="center">
-                        <Badge tone="warning">{t("common.scheduled")}</Badge>
-                        <Text as="span" variant="bodyMd" fontWeight="semibold">
-                          {item.supplierName || item.configId}
-                        </Text>
-                        <Text as="span" variant="bodySm" tone="subdued">
-                          {item.sourceLabel || ""}
-                        </Text>
-                      </InlineStack>
-                      {progress ? (
-                        <BlockStack gap="100">
-                          <ProgressBar progress={pct} size="small" />
-                          <InlineStack gap="300" blockAlign="center">
-                            <Text as="span" variant="bodySm">
-                              {progress.processedProducts} / {progress.totalProducts} {t("queue.products")}
-                            </Text>
-                            <Text as="span" variant="bodySm" tone="subdued">
-                              {t("queue.lastSku")} {progress.lastSku || "—"}
-                            </Text>
-                            {progress.errors > 0 && (
-                              <Badge tone="critical">{`${progress.errors} ${t("common.errors")}`}</Badge>
-                            )}
-                          </InlineStack>
-                        </BlockStack>
-                      ) : (
-                        <Text as="span" variant="bodySm" tone="subdued">{t("queue.starting")}</Text>
-                      )}
-                      <Button
-                        size="slim"
-                        tone="critical"
-                        onClick={() => {
-                          if (item.bulkJobId) {
-                            cancelBulkJob(item.bulkJobId);
-                          } else if (item.logId && !item.configId) {
-                            cancelLog(item.logId);
-                          } else {
-                            cancelScheduled(item.configId, item.importMode);
-                          }
-                        }}
-                      >
-                        {t("common.cancel")}
-                      </Button>
-                    </BlockStack>
-                  );
-                })
-              ) : (
-                <Text as="p" tone="subdued">{t("queue.noCron")}</Text>
-              )}
-            </BlockStack>
-          </Card>
 
           <Card>
             <BlockStack gap="300">
