@@ -316,7 +316,7 @@ export default function Config() {
         fetchUploadedFiles();
         revalidate();
       } else if (d.error) {
-        setUploadError(d.error);
+        setUploadError(d.errorIsKey ? t(d.error) : d.error);
       }
     } catch {} finally {
       setUploading(false);

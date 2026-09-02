@@ -148,6 +148,7 @@
   "config.fileTypes": "CSV ou Excel (max 80 Mo)",
   "config.uploading": "Téléversement...",
   "config.uploadedFiles": "Fichiers téléversés :",
+  "upload.maxFilesPerSupplier": "Maximum 3 fichiers par fournisseur. Supprimez-en un avant d'en téléverser un autre.",
   "config.inUse": "En cours d'utilisation",
   "config.use": "Utiliser",
   "config.delimiter": "Délimiteur (CSV uniquement)",

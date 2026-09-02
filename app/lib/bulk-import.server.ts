@@ -741,7 +741,7 @@ async function prepareAndLaunch(
 
     if (config.skipZeroStockCreate && stockQty <= 0) {
       zeroStockSkippedCount++;
-      unchangedCount++;
+      excludedCount++;
       continue;
     }
 

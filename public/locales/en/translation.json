@@ -148,6 +148,7 @@
   "config.fileTypes": "CSV or Excel (max 80MB)",
   "config.uploading": "Uploading...",
   "config.uploadedFiles": "Uploaded files:",
+  "upload.maxFilesPerSupplier": "Maximum 3 files per supplier. Delete one before uploading another.",
   "config.inUse": "In use",
   "config.use": "Use",
   "config.delimiter": "Delimiter (CSV only)",

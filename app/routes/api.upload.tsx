@@ -162,7 +162,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const existingFiles = (await fs.readdir(supplierDir).catch(() => []))
       .filter((f) => !f.startsWith("."));
     if (existingFiles.length >= 3) {
-      return data({ error: "Máximo 3 archivos por proveedor. Elimina uno antes de subir otro." }, { status: 400 });
+      return data({ error: "upload.maxFilesPerSupplier", errorIsKey: true }, { status: 400 });
     }
 
     const timestamp = Date.now();
