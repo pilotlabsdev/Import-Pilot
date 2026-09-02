@@ -218,6 +218,7 @@
   "config.currentLocation": "Current warehouse: {{name}}",
   "config.usingDefault": "Using default store location",
   "config.storeDomain": "Store: {{shopDomain}}",
+  "config.fileMissing": "The file '{{filename}}' no longer exists on the server. Upload the file again to continue importing.",
   
   "columns.title": "Column Mapping",
   "columns.saved": "Mapping saved successfully",

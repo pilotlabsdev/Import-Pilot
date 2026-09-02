@@ -218,6 +218,7 @@
   "config.currentLocation": "Armazém atual: {{name}}",
   "config.usingDefault": "Usando localização predefinida da loja",
   "config.storeDomain": "Loja: {{shopDomain}}",
+  "config.fileMissing": "O arquivo '{{filename}}' não existe mais no servidor. Faça upload do arquivo novamente para continuar importando.",
 
   "columns.title": "Mapeamento de Colunas",
   "columns.saved": "Mapeamento salvo com sucesso",

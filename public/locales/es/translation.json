@@ -228,6 +228,7 @@
   "config.currentLocation": "Almacén actual: {{name}}",
   "config.usingDefault": "Usando ubicación predefinida de la tienda",
   "config.storeDomain": "Tienda: {{shopDomain}}",
+  "config.fileMissing": "El archivo '{{filename}}' ya no existe en el servidor. Sube el archivo de nuevo para continuar importando.",
   
   "columns.title": "Mapeo de Columnas",
   "columns.saved": "Mapeo guardado correctamente",

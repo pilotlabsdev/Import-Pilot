@@ -218,6 +218,7 @@
   "config.currentLocation": "Magazzino attuale: {{name}}",
   "config.usingDefault": "Usando posizione predefinita del negozio",
   "config.storeDomain": "Negozio: {{shopDomain}}",
+  "config.fileMissing": "Il file '{{filename}}' non esiste più sul server. Carica di nuovo il file per continuare l'importazione.",
   
   "columns.title": "Mappatura Colonne",
   "columns.saved": "Mappatura salvata correttamente",

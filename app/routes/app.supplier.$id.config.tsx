@@ -4,6 +4,7 @@ import { data } from "react-router";
 import { useLoaderData, useActionData, Form, useFetcher } from "react-router";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useAppBridge, SaveBar } from "@shopify/app-bridge-react";
+import fs from "node:fs/promises";
 import {
   Badge,
   Banner,
@@ -59,6 +60,14 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const config = await getConfigById(configId);
   if (!config || config.shopDomain !== shopDomain) throw new Response("Not found", { status: 404 });
 
+  let fileExists = false;
+  if (config.localFilePath) {
+    try {
+      await fs.access(config.localFilePath);
+      fileExists = true;
+    } catch {}
+  }
+
   let channels: Array<{ id: string; name: string }> = [];
   let markets: Array<{ id: string; name: string; status: string; publicationId: string | null }> = [];
   try {
@@ -68,7 +77,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     console.error("[Config] Error cargando canales/mercados:", e?.message);
   }
 
-  return data({ config, shopDomain, channels, markets });
+  return data({ config, shopDomain, channels, markets, fileExists });
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -193,7 +202,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function Config() {
-  const { config, shopDomain, channels, markets } = useLoaderData<typeof loader>();
+  const { config, shopDomain, channels, markets, fileExists } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>() as { success?: boolean } | undefined;
   const fetcher = useFetcher();
   const { t } = useTranslation();
@@ -515,7 +524,13 @@ export default function Config() {
               ) : (
                 <BlockStack gap="200">
                   {localFilePath ? (
-                    <Badge tone="success">{t("config.fileActive", { filename: localFilePath.split(/[/\\]/).pop() || localFilePath })}</Badge>
+                    fileExists ? (
+                      <Badge tone="success">{t("config.fileActive", { filename: localFilePath.split(/[/\\]/).pop() || localFilePath })}</Badge>
+                    ) : (
+                      <Banner tone="warning">
+                        <p>{t("config.fileMissing", { filename: localFilePath.split(/[/\\]/).pop() || localFilePath })}</p>
+                      </Banner>
+                    )
                   ) : (
                     <Badge tone="info">{t("config.noFileSelected")}</Badge>
                   )}
