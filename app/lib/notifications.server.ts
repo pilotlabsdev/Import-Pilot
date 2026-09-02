@@ -23,6 +23,7 @@ export async function sendNotification(payload: NotificationPayload): Promise<vo
   const hasErrors = payload.errors.length > 0;
   const shouldNotify =
     (payload.status === "completed" && config.notifyOnSuccess) ||
+    (payload.status === "cancelled") ||
     (hasErrors && config.notifyOnError) ||
     (payload.priceChanges > 0 && config.notifyOnPriceChange);
 

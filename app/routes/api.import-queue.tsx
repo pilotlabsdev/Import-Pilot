@@ -134,13 +134,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         where: { id: logId },
         data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "Cancelado manualmente", lineNumber: 0 }]) },
       });
+    } else if (log.status === "completed" || log.status === "completed_with_errors") {
+      await prisma.importLog.update({
+        where: { id: logId },
+        data: { status: "cancelled" },
+      });
     }
     // Also cancel associated queue items
     await prisma.importQueue.updateMany({
       where: { logId },
       data: { status: "cancelled", finishedAt: new Date() },
     });
-    console.log(`[Queue API] cancel-log: log ${logId} marked as failed`);
+    console.log(`[Queue API] cancel-log: log ${logId} marked as cancelled`);
     return data({ success: true, message: "Importación cancelada" });
   }
 

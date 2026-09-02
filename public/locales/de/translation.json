@@ -54,6 +54,7 @@
   "common.manual": "Manuell",
   "common.scheduled": "Geplant",
   "common.completed": "Abgeschlossen",
+  "common.cancelled": "Abgebrochen",
   "common.failed": "Fehlgeschlagen",
   "common.processing": "In Bearbeitung",
   "common.chunks": "Chunks",

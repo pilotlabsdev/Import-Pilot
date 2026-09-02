@@ -315,6 +315,14 @@ export async function cancelQueueItem(itemId: string, shopDomain: string): Promi
         data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "Cancelado manualmente", lineNumber: 0 }]) },
       }).catch(() => {});
     }
+    await sendNotification({
+      shopDomain,
+      status: "cancelled",
+      totalProducts: 0, created: 0, updated: 0, unchanged: 0,
+      priceChanges: 0, stockChanges: 0,
+      errors: [{ sku: "SYSTEM", error: "Cancelado manualmente", lineNumber: 0 }],
+      duration: "0s",
+    }).catch(() => {});
     return { success: true, message: aborted ? "Importación abortada" : "Importación marcada para cancelar" };
   }
 
@@ -379,6 +387,14 @@ export async function getQueueStatus(shopDomain: string): Promise<{
   for (const log of runningLogs) {
     if (seenConfigIds.has(log.configId)) continue;
     if (activeConfigIds.has(log.configId)) continue;
+
+    // Skip if there's an active BulkJob for this config (bulk is still processing)
+    const hasActiveBulkJob = await prisma.bulkJob.findFirst({
+      where: { configId: log.configId, phase: { in: ["lookup", "mutations", "finalizing"] } },
+      select: { id: true },
+    }).catch(() => null);
+    if (hasActiveBulkJob) continue;
+
     seenConfigIds.add(log.configId);
     const config = await prisma.importConfig.findUnique({
       where: { id: log.configId },

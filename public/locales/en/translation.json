@@ -54,6 +54,7 @@
   "common.manual": "Manual",
   "common.scheduled": "Scheduled",
   "common.completed": "Completed",
+  "common.cancelled": "Cancelled",
   "common.failed": "Failed",
   "common.processing": "Processing",
   "common.chunks": "Chunks",

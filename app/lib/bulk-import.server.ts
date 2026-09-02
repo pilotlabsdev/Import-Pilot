@@ -90,12 +90,24 @@ export async function cancelBulkImport(configId: string, shopDomain: string): Pr
     // Also fail any "running" ImportLogs for this config
     const stuckLogs = await prisma.importLog.updateMany({
       where: { configId, status: "running" },
-      data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "Cancelado manualmente (no había job bulk activo)", lineNumber: 0 }]) },
+      data: { status: "cancelled", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "Cancelado manualmente", lineNumber: 0 }]) },
     });
 
     if (stuckQueueItems.count > 0 || stuckLogs.count > 0) {
       console.log(`[Bulk] cancelBulkImport: no active BulkJob but cleaned up ${stuckQueueItems.count} queue item(s) and ${stuckLogs.count} log(s) for configId=${configId}`);
       return { success: true, message: `Cancelado: ${stuckQueueItems.count} en cola, ${stuckLogs.count} logs` };
+    }
+
+    // Check if there's already a completed/failed ImportLog — don't create a duplicate
+    const existingLog = await prisma.importLog.findFirst({
+      where: { configId, status: { in: ["completed", "completed_with_errors", "cancelled"] } },
+      orderBy: { startedAt: "desc" },
+      select: { id: true, status: true },
+    }).catch(() => null);
+
+    if (existingLog) {
+      console.log(`[Bulk] cancelBulkImport: no active BulkJob, existing log ${existingLog.id} already ${existingLog.status}`);
+      return { success: false, message: "No hay importación activa para esta configuración" };
     }
 
     return { success: false, message: "No hay importación activa para esta configuración" };

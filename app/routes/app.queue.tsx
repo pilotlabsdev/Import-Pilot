@@ -22,6 +22,7 @@ const STATUS_TONE: Record<string, "success" | "critical" | "attention" | "info" 
   cancelled: "warning",
   running: "attention",
   queued: "info",
+  completed_with_errors: "attention",
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -45,9 +46,10 @@ export default function QueuePage() {
   const STATUS_LABEL: Record<string, string> = {
     completed: t("common.completed"),
     failed: t("common.failed"),
-    cancelled: t("common.scheduled"),
+    cancelled: t("common.cancelled"),
     running: t("common.processing"),
     queued: t("queue.queued"),
+    completed_with_errors: t("import.completedWithErrors"),
   };
 
   // Poll queue status every 3s
