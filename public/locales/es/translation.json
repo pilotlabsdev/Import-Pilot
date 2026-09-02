@@ -230,6 +230,8 @@
   "config.usingDefault": "Usando ubicación predefinida de la tienda",
   "config.storeDomain": "Tienda: {{shopDomain}}",
   "config.fileMissing": "El archivo '{{filename}}' ya no existe en el servidor. Sube el archivo de nuevo para continuar importando.",
+  "config.deleteFileConfirmTitle": "Eliminar archivo",
+  "config.deleteFileConfirmMessage": "¿Estás seguro de que quieres eliminar '{{fileName}}'? Esta acción no se puede deshacer. El archivo se eliminará tanto de la app como del almacenamiento.",
   
   "columns.title": "Mapeo de Columnas",
   "columns.saved": "Mapeo guardado correctamente",

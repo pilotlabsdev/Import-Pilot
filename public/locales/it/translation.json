@@ -220,6 +220,8 @@
   "config.usingDefault": "Usando posizione predefinita del negozio",
   "config.storeDomain": "Negozio: {{shopDomain}}",
   "config.fileMissing": "Il file '{{filename}}' non esiste più sul server. Carica di nuovo il file per continuare l'importazione.",
+  "config.deleteFileConfirmTitle": "Elimina file",
+  "config.deleteFileConfirmMessage": "Sei sicuro di voler eliminare '{{fileName}}'? Questa azione non può essere annullata. Il file verrà eliminato dall'applicazione e dall'archiviazione.",
   
   "columns.title": "Mappatura Colonne",
   "columns.saved": "Mappatura salvata correttamente",

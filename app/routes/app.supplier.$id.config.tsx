@@ -15,6 +15,7 @@ import {
   DropZone,
   FormLayout,
   InlineStack,
+  Modal,
   Select,
   Spinner,
   Text,
@@ -256,6 +257,8 @@ export default function Config() {
   const [uploadedFiles, setUploadedFiles] = useState<Array<{ name: string; originalName: string; size: number; uploadedAt: string; fullPath: string }>>([]);
 
   const [isDirty, setIsDirty] = useState(false);
+  const [deleteConfirmFile, setDeleteConfirmFile] = useState<{ name: string; fullPath: string } | null>(null);
+
   const markDirty = useCallback(() => setIsDirty(true), []);
   const SAVE_BAR_ID = "config-save-bar";
 
@@ -304,6 +307,12 @@ export default function Config() {
       setUploadedFiles(d.files || []);
     } catch {}
   }, [configId]);
+
+  useEffect(() => {
+    if (fetcher.state === "idle" && fetcher.data) {
+      fetchUploadedFiles();
+    }
+  }, [fetcher.state, fetcher.data, fetchUploadedFiles]);
 
   const handleUpload = useCallback(async (file: File) => {
     setUploading(true);
@@ -604,14 +613,7 @@ export default function Config() {
                                 size="slim"
                                 tone="critical"
                                 disabled={isActive}
-                                onClick={() => {
-                                  fetcher.submit(
-                                    { intent: "delete", configId, fileName: f.name },
-                                    { method: "POST", action: "/api/upload" }
-                                  );
-                                  fetchUploadedFiles();
-                                  if (isActive) setLocalFilePath("");
-                                }}
+                                onClick={() => setDeleteConfirmFile({ name: f.name, fullPath: f.fullPath })}
                               >
                                 {t("common.delete")}
                               </Button>
@@ -1016,6 +1018,41 @@ export default function Config() {
       <Text as="p" tone="subdued">
         {t("config.storeDomain", { shopDomain })}
       </Text>
+
+      <Modal
+        open={!!deleteConfirmFile}
+        onClose={() => setDeleteConfirmFile(null)}
+        title={t("config.deleteFileConfirmTitle")}
+        primaryAction={{
+          content: t("common.delete"),
+          destructive: true,
+          onAction: () => {
+            if (!deleteConfirmFile) return;
+            fetcher.submit(
+              { intent: "delete", configId, fileName: deleteConfirmFile.name },
+              { method: "POST", action: "/api/upload" }
+            );
+            if (localFilePath === deleteConfirmFile.fullPath) {
+              setLocalFilePath("");
+              setDataSource("url");
+              setFileSwitched(true);
+            }
+            setDeleteConfirmFile(null);
+          },
+        }}
+        secondaryActions={[
+          {
+            content: t("common.cancel"),
+            onAction: () => setDeleteConfirmFile(null),
+          },
+        ]}
+      >
+        <Modal.Section>
+          <Text as="p">
+            {t("config.deleteFileConfirmMessage", { fileName: deleteConfirmFile?.name })}
+          </Text>
+        </Modal.Section>
+      </Modal>
     </>
   );
 }

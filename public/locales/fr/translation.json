@@ -220,6 +220,8 @@
   "config.usingDefault": "Utilise l'emplacement par défaut de la boutique",
   "config.storeDomain": "Boutique : {{shopDomain}}",
   "config.fileMissing": "Le fichier '{{filename}}' n'existe plus sur le serveur. Téléchargez à nouveau le fichier pour continuer l'importation.",
+  "config.deleteFileConfirmTitle": "Supprimer le fichier",
+  "config.deleteFileConfirmMessage": "Êtes-vous sûr de vouloir supprimer '{{fileName}}' ? Cette action est irréversible. Le fichier sera supprimé de l'application et du stockage.",
   
   "columns.title": "Mappage des Colonnes",
   "columns.saved": "Mappage enregistré avec succès",

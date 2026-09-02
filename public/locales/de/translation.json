@@ -220,6 +220,8 @@
   "config.usingDefault": "Shop-Standardstandort wird verwendet",
   "config.storeDomain": "Shop: {{shopDomain}}",
   "config.fileMissing": "Die Datei '{{filename}}' existiert nicht mehr auf dem Server. Laden Sie die Datei erneut hoch, um den Import fortzusetzen.",
+  "config.deleteFileConfirmTitle": "Datei löschen",
+  "config.deleteFileConfirmMessage": "Möchten Sie '{{fileName}}' wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden. Die Datei wird sowohl aus der App als auch aus dem Speicher gelöscht.",
 
   "columns.title": "Spaltenzuordnung",
   "columns.saved": "Zuordnung erfolgreich gespeichert",

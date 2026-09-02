@@ -220,6 +220,8 @@
   "config.usingDefault": "Usando localização predefinida da loja",
   "config.storeDomain": "Loja: {{shopDomain}}",
   "config.fileMissing": "O arquivo '{{filename}}' não existe mais no servidor. Faça upload do arquivo novamente para continuar importando.",
+  "config.deleteFileConfirmTitle": "Excluir arquivo",
+  "config.deleteFileConfirmMessage": "Tem certeza de que deseja excluir '{{fileName}}'? Esta ação não pode ser desfeita. O arquivo será excluído do aplicativo e do armazenamento.",
 
   "columns.title": "Mapeamento de Colunas",
   "columns.saved": "Mapeamento salvo com sucesso",
