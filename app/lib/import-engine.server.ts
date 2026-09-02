@@ -11,6 +11,38 @@ async function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+interface ImageUploadTask {
+  productId: string;
+  files: Array<{ originalSource: string; alt: string; contentType: string }>;
+  label: string; // for logging
+}
+
+async function processImageQueue(admin: any, queue: ImageUploadTask[], concurrency = 10): Promise<void> {
+  if (queue.length === 0) return;
+  console.log(`[Import] Processing image queue: ${queue.length} products, batch size ${concurrency}`);
+
+  for (let i = 0; i < queue.length; i += concurrency) {
+    const batch = queue.slice(i, i + concurrency);
+    const promises = batch.map(async (task) => {
+      try {
+        await graphqlWithRetry(admin,
+          `#graphql
+          mutation productCreateMedia($id: ID!, $media: [CreateMediaInput!]!) {
+            productCreateMedia(productId: $id, media: $media) { media { id } userErrors { field message } }
+          }`,
+          { id: task.productId, media: task.files.map((f) => ({ originalSource: f.originalSource, alt: f.alt, mediaContentType: f.contentType })) }
+        );
+        console.log(`[Import] Images OK: ${task.label} (${task.files.length} images)`);
+      } catch (error: any) {
+        console.error(`[Import] Images ERROR: ${task.label}:`, error?.message);
+      }
+    });
+    await Promise.all(promises);
+    if (i + concurrency < queue.length) await sleep(200); // brief pause between batches
+  }
+  console.log(`[Import] Image queue complete: ${queue.length} products processed`);
+}
+
 async function graphqlWithRetry(admin: any, query: string, vars: any, maxRetries = 3): Promise<any> {
   return rateLimitedGraphql(admin, query, vars, maxRetries);
 }
@@ -351,6 +383,7 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
     let cancelled = false;
     let checkCounter = 0;
     const processedInventoryItems = new Set<string>();
+    const imageQueue: ImageUploadTask[] = [];
     for (const chunk of chunks) {
       for (const item of chunk) {
         checkCounter++;
@@ -398,6 +431,7 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
             result,
             processedInventoryItems,
             sourceKey,
+            imageQueue,
           });
         } catch (error: any) {
           const errorMsg = error?.message || "Error desconocido";
@@ -423,6 +457,7 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
                 result,
                 processedInventoryItems,
                 sourceKey,
+                imageQueue,
               });
               retried = true;
               break;
@@ -496,6 +531,11 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
     }
     } // end if (!cancelled)
 
+    // Process all deferred image uploads in parallel batches
+    if (imageQueue.length > 0) {
+      await processImageQueue(admin, imageQueue);
+    }
+
     await prisma.importLog.update({
       where: { id: log.id },
       data: {
@@ -555,6 +595,7 @@ interface ProcessProductOptions {
   result: ImportResult;
   processedInventoryItems: Set<string>;
   sourceKey: string;
+  imageQueue: ImageUploadTask[];
 }
 
 async function processProduct({
@@ -569,6 +610,7 @@ async function processProduct({
   result,
   processedInventoryItems,
   sourceKey,
+  imageQueue,
 }: ProcessProductOptions): Promise<void> {
   let existing = await prisma.productMapping.findUnique({
     where: { shopDomain_supplierSku: { shopDomain, supplierSku: sku } },
@@ -699,22 +741,14 @@ async function processProduct({
         }
       }
 
-      // Update images
+      // Update images — deferred to batch queue
       if (productInput2.files.length > 0) {
-        try {
-          await graphqlWithRetry(admin,
-            `#graphql
-            mutation productCreateMedia($id: ID!, $media: [CreateMediaInput!]!) {
-              productCreateMedia(productId: $id, media: $media) { media { id } userErrors { field message } }
-            }`,
-            { id: existing.shopifyProductId, media: productInput2.files.map((f) => ({ originalSource: f.originalSource, alt: f.alt, mediaContentType: f.contentType })) }
-          );
-        } catch (error: any) {
-          console.error("[Import] Priority replace: error updating images:", error);
-        }
+        imageQueue.push({
+          productId: existing.shopifyProductId,
+          files: productInput2.files.map((f) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType })),
+          label: `SKU=${sku} (priority replace inter-supplier)`,
+        });
       }
-
-      // Delete old mapping, create new one for current supplier
       await prisma.productMapping.delete({ where: { id: existing.id } });
       const newMapping2 = await prisma.productMapping.create({
         data: {
@@ -887,19 +921,13 @@ async function processProduct({
           }
         }
 
-        // Update images
+        // Update images — deferred to batch queue
         if (productInput2.files.length > 0) {
-          try {
-            await graphqlWithRetry(admin,
-              `#graphql
-              mutation productCreateMedia($id: ID!, $media: [CreateMediaInput!]!) {
-                productCreateMedia(productId: $id, media: $media) { media { id } userErrors { field message } }
-              }`,
-              { id: dupCheck.existingShopifyProductId, media: productInput2.files.map((f) => ({ originalSource: f.originalSource, alt: f.alt, mediaContentType: f.contentType })) }
-            );
-          } catch (error: any) {
-            console.error("[Import] Priority replace: error updating images:", error);
-          }
+          imageQueue.push({
+            productId: dupCheck.existingShopifyProductId,
+            files: productInput2.files.map((f) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType })),
+            label: `SKU=${sku} (priority replace EAN dup)`,
+          });
         }
 
         // Update mapping: delete old (other supplier) + any existing for this SKU, then create new
@@ -1325,19 +1353,13 @@ async function processProduct({
       }
     }
 
-    // Update images
+    // Update images — deferred to batch queue
     if (productInput2.files.length > 0) {
-      try {
-        await graphqlWithRetry(admin,
-          `#graphql
-          mutation productCreateMedia($id: ID!, $media: [CreateMediaInput!]!) {
-            productCreateMedia(productId: $id, media: $media) { media { id } userErrors { field message } }
-          }`,
-          { id: priorityReplaceTarget.shopifyProductId, media: productInput2.files.map((f) => ({ originalSource: f.originalSource, alt: f.alt, mediaContentType: f.contentType })) }
-        );
-      } catch (error: any) {
-        console.error("[Import] Priority replace: error updating images:", error);
-      }
+      imageQueue.push({
+        productId: priorityReplaceTarget.shopifyProductId,
+        files: productInput2.files.map((f) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType })),
+        label: `SKU=${sku} (priority replace target)`,
+      });
     }
 
     // Delete old mapping, create new one
@@ -1432,17 +1454,11 @@ async function processProduct({
     }
 
     if (imagesChanged) {
-      try {
-        await graphqlWithRetry(admin,
-          `#graphql
-          mutation productCreateMedia($id: ID!, $media: [CreateMediaInput!]!) {
-            productCreateMedia(productId: $id, media: $media) { media { id } userErrors { field message } }
-          }`,
-          { id: existing.shopifyProductId, media: productInput.files.map((f) => ({ originalSource: f.originalSource, alt: f.alt, mediaContentType: f.contentType })) }
-        );
-      } catch (error: any) {
-        console.error("[Import] Error actualizando imágenes:", error);
-      }
+      imageQueue.push({
+        productId: existing.shopifyProductId,
+        files: productInput.files.map((f) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType })),
+        label: `SKU=${sku} (update images)`,
+      });
     }
 
     if (priceChanged) {

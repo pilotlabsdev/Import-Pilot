@@ -47,6 +47,38 @@ async function gql(admin: any, query: string, varsOrOptions?: any): Promise<any>
   }
 }
 
+interface BulkImageTask {
+  productId: string;
+  files: Array<{ originalSource: string; mediaContentType: string }>;
+  label: string;
+}
+
+async function processBulkImageQueue(admin: any, queue: BulkImageTask[], concurrency = 10): Promise<void> {
+  if (queue.length === 0) return;
+  console.log(`[Bulk] Processing image queue: ${queue.length} products, batch size ${concurrency}`);
+
+  for (let i = 0; i < queue.length; i += concurrency) {
+    const batch = queue.slice(i, i + concurrency);
+    const promises = batch.map(async (task) => {
+      try {
+        await gql(admin,
+          `#graphql
+          mutation productCreateMedia($id: ID!, $media: [CreateMediaInput!]!) {
+            productCreateMedia(productId: $id, media: $media) { media { id } userErrors { field message } }
+          }`,
+          { variables: { id: task.productId, media: task.files } }
+        );
+        console.log(`[Bulk] Images OK: ${task.label} (${task.files.length} images)`);
+      } catch (error: any) {
+        console.error(`[Bulk] Images ERROR: ${task.label}:`, error?.message);
+      }
+    });
+    await Promise.all(promises);
+    if (i + concurrency < queue.length) await new Promise((r) => setTimeout(r, 200));
+  }
+  console.log(`[Bulk] Image queue complete: ${queue.length} products processed`);
+}
+
 // Like gql() but auto-refreshes token on 401 and retries with new admin client.
 // Used in long-running operations (bulk mutations, chunks) where token may expire mid-import.
 async function gqlWithRefresh(shopDomain: string, adminRef: { current: any }, query: string, varsOrOptions?: any): Promise<any> {
@@ -953,6 +985,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
   let opErrors = 0;
   const inventoryWrites: string[] = [];
   const errorWrites: string[] = [];
+  const imageQueue: BulkImageTask[] = [];
 
   for (let i = 0; i < resultLines.length; i++) {
     const meta = metaLines[i] as MetaLine | undefined;
@@ -1014,30 +1047,14 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       createdCount++;
 
       if (meta.images && meta.images.length > 0) {
-        try {
-          const media = meta.images.map((url) => ({
+        imageQueue.push({
+          productId: product.id,
+          files: meta.images.map((url: string) => ({
             originalSource: url,
-            mediaContentType: "IMAGE" as const,
-          }));
-          const mediaResult = await gql(admin,
-            `#graphql
-            mutation productCreateMedia($id: ID!, $media: [CreateMediaInput!]!) {
-              productCreateMedia(productId: $id, media: $media) {
-                media { ... on MediaImage { id image { url } } }
-                mediaUserErrors { field message }
-              }
-            }`,
-            { variables: { id: product.id, media } }
-          );
-          const mediaErrors = mediaResult.data?.productCreateMedia?.mediaUserErrors;
-          if (mediaErrors?.length > 0) {
-            console.error(`[Bulk] SKU ${meta.sku}: mediaUserErrors: ${JSON.stringify(mediaErrors)}`);
-          } else {
-            console.log(`[Bulk] SKU ${meta.sku}: ${meta.images.length} imagen(es) subida(s)`);
-          }
-        } catch (e: any) {
-          console.error(`[Bulk] SKU ${meta.sku}: error subiendo imágenes: ${e?.message}`);
-        }
+            mediaContentType: "IMAGE",
+          })),
+          label: `SKU=${meta.sku}`,
+        });
       }
 
       if (variant?.id) {
@@ -1271,6 +1288,11 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
         console.log(`[Bulk] SKU ${meta.sku}: costo NO actualizado - inventoryItemId="${meta.inventoryItemId}", costPrice=${meta.costPrice}`);
       }
     }
+  }
+
+  // Process deferred image uploads in parallel batches
+  if (imageQueue.length > 0) {
+    await processBulkImageQueue(admin, imageQueue);
   }
 
   await fs.appendFile(inventoryQueuePath, inventoryWrites.length ? inventoryWrites.join("\n") + "\n" : "");
