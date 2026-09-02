@@ -2,7 +2,8 @@ import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
 import { data } from "react-router";
 
 import { useLoaderData, useActionData, Form, useRevalidator, useFetcher } from "react-router";
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { useAppBridge, SaveBar } from "@shopify/app-bridge-react";
 import {
   Banner,
   BlockStack,
@@ -188,6 +189,10 @@ export default function CategoryMapping() {
   const { revalidate } = useRevalidator();
   const fetcher = useFetcher();
   const { t } = useTranslation();
+  const shopify = useAppBridge();
+  const formRef = useRef<HTMLFormElement>(null);
+
+  const SAVE_BAR_ID = "category-save-bar";
 
   useEffect(() => {
     if (actionData?.success) {
@@ -269,6 +274,27 @@ export default function CategoryMapping() {
 
   const allCollectionIds = Object.keys(selectedCollections);
 
+  const hasChanges = selectedCategories.length > 0 || allCollectionIds.length > 0 || !!categoryTags || !!selectedProductType;
+
+  useEffect(() => {
+    if (hasChanges) shopify.saveBar.show(SAVE_BAR_ID);
+    else shopify.saveBar.hide(SAVE_BAR_ID);
+  }, [hasChanges]);
+
+  const handleDiscard = useCallback(() => {
+    setSelectedCategories([]);
+    setSelectedCollections({});
+    setCategoryTags("");
+    setSelectedProductType("");
+    setCatSearch("");
+    setEditingCategory(null);
+    shopify.saveBar.hide(SAVE_BAR_ID);
+  }, []);
+
+  const handleSave = useCallback(() => {
+    formRef.current?.requestSubmit();
+  }, []);
+
   return (
     <>
       <div style={{ paddingBottom: "40px" }}>
@@ -304,7 +330,11 @@ export default function CategoryMapping() {
               {t("categories.assignTitle")}
             </Text>
 
-            <Form method="post" data-save-bar data-discard-confirmation>
+            <Form ref={formRef} method="post">
+              <SaveBar id={SAVE_BAR_ID}>
+                <button variant="primary" type="button" onClick={handleSave}>{t("common.save")}</button>
+                <button type="button" onClick={handleDiscard}>{t("common.discard")}</button>
+              </SaveBar>
               <FormLayout>
                 <input type="hidden" name="intent" value="save" />
 
