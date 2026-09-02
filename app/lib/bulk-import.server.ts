@@ -979,7 +979,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       const variant = product?.variants?.edges?.[0]?.node;
       if (!product?.id) {
         opErrors++;
-        errorWrites.push(JSON.stringify({ sku: meta.sku, error: "Sin ID de producto en resultado", lineNumber: 0 }));
+        errorWrites.push(JSON.stringify({ sku: meta.sku, error: "Sin ID de producto en resultado" }));
         continue;
       }
 

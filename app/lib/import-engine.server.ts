@@ -397,6 +397,7 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
             updateOpts: effectiveOpts,
             result,
             processedInventoryItems,
+            sourceKey,
           });
         } catch (error: any) {
           const errorMsg = error?.message || "Error desconocido";
@@ -421,6 +422,7 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
                 updateOpts: effectiveOpts,
                 result,
                 processedInventoryItems,
+                sourceKey,
               });
               retried = true;
               break;
@@ -552,6 +554,7 @@ interface ProcessProductOptions {
   updateOpts: Set<string>;
   result: ImportResult;
   processedInventoryItems: Set<string>;
+  sourceKey: string;
 }
 
 async function processProduct({
@@ -565,6 +568,7 @@ async function processProduct({
   updateOpts,
   result,
   processedInventoryItems,
+  sourceKey,
 }: ProcessProductOptions): Promise<void> {
   let existing = await prisma.productMapping.findUnique({
     where: { shopDomain_supplierSku: { shopDomain, supplierSku: sku } },
