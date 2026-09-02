@@ -198,7 +198,7 @@ interface ImportResult {
   excluded: number;
   priceChanges: number;
   stockChanges: number;
-  errors: Array<{ sku: string; error: string; lineNumber: number }>;
+  errors: Array<{ sku: string; error: string; lineNumber?: number }>;
   lastSku: string;
 }
 
@@ -506,7 +506,7 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
         stockChanges: result.stockChanges,
         excludedCount: excludedCount + result.excluded,
         errors: cancelled
-          ? JSON.stringify([{ sku: "SYSTEM", error: "Cancelado manualmente", lineNumber: 0 }])
+          ? JSON.stringify([{ sku: "SYSTEM", error: "Cancelado manualmente" }])
           : result.errors.length > 0 ? JSON.stringify(result.errors) : null,
         lastSku: result.lastSku || null,
         completedAt: new Date(),

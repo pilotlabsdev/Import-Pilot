@@ -326,7 +326,7 @@ export async function cancelQueueItem(itemId: string, shopDomain: string): Promi
     if (item.logId) {
       await prisma.importLog.update({
         where: { id: item.logId },
-        data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "Cancelado manualmente", lineNumber: 0 }]) },
+        data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "Cancelado manualmente" }]) },
       }).catch(() => {});
     }
     await sendNotification({
@@ -334,7 +334,7 @@ export async function cancelQueueItem(itemId: string, shopDomain: string): Promi
       status: "cancelled",
       totalProducts: 0, created: 0, updated: 0, unchanged: 0,
       priceChanges: 0, stockChanges: 0,
-      errors: [{ sku: "SYSTEM", error: "Cancelado manualmente", lineNumber: 0 }],
+      errors: [{ sku: "SYSTEM", error: "Cancelado manualmente" }],
       duration: "0s",
     }).catch(() => {});
     return { success: true, message: aborted ? "Importación abortada" : "Importación marcada para cancelar" };

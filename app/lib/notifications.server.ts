@@ -9,7 +9,7 @@ interface NotificationPayload {
   unchanged: number;
   priceChanges: number;
   stockChanges: number;
-  errors: Array<{ sku: string; error: string; lineNumber: number }>;
+  errors: Array<{ sku: string; error: string; lineNumber?: number }>;
   duration: string;
 }
 

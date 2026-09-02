@@ -61,7 +61,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // Also cancel stuck ImportLogs (they appear in schedulerActive without queue items)
     const stuckLogs = await prisma.importLog.updateMany({
       where: { configId, status: "running" },
-      data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "Cancelado manualmente", lineNumber: 0 }]) },
+      data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "Cancelado manualmente" }]) },
     });
     console.log(`[Queue API] cancel-scheduled: cancelled ${items.length} queue items and ${stuckLogs.count} logs for configId=${configId}`);
     return data({ success: true, message: `${items.length} en cola, ${stuckLogs.count} logs cancelados` });
@@ -99,7 +99,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // Cancel ALL running ImportLogs for this config (not just the one linked to the job — logId may be null)
     const stuckLogs = await prisma.importLog.updateMany({
       where: { configId: job.configId, status: "running" },
-      data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "Cancelado manualmente", lineNumber: 0 }]) },
+      data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "Cancelado manualmente" }]) },
     });
     // Also cancel any associated queue items so they don't stay stuck
     await prisma.importQueue.updateMany({
@@ -135,7 +135,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (log.status === "running") {
       await prisma.importLog.update({
         where: { id: logId },
-        data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "Cancelado manualmente", lineNumber: 0 }]) },
+        data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "Cancelado manualmente" }]) },
       });
     } else if (log.status === "completed" || log.status === "completed_with_errors") {
       await prisma.importLog.update({

@@ -90,7 +90,7 @@ export async function cancelBulkImport(configId: string, shopDomain: string): Pr
     // Also fail any "running" ImportLogs for this config
     const stuckLogs = await prisma.importLog.updateMany({
       where: { configId, status: "running" },
-      data: { status: "cancelled", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "Cancelado manualmente", lineNumber: 0 }]) },
+      data: { status: "cancelled", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "Cancelado manualmente" }]) },
     });
 
     if (stuckQueueItems.count > 0 || stuckLogs.count > 0) {
@@ -530,7 +530,7 @@ async function prepareAndLaunch(
   const fieldRules = parseExcludeFieldRules(config.excludeFieldRules);
   let newCreateCount = 0;
   const allSkus: string[] = [];
-  const errors: Array<{ sku: string; error: string; lineNumber: number }> = [];
+  const errors: Array<{ sku: string; error: string; lineNumber?: number }> = [];
   let duplicateSkippedCount = 0;
   const priorityReplacements: Array<{ mappingId: string; oldConfigId: string; newSku: string; newEan: string }> = [];
 

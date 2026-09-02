@@ -68,7 +68,7 @@ export default function Logs() {
           <ul style={{ margin: "4px 0", padding: "0 16px", fontSize: "12px" }}>
             {errors.map((e: any, i: number) => (
               <li key={i}>
-                <strong>{e.sku || "?"}</strong>: {e.error} ({t("history.line")} {e.lineNumber})
+                <strong>{e.sku || "?"}</strong>: {e.error}{e.lineNumber ? ` (${t("history.line")} ${e.lineNumber})` : ""}
               </li>
             ))}
           </ul>
