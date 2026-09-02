@@ -204,6 +204,23 @@ async function processQueueItem(
 
       await cleanupOldLogs(item.configId).catch(() => {});
     } else {
+      // Check for orphan running ImportLog to resume from checkpoint
+      const orphanLog = await prisma.importLog.findFirst({
+        where: { configId: item.configId, status: "running" },
+        select: { id: true, lastSku: true },
+        orderBy: { startedAt: "desc" },
+      }).catch(() => null);
+      const resumeFromSku = orphanLog?.lastSku || undefined;
+
+      if (resumeFromSku) {
+        console.log(`[Queue] Resumiendo desde checkpoint SKU: ${resumeFromSku}`);
+        // Mark old log as failed (we extracted the checkpoint)
+        await prisma.importLog.update({
+          where: { id: orphanLog!.id },
+          data: { status: "failed", completedAt: new Date(), errorMessage: "Replaced by resume" },
+        }).catch(() => {});
+      }
+
       const result = await runImport({
         shopDomain,
         configId: item.configId,
@@ -214,6 +231,7 @@ async function processQueueItem(
         triggerType: item.triggerType,
         signal: lock.signal,
         queueItemId: item.id,
+        resumeFromSku,
       });
 
       const duration = `${Math.round((Date.now() - startTime) / 1000)}s`;

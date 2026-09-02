@@ -1,9 +1,10 @@
 import { prisma, isUrlSource } from "./db.server";
 import { enqueue, processNext } from "./queue-manager.server";
-import { reconcileStaleBulkJobs, cleanupFinishedBulkJobs } from "./bulk-import.server";
+import { reconcileStaleBulkJobs, cleanupFinishedBulkJobs, handleBulkOperationFinish } from "./bulk-import.server";
 import { reconcileAllShops } from "./reconciliation.server";
 import { isImportActive } from "./import-locks.server";
 import { getSubscriptionInfo, enforcePlanLimits } from "./billing.server";
+import { shopify } from "~/shopify.server";
 
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
 const scheduledFrequencies = new Map<string, string>();
@@ -130,6 +131,47 @@ async function resumeInterruptedJobs() {
   }
 }
 
+async function checkBulkOperations() {
+  try {
+    // Get all shops with active BulkJobs
+    const activeJobs = await prisma.bulkJob.findMany({
+      where: { status: { notIn: ["done", "failed"] } },
+      select: { shopDomain: true },
+      distinct: ["shopDomain"],
+    });
+
+    for (const { shopDomain } of activeJobs) {
+      try {
+        const { admin } = await shopify.unauthenticated.admin(shopDomain);
+        const res = await admin.graphql(`query { currentBulkOperation { id status objectCount errorCode } }`);
+        const json = await res.json();
+        const op = json.data?.currentBulkOperation;
+
+        if (!op || !op.id) continue;
+
+        if (op.status === "COMPLETED") {
+          // Check if we know about this operation
+          const knownOp = await prisma.bulkJobOp.findUnique({
+            where: { shopifyOpId: op.id },
+            select: { id: true, status: true },
+          }).catch(() => null);
+
+          if (knownOp && knownOp.status !== "processed") {
+            console.log(`[Scheduler] Bulk orphan detectado: ${op.id} en ${shopDomain}, procesando`);
+            await handleBulkOperationFinish({ admin, opId: op.id, status: "COMPLETED" }).catch((e) =>
+              console.error(`[Scheduler] Error procesando bulk orphan ${op.id}:`, e?.message)
+            );
+          }
+        }
+      } catch (e: any) {
+        console.error(`[Scheduler] Error checking bulk ops for ${shopDomain}:`, e?.message);
+      }
+    }
+  } catch (e) {
+    console.error("[Scheduler] Error in checkBulkOperations:", e);
+  }
+}
+
 export function startScheduler() {
   if (started) return;
   started = true;
@@ -141,6 +183,9 @@ export function startScheduler() {
     );
     void cleanupFinishedBulkJobs().catch((error: any) =>
       console.error("[Scheduler] Error en limpieza de bulk jobs:", error)
+    );
+    void checkBulkOperations().catch((error: any) =>
+      console.error("[Scheduler] Error en checkBulkOperations:", error)
     );
     reconcileCounter++;
     if (reconcileCounter >= RECONCILE_INTERVAL) {

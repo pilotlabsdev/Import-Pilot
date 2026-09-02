@@ -212,9 +212,10 @@ interface ImportOptions {
   triggerType?: string;
   configId?: string;
   queueItemId?: string;
+  resumeFromSku?: string;
 }
 
-export async function runImport({ shopDomain, admin, filterType, filterSkus, filterCategories, signal, triggerType, configId, queueItemId }: ImportOptions): Promise<ImportResult> {
+export async function runImport({ shopDomain, admin, filterType, filterSkus, filterCategories, signal, triggerType, configId, queueItemId, resumeFromSku }: ImportOptions): Promise<ImportResult> {
   let config;
   const sourceKey = getSourceKey(configId ? await prisma.importConfig.findUnique({ where: { id: configId } }) || {} : await getOrCreateConfig(shopDomain));
   if (configId) {
@@ -299,10 +300,23 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
     const chunks: Array<Array<{ headers: string[]; row: any; lineNumber: number }>> = [];
     let currentChunk: Array<{ headers: string[]; row: any; lineNumber: number }> = [];
     const seenSkus = new Set<string>();
+    let skipping = !!resumeFromSku;
+    const resumeSkuLower = resumeFromSku?.toLowerCase();
 
     for await (const item of streamFile(getEffectiveUrl(config), config.csvDelimiter, 3, signal)) {
       const { row } = item;
       const rowSku = (getField(row, columnMaps, "sku") || row["sku"] || "").trim().toLowerCase();
+
+      // Checkpoint resume: skip until we find the last processed SKU
+      if (skipping) {
+        if (rowSku === resumeSkuLower) {
+          skipping = false;
+          console.log(`[Import] Resume: encontrado SKU ${resumeFromSku}, procesando desde aquí`);
+        } else {
+          continue;
+        }
+      }
+
       const rowCat = (getField(row, columnMaps, "category") || row["category"] || "").trim().toLowerCase();
 
       if (hasAnyFilter) {
