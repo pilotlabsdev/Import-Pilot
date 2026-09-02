@@ -247,6 +247,7 @@ export default function Config() {
   const [loadingLocations, setLoadingLocations] = useState(true);
   const [savingLocation, setSavingLocation] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadedFiles, setUploadedFiles] = useState<Array<{ name: string; originalName: string; size: number; uploadedAt: string; fullPath: string }>>([]);
 
   const [isDirty, setIsDirty] = useState(false);
@@ -301,6 +302,7 @@ export default function Config() {
 
   const handleUpload = useCallback(async (file: File) => {
     setUploading(true);
+    setUploadError(null);
     try {
       const formData = new FormData();
       formData.append("file", file);
@@ -313,6 +315,8 @@ export default function Config() {
         setFileSwitched(true);
         fetchUploadedFiles();
         revalidate();
+      } else if (d.error) {
+        setUploadError(d.error);
       }
     } catch {} finally {
       setUploading(false);
@@ -553,6 +557,11 @@ export default function Config() {
                       <Spinner size="small" />
                       <Text as="p" variant="bodySm">{t("config.uploading")}</Text>
                     </InlineStack>
+                  )}
+                  {uploadError && (
+                    <Banner tone="critical">
+                      <p>{uploadError}</p>
+                    </Banner>
                   )}
                   {uploadedFiles.length > 0 && (
                     <BlockStack gap="100">

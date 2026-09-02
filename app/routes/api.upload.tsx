@@ -158,14 +158,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const supplierDir = path.join(UPLOAD_BASE, shopDomain, configId);
     await fs.mkdir(supplierDir, { recursive: true });
 
-    // Límite de 3 archivos por proveedor: borrar el más viejo si se excede
+    // Límite de 3 archivos por proveedor
     const existingFiles = (await fs.readdir(supplierDir).catch(() => []))
       .filter((f) => !f.startsWith("."));
     if (existingFiles.length >= 3) {
-      // Ordenar por nombre (timestamp al inicio) y borrar el más viejo
-      const sorted = existingFiles.sort();
-      const oldest = sorted[0];
-      try { await fs.unlink(path.join(supplierDir, oldest)); } catch {}
+      return data({ error: "Máximo 3 archivos por proveedor. Elimina uno antes de subir otro." }, { status: 400 });
     }
 
     const timestamp = Date.now();

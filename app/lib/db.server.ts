@@ -120,7 +120,12 @@ export async function ensureSingleSession(shop: string): Promise<{ id: string; a
  * Used to scope column mappings per source (URL vs file).
  */
 export function getSourceKey(config: { dataSource?: string | null; csvUrl?: string; localFilePath?: string | null }): string {
-  if (config.dataSource === "file" && config.localFilePath) return `file:${config.localFilePath}`;
+  if (config.dataSource === "file" && config.localFilePath) {
+    // Quitar timestamp del nombre para que re-upload del mismo archivo genere el mismo key
+    const fileName = config.localFilePath.split(/[/\\]/).pop() || config.localFilePath;
+    const originalName = fileName.replace(/^\d+_/, "");
+    return `file:${originalName}`;
+  }
   if (config.csvUrl) return `url:${config.csvUrl}`;
   return "default";
 }
