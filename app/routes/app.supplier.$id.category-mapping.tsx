@@ -475,7 +475,7 @@ export default function CategoryMapping() {
         <Card>
           <BlockStack gap="200">
             <Text as="h2" variant="headingMd">
-              {t("categories.existingMappings", { count: mappings.length })}
+              {t("categories.existingMappings", { count: Object.keys(groupedMappings).length })}
             </Text>
             {mappings.length === 0 ? (
               <Text as="p" tone="subdued">
@@ -500,7 +500,7 @@ export default function CategoryMapping() {
                     {catMappings[0]?.tags ? (
                       <Badge tone="attention">{catMappings[0].tags}</Badge>
                     ) : null}
-                    <Button size="slim" icon={ViewIcon} onClick={() => setPreviewMapping(catMappings[0])}>
+                    <Button size="slim" icon={ViewIcon} onClick={() => setPreviewMapping({ ...catMappings[0], _groupCategories: catMappings.map((m) => m.csvCategory).join(" | ") })}>
                       {t("common.view")}
                     </Button>
                     <Button size="slim" onClick={() => setEditingCategory(catMappings[0].csvCategory)}>
@@ -548,7 +548,7 @@ export default function CategoryMapping() {
             <BlockStack gap="300">
               <InlineStack gap="200" blockAlign="center">
                 <Text as="p" variant="bodyMd" fontWeight="semibold">{t("categories.fileCategory")}:</Text>
-                <Badge>{previewMapping.csvCategory}</Badge>
+                <Badge>{previewMapping._groupCategories || previewMapping.csvCategory}</Badge>
               </InlineStack>
               <InlineStack gap="200" blockAlign="center">
                 <Text as="p" variant="bodyMd" fontWeight="semibold">{t("categories.shopifyCollection")}:</Text>
@@ -622,6 +622,8 @@ function EditCategoryModal({
   onClose: () => void;
 }) {
   const { t } = useTranslation();
+  const allCategories = catMappings.map((m) => m.csvCategory);
+  const categoryLabel = allCategories.join(" | ");
   const [selectedCols, setSelectedCols] = useState<Record<string, string>>(
     Object.fromEntries(catMappings.map((m) => [m.collectionId, m.collectionName || m.collectionId]))
   );
@@ -646,7 +648,7 @@ function EditCategoryModal({
     <Modal
       open
       onClose={onClose}
-      title={`${t("common.edit")}: ${csvCategory}`}
+      title={`${t("common.edit")}: ${categoryLabel}`}
       primaryAction={{
         content: t("common.save"),
         onAction: () => {
@@ -659,7 +661,9 @@ function EditCategoryModal({
       <Modal.Section>
         <Form id={`edit-cat-form-${csvCategory}`} method="post">
           <input type="hidden" name="intent" value="save" />
-          <input type="hidden" name="csvCategories" value={csvCategory} />
+          {allCategories.map((cat) => (
+            <input key={`c-${cat}`} type="hidden" name="csvCategories" value={cat} />
+          ))}
           {colIds.map((cId) => (
             <input key={`h-${cId}`} type="hidden" name="collectionIds" value={cId} />
           ))}
@@ -672,7 +676,7 @@ function EditCategoryModal({
           <input type="hidden" name="shopifyProductType" value={productType} />
           <FormLayout>
             <Text as="p" variant="bodyMd">
-              {t("categories.categoryLabel", { category: csvCategory })}
+              {t("categories.categoryLabel", { category: categoryLabel })}
             </Text>
 
             <BlockStack gap="200">
