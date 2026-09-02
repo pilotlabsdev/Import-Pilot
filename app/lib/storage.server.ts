@@ -98,6 +98,17 @@ export async function resolveFileUrl(value: string): Promise<string> {
   return value;
 }
 
+/** Get file size from the bucket. Returns size in bytes or -1 if not found. */
+export async function getFileSize(bucketKey: string): Promise<number> {
+  const key = toS3Key(bucketKey);
+  try {
+    const res = await getClient().send(new HeadObjectCommand({ Bucket: BUCKET, Key: key }));
+    return res.ContentLength ?? -1;
+  } catch {
+    return -1;
+  }
+}
+
 /** List all files in a bucket prefix (shopDomain/configId/). */
 export async function listStorageFiles(shopDomain: string, configId: string): Promise<Array<{ key: string; name: string; size: number }>> {
   // We use a simple approach: try to get individual files isn't practical for listing.

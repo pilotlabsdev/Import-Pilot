@@ -3,7 +3,7 @@ import { data } from "react-router";
 import { authenticate } from "~/shopify.server";
 import { prisma } from "~/lib/db.server";
 import { invalidateCache } from "~/lib/csv-cache.server";
-import { uploadToStorage, deleteFromStorage, fileExistsInStorage, isBucketKey, makeBucketKey } from "~/lib/storage.server";
+import { uploadToStorage, deleteFromStorage, fileExistsInStorage, getFileSize, isBucketKey, makeBucketKey } from "~/lib/storage.server";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -24,16 +24,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   // If using bucket storage, list files from the bucket key stored in localFilePath
   if (isBucketKey(config.localFilePath || "")) {
-    // For bucket storage, we can only show the currently active file
-    // (listing bucket prefix requires additional SDK calls; we track via DB)
     const key = config.localFilePath!;
     const exists = await fileExistsInStorage(key);
     const fileName = key.split("/").pop() || "";
+    const size = exists ? await getFileSize(key) : 0;
     return data({
       files: exists ? [{
         name: fileName,
         originalName: fileName.replace(/^\d+_/, ""),
-        size: 0, // size not tracked in bucket key
+        size: size > 0 ? size : 0,
         uploadedAt: config.updatedAt?.toISOString() || new Date().toISOString(),
         fullPath: key,
       }] : [],
