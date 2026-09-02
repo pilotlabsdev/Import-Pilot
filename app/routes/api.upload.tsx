@@ -187,11 +187,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     // Límite de 3 archivos — check existing file in bucket or disk
     if (isBucketKey(config.localFilePath || "")) {
-      // Already has a file in bucket — max 3 means we count the current one
-      // Since we store only 1 active file per supplier in bucket, reject if one exists
+      // Bucket: only 1 active file per supplier, replace is allowed
+      // Delete old file first if it exists
       const exists = await fileExistsInStorage(config.localFilePath!);
       if (exists) {
-        return data({ error: "upload.maxFilesPerSupplier", errorIsKey: true }, { status: 400 });
+        try { await deleteFromStorage(config.localFilePath!); } catch {}
       }
     } else {
       // Legacy disk: check file count
