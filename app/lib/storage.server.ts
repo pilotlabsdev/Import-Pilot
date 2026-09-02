@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const BUCKET = process.env.STORAGE_BUCKET || "";
@@ -82,7 +82,7 @@ export async function fileExistsInStorage(bucketKey: string): Promise<boolean> {
 /** Generate a presigned URL (valid for 1 hour) for reading a file from the bucket. */
 export async function getPresignedUrl(bucketKey: string): Promise<string> {
   const key = toS3Key(bucketKey);
-  return getSignedUrl(getClient(), new HeadObjectCommand({ Bucket: BUCKET, Key: key }), { expiresIn: 3600 });
+  return getSignedUrl(getClient(), new GetObjectCommand({ Bucket: BUCKET, Key: key }), { expiresIn: 3600 });
 }
 
 /**
