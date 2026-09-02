@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand, GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const BUCKET = process.env.STORAGE_BUCKET || "";
@@ -110,8 +110,22 @@ export async function getFileSize(bucketKey: string): Promise<number> {
 }
 
 /** List all files in a bucket prefix (shopDomain/configId/). */
-export async function listStorageFiles(shopDomain: string, configId: string): Promise<Array<{ key: string; name: string; size: number }>> {
-  // We use a simple approach: try to get individual files isn't practical for listing.
-  // Instead, the upload route tracks files via DB. This is a fallback.
-  return [];
+export async function listStorageFiles(shopDomain: string, configId: string): Promise<Array<{ key: string; name: string; size: number; lastModified: string }>> {
+  const prefix = `${shopDomain}/${configId}/`;
+  try {
+    const res = await getClient().send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: prefix }));
+    return (res.Contents || []).map((obj) => {
+      const key = obj.Key || "";
+      const name = key.split("/").pop() || "";
+      return {
+        key: `bucket:${key}`,
+        name,
+        size: obj.Size || 0,
+        lastModified: obj.LastModified?.toISOString() || new Date().toISOString(),
+      };
+    }).filter((f) => f.name);
+  } catch (e: any) {
+    console.error(`[Storage] List error prefix=${prefix}:`, e?.message);
+    return [];
+  }
 }

@@ -1029,7 +1029,7 @@ export default function Config() {
           onAction: () => {
             if (!deleteConfirmFile) return;
             fetcher.submit(
-              { intent: "delete", configId, fileName: deleteConfirmFile.name },
+              { intent: "delete", configId, fileName: deleteConfirmFile.name, fileKey: deleteConfirmFile.fullPath },
               { method: "POST", action: "/api/upload" }
             );
             if (localFilePath === deleteConfirmFile.fullPath) {

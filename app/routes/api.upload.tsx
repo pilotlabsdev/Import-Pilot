@@ -3,7 +3,7 @@ import { data } from "react-router";
 import { authenticate } from "~/shopify.server";
 import { prisma } from "~/lib/db.server";
 import { invalidateCache } from "~/lib/csv-cache.server";
-import { uploadToStorage, deleteFromStorage, fileExistsInStorage, getFileSize, isBucketKey, makeBucketKey } from "~/lib/storage.server";
+import { uploadToStorage, deleteFromStorage, fileExistsInStorage, getFileSize, isBucketKey, makeBucketKey, listStorageFiles } from "~/lib/storage.server";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -22,20 +22,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     return data({ error: "No encontrado" }, { status: 404 });
   }
 
-  // If using bucket storage, list files from the bucket key stored in localFilePath
+  // If using bucket storage, list files from the bucket prefix
   if (isBucketKey(config.localFilePath || "")) {
-    const key = config.localFilePath!;
-    const exists = await fileExistsInStorage(key);
-    const fileName = key.split("/").pop() || "";
-    const size = exists ? await getFileSize(key) : 0;
+    const bucketFiles = await listStorageFiles(shopDomain, configId);
     return data({
-      files: exists ? [{
-        name: fileName,
-        originalName: fileName.replace(/^\d+_/, ""),
-        size: size > 0 ? size : 0,
-        uploadedAt: config.updatedAt?.toISOString() || new Date().toISOString(),
-        fullPath: key,
-      }] : [],
+      files: bucketFiles.map((f) => ({
+        name: f.name,
+        originalName: f.name.replace(/^\d+_/, ""),
+        size: f.size,
+        uploadedAt: f.lastModified,
+        fullPath: f.key,
+      })).sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt)),
     });
   }
 
@@ -74,6 +71,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (intent === "delete") {
       const configId = formData.get("configId") as string;
       const fileName = formData.get("fileName") as string;
+      const fileKey = formData.get("fileKey") as string | null;
       if (!configId || !fileName) return data({ error: "Parámetros requeridos" }, { status: 400 });
 
       const config = await prisma.importConfig.findUnique({ where: { id: configId } });
@@ -83,11 +81,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       // Delete from bucket or local disk
       if (isBucketKey(config.localFilePath || "")) {
-        await deleteFromStorage(config.localFilePath!);
-        await prisma.importConfig.update({
-          where: { id: configId },
-          data: { localFilePath: null, dataSource: "url" },
-        });
+        // Delete specific file by key, or fall back to active file
+        const keyToDelete = fileKey || config.localFilePath!;
+        await deleteFromStorage(keyToDelete);
+        // If deleting the active file, clear localFilePath
+        if (keyToDelete === config.localFilePath) {
+          await prisma.importConfig.update({
+            where: { id: configId },
+            data: { localFilePath: null, dataSource: "url" },
+          });
+        }
       } else {
         const filePath = path.join(UPLOAD_BASE, shopDomain, configId, fileName);
         try { await fs.unlink(filePath); } catch {}
@@ -185,13 +188,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return data({ error: "Archivo demasiado grande (máx 80MB)" }, { status: 400 });
     }
 
-    // Límite de 3 archivos — check existing file in bucket or disk
+    // Límite de 3 archivos — check existing files in bucket or disk
     if (isBucketKey(config.localFilePath || "")) {
-      // Bucket: only 1 active file per supplier, replace is allowed
-      // Delete old file first if it exists
-      const exists = await fileExistsInStorage(config.localFilePath!);
-      if (exists) {
-        try { await deleteFromStorage(config.localFilePath!); } catch {}
+      // Bucket: count files by prefix
+      const existingFiles = await listStorageFiles(shopDomain, configId);
+      if (existingFiles.length >= 3) {
+        return data({ error: "upload.maxFilesPerSupplier", errorIsKey: true }, { status: 400 });
       }
     } else {
       // Legacy disk: check file count
