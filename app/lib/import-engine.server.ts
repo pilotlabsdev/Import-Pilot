@@ -457,9 +457,9 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
       if (cancelled) break;
     }
 
-    if (!cancelled && !hasAnyFilter) {
+    if (!cancelled) {
     const existingMappings = await prisma.productMapping.findMany({
-      where: { shopDomain, configId: config.id },
+      where: { shopDomain, configId: config.id, lastImportSource: sourceKey },
     });
 
     for (const mapping of existingMappings) {
@@ -725,6 +725,7 @@ async function processProduct({
           lastComparePrice: prices2.compareAtPrice,
           lastQuantity: newQty,
           lastCost: costPrice > 0 ? costPrice : null,
+          lastImportSource: sourceKey,
         },
       });
       existing = newMapping2;
@@ -929,6 +930,7 @@ async function processProduct({
               lastComparePrice: prices2.compareAtPrice,
               lastQuantity: newQty,
               lastCost: costPrice > 0 ? costPrice : null,
+              lastImportSource: sourceKey,
             },
           });
           console.log(`[Import] Priority replace: new mapping created ${newMapping2.id}`);
@@ -1191,9 +1193,11 @@ async function processProduct({
           lastComparePrice: prices.compareAtPrice,
           lastQuantity: newQty,
           lastCost: costPrice > 0 ? costPrice : null,
+          lastImportSource: sourceKey,
           },
           update: {
             shopifyProductId: foundProductId, shopifyVariantId: foundVariantId, shopifyInventoryItemId: foundInventoryItemId,
+            lastImportSource: sourceKey,
           },
         });
         existing = mapping;
@@ -1347,6 +1351,7 @@ async function processProduct({
         lastComparePrice: prices2.compareAtPrice,
         lastQuantity: newQty,
         lastCost: costPrice > 0 ? costPrice : null,
+        lastImportSource: sourceKey,
       },
     });
     existing = newMapping2;
@@ -1730,6 +1735,7 @@ async function processProduct({
           lastComparePrice: prices.compareAtPrice,
           lastQuantity: newQty,
           lastCost: costPrice > 0 ? costPrice : null,
+          lastImportSource: sourceKey,
         },
       });
     } catch {

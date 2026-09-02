@@ -184,6 +184,7 @@ model ProductMapping {
   lastCost          Float?
   lastQuantity      Int?
   lastSyncAt        DateTime @default(now())
+  lastImportSource  String?  // URL exacta o nombre de archivo exacto (para stock 0 selectivo)
   config            ImportConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
 
   @@unique([shopDomain, supplierSku])

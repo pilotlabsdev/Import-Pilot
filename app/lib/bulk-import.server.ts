@@ -483,7 +483,7 @@ async function handleLookupFinished(job: any, admin: any, status: string): Promi
   const rules = await getActivePriceRules(job.shopDomain, job.configId);
   const locationId = await getLocationId(admin, job.shopDomain, job.configId);
 
-  await prepareAndLaunch(job, config, admin, columnMaps, rules, maps, bySkuMapping, job.filterType, job.filterSkus, job.filterCategories, locationId);
+  await prepareAndLaunch(job, config, admin, columnMaps, rules, maps, bySkuMapping, job.filterType, job.filterSkus, job.filterCategories, locationId, sourceKey);
 
   await prisma.bulkJobOp.updateMany({
     where: { jobId: job.id, kind: "lookup" },
@@ -502,7 +502,8 @@ async function prepareAndLaunch(
   filterType?: string | null,
   filterSkus?: string | null,
   filterCategories?: string | null,
-  locationId?: string
+  locationId?: string,
+  sourceKey?: string
 ): Promise<void> {
   const workDir = job.workDir;
   const updateOpts = parseUpdateOptions(config.updateOptions);
@@ -996,6 +997,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
           lastComparePrice: meta.compareAtPrice,
           lastQuantity: meta.stockQty,
           lastCost: meta.costPrice > 0 ? meta.costPrice : null,
+          lastImportSource: sourceKey || null,
         },
         update: {
           shopifyProductId: product.id,
@@ -1004,6 +1006,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
           lastPrice: meta.regularPrice,
           lastComparePrice: meta.compareAtPrice,
           lastQuantity: meta.stockQty,
+          lastImportSource: sourceKey || null,
         },
       });
 
@@ -1195,8 +1198,9 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
           lastComparePrice: meta.priceApplied ? meta.compareAtPrice : null,
           lastQuantity: meta.stockApplied ? meta.stockQty : meta.prevQty,
           lastCost: meta.costPrice > 0 ? meta.costPrice : null,
+          lastImportSource: sourceKey || null,
         },
-        update: { ...patch, lastCost: meta.costPrice > 0 ? meta.costPrice : undefined },
+        update: { ...patch, lastCost: meta.costPrice > 0 ? meta.costPrice : undefined, lastImportSource: sourceKey || undefined },
       });
 
       updatedCount++;
@@ -1330,6 +1334,8 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
   if (log.status !== "running") return; // ya finalizado (idempotencia en resume)
 
   try {
+  const config = await prisma.importConfig.findUnique({ where: { id: job.configId } });
+  const sourceKey = config ? getSourceKey(config) : null;
   const locationId = await getLocationId(admin, job.shopDomain, job.configId);
 
     const inventoryQueuePath = path.join(workDir, "inventory-queue.jsonl");
@@ -1377,12 +1383,10 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
     }
 
     const allSkus = new Set(await readJsonLines(manifest.allSkusPath));
-    const hasAnyFilter = !!(job.filterType && job.filterType !== "all");
     const existingMappings = await prisma.productMapping.findMany({
-      where: { shopDomain: job.shopDomain, configId: job.configId },
+      where: { shopDomain: job.shopDomain, configId: job.configId, ...(sourceKey ? { lastImportSource: sourceKey } : {}) },
     });
 
-    if (!hasAnyFilter) {
     for (const mapping of existingMappings) {
       if (!allSkus.has(mapping.supplierSku) && (mapping.lastQuantity || 0) > 0) {
         try {
@@ -1419,7 +1423,7 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
         }
       }
     }
-    } // end if (!hasAnyFilter)
+
 
     // Process priority replacements: delete old mapping
     if (manifest.priorityReplacementsPath) {
@@ -1946,6 +1950,7 @@ async function resumeOrRebuildCreateOp(
           lastComparePrice: meta.compareAtPrice,
           lastQuantity: meta.stockQty,
           lastCost: meta.costPrice > 0 ? meta.costPrice : null,
+          lastImportSource: getSourceKey(await prisma.importConfig.findUnique({ where: { id: job.configId } }) || {}),
         },
         update: {
           shopifyProductId: match.productId,
@@ -1955,6 +1960,7 @@ async function resumeOrRebuildCreateOp(
           lastComparePrice: meta.compareAtPrice,
           lastQuantity: meta.stockQty,
           lastCost: meta.costPrice > 0 ? meta.costPrice : undefined,
+          lastImportSource: getSourceKey(await prisma.importConfig.findUnique({ where: { id: job.configId } }) || {}),
         },
       });
       if (match.inventoryItemId) {
