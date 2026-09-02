@@ -36,9 +36,30 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     hasPlan ? prisma.duplicateLog.count({
       where: { shopDomain, resolved: false },
     }) : Promise.resolve(0),
-    hasPlan ? prisma.importQueue.count({
-      where: { shopDomain, status: { in: ["queued", "running"] } },
-    }) : Promise.resolve(0),
+    hasPlan ? (async () => {
+      // Count unique suppliers with active imports (queue, orphan logs, or bulk jobs)
+      const activeConfigIds = new Set<string>();
+
+      const qItems = await prisma.importQueue.findMany({
+        where: { shopDomain, status: { in: ["queued", "running"] } },
+        select: { configId: true },
+      });
+      for (const q of qItems) activeConfigIds.add(q.configId);
+
+      const runningLogs = await prisma.importLog.findMany({
+        where: { shopDomain, status: "running" },
+        select: { configId: true },
+      });
+      for (const l of runningLogs) activeConfigIds.add(l.configId);
+
+      const activeJobs = await prisma.bulkJob.findMany({
+        where: { shopDomain, phase: { in: ["lookup", "mutations", "finalizing"] } },
+        select: { configId: true },
+      });
+      for (const j of activeJobs) activeConfigIds.add(j.configId);
+
+      return activeConfigIds.size;
+    })() : Promise.resolve(0),
     getSubscriptionInfo(shopDomain),
   ]);
 
