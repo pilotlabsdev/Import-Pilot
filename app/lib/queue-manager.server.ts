@@ -217,7 +217,7 @@ async function processQueueItem(
         // Mark old log as failed (we extracted the checkpoint)
         await prisma.importLog.update({
           where: { id: orphanLog!.id },
-          data: { status: "failed", completedAt: new Date(), errorMessage: "Replaced by resume" },
+          data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "Replaced by resume", lineNumber: 0 }]) },
         }).catch(() => {});
       }
 

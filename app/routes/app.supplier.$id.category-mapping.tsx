@@ -115,12 +115,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       if (categoryParam) {
         const cats = categoryParam.split(",").map((c) => c.trim());
         const existingMappings = await prisma.categoryCollectionMapping.findMany({
-          where: { configId, csvCategory: { in: cats } },
+          where: { configId: config.id, csvCategory: { in: cats } },
         });
         if (existingMappings.length > 0) {
           const first = existingMappings[0];
           const groupKey = [first.collectionId, first.shopifyProductType || "", first.tags || ""].join("::");
-          const allMappings = await prisma.categoryCollectionMapping.findMany({ where: { configId } });
+          const allMappings = await prisma.categoryCollectionMapping.findMany({ where: { configId: config.id } });
           const toDelete = allMappings.filter((m) => {
             const key = [m.collectionId, m.shopifyProductType || "", m.tags || ""].join("::");
             return key === groupKey;
@@ -461,7 +461,7 @@ export default function CategoryMapping() {
                     <Text as="h3" variant="headingSm">
                       {catMappings.map((m) => m.csvCategory).join(", ")}
                     </Text>
-                    <Badge tone="success">→ {catMappings[0]?.collectionName || catMappings[0]?.collectionId}</Badge>
+                    <Badge tone="success">{`→ ${catMappings[0]?.collectionName || catMappings[0]?.collectionId}`}</Badge>
                     {catMappings[0]?.shopifyProductType ? (
                       <Badge tone="info">{t("categories.typeLabel", { type: catMappings[0].shopifyProductType })}</Badge>
                     ) : null}

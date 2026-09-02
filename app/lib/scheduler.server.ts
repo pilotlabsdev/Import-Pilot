@@ -4,7 +4,7 @@ import { reconcileStaleBulkJobs, cleanupFinishedBulkJobs, handleBulkOperationFin
 import { reconcileAllShops } from "./reconciliation.server";
 import { isImportActive } from "./import-locks.server";
 import { getSubscriptionInfo, enforcePlanLimits } from "./billing.server";
-import { shopify } from "~/shopify.server";
+import shopify from "~/shopify.server";
 
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
 const scheduledFrequencies = new Map<string, string>();
@@ -135,7 +135,7 @@ async function checkBulkOperations() {
   try {
     // Get all shops with active BulkJobs
     const activeJobs = await prisma.bulkJob.findMany({
-      where: { status: { notIn: ["done", "failed"] } },
+      where: { phase: { notIn: ["done", "failed"] } },
       select: { shopDomain: true },
       distinct: ["shopDomain"],
     });
@@ -230,7 +230,7 @@ export function startScheduler() {
         if (item.logId) {
           await prisma.importLog.update({
             where: { id: item.logId },
-            data: { status: "failed", completedAt: new Date(), errorMessage: "Timeout: no progress >15min" },
+            data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "Timeout: no progress >15min", lineNumber: 0 }]) },
           }).catch(() => {});
         }
       }
@@ -256,7 +256,7 @@ export function startScheduler() {
           }
           await prisma.importLog.update({
             where: { id: log.id },
-            data: { status: "failed", completedAt: new Date(), errorMessage: "Timeout: orphan, no progress >15min" },
+            data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "Timeout: orphan, no progress >15min", lineNumber: 0 }]) },
           }).catch(() => {});
           console.log(`[Scheduler] Limpiado orphan ImportLog ${log.id.slice(0, 8)}`);
         }
@@ -364,7 +364,7 @@ async function runScheduledImport(configId: string) {
           }).catch(() => {});
           await prisma.importLog.update({
             where: { id: activeQueueItem.logId },
-            data: { status: "failed", completedAt: new Date(), errorMessage: "Timeout: no progress >15min" },
+            data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "Timeout: no progress >15min", lineNumber: 0 }]) },
           }).catch(() => {});
         } else {
           console.log(`[Scheduler] ${configId.slice(0, 8)} ya tiene item en cola/running (${activeQueueItem.status}), skip`);

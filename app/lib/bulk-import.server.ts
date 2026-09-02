@@ -3,7 +3,7 @@ import { createWriteStream } from "node:fs";
 import { Readable } from "node:stream";
 import path from "node:path";
 import os from "node:os";
-import { prisma, getOrCreateConfig, getEffectiveUrl, getSourceKey, cleanupOldLogs, ensureSingleSession, ensureFreshToken } from "./db.server";
+import { prisma, getOrCreateConfig, getEffectiveUrl, getSourceKey, cleanupOldLogs, ensureSingleSession, ensureFreshToken, refreshAccessToken } from "./db.server";
 import { streamFile, isExcluded, parseExcludeFieldRules, getExcludedFields } from "./csv-parser.server";
 import { getActivePriceRules, calculatePriceSync } from "./price-rules.server";
 import { checkDuplicate, logDuplicate, logExternalDuplicate } from "./duplicate-detection.server";
