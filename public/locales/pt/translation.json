@@ -145,7 +145,7 @@
   "config.noFileSelected": "Nenhum arquivo selecionado",
   "config.urlConfigured": "Há uma URL configurada",
   "config.uploadFile": "Enviar arquivo",
-  "config.fileTypes": "CSV ou Excel (máx 50MB)",
+  "config.fileTypes": "CSV ou Excel (máx 80MB)",
   "config.uploading": "Enviando...",
   "config.uploadedFiles": "Arquivos enviados:",
   "config.inUse": "Em uso",

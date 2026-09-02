@@ -145,7 +145,7 @@
   "config.noFileSelected": "Aucun fichier sélectionné",
   "config.urlConfigured": "Une URL est configurée",
   "config.uploadFile": "Téléverser un fichier",
-  "config.fileTypes": "CSV ou Excel (max 50 Mo)",
+  "config.fileTypes": "CSV ou Excel (max 80 Mo)",
   "config.uploading": "Téléversement...",
   "config.uploadedFiles": "Fichiers téléversés :",
   "config.inUse": "En cours d'utilisation",

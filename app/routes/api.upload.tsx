@@ -151,8 +151,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return data({ error: `Formato no soportado: ${ext}. Usar CSV o Excel.` }, { status: 400 });
     }
 
-    if (file.size > 50 * 1024 * 1024) {
-      return data({ error: "Archivo demasiado grande (máx 50MB)" }, { status: 400 });
+    if (file.size > 80 * 1024 * 1024) {
+      return data({ error: "Archivo demasiado grande (máx 80MB)" }, { status: 400 });
     }
 
     const supplierDir = path.join(UPLOAD_BASE, shopDomain, configId);
