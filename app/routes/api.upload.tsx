@@ -22,9 +22,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     return data({ error: "No encontrado" }, { status: 404 });
   }
 
-  // If using bucket storage, list files from the bucket prefix
-  if (isBucketKey(config.localFilePath || "")) {
-    const bucketFiles = await listStorageFiles(shopDomain, configId);
+  // Always try to list files from bucket prefix when storage is configured
+  const bucketFiles = await listStorageFiles(shopDomain, configId);
+  if (bucketFiles.length > 0) {
     return data({
       files: bucketFiles.map((f) => ({
         name: f.name,
