@@ -497,7 +497,7 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
     await prisma.importLog.update({
       where: { id: log.id },
       data: {
-        status: result.errors.length > 0 ? "completed_with_errors" : "completed",
+        status: cancelled ? "failed" : result.errors.length > 0 ? "completed_with_errors" : "completed",
         totalProducts: result.totalProducts,
         created: result.created,
         updated: result.updated,
@@ -505,7 +505,9 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
         priceChanges: result.priceChanges,
         stockChanges: result.stockChanges,
         excludedCount: excludedCount + result.excluded,
-        errors: result.errors.length > 0 ? JSON.stringify(result.errors) : null,
+        errors: cancelled
+          ? JSON.stringify([{ sku: "SYSTEM", error: "Cancelado manualmente", lineNumber: 0 }])
+          : result.errors.length > 0 ? JSON.stringify(result.errors) : null,
         lastSku: result.lastSku || null,
         completedAt: new Date(),
       },

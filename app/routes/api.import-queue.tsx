@@ -103,6 +103,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "Cancelado manualmente", lineNumber: 0 }]) },
       });
     }
+    // Also cancel any associated queue items so they don't stay stuck
+    await prisma.importQueue.updateMany({
+      where: { configId: job.configId, shopDomain, status: { in: ["queued", "running"] } },
+      data: { status: "cancelled", finishedAt: new Date() },
+    });
     console.log(`[Queue API] cancel-bulk-job: job ${bulkJobId} marked as failed`);
     return data({ success: true, message: "Job bulk cancelado" });
   }

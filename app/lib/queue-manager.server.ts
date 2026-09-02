@@ -188,6 +188,13 @@ async function processQueueItem(
         forceUpdate: item.forceUpdate,
       });
 
+      // Re-check if the item was already cancelled during import
+      const currentItem = await prisma.importQueue.findUnique({ where: { id: item.id }, select: { status: true } });
+      if (currentItem?.status === "cancelled") {
+        console.log(`[Queue] Bulk import ${item.id} was cancelled during processing, keeping cancelled status`);
+        return;
+      }
+
       await prisma.importQueue.update({
         where: { id: item.id },
         data: { status: "completed", finishedAt: new Date(), logId: bulkResult.logId },
@@ -233,6 +240,13 @@ async function processQueueItem(
         queueItemId: item.id,
         resumeFromSku,
       });
+
+      // Re-check if the item was already cancelled during import (race condition: cancelQueueItem may have run while import was finishing)
+      const currentItem = await prisma.importQueue.findUnique({ where: { id: item.id }, select: { status: true } });
+      if (currentItem?.status === "cancelled") {
+        console.log(`[Queue] Import ${item.id} was cancelled during processing, keeping cancelled status`);
+        return;
+      }
 
       const duration = `${Math.round((Date.now() - startTime) / 1000)}s`;
       await prisma.importQueue.update({
@@ -495,7 +509,7 @@ export async function getQueueStatus(shopDomain: string): Promise<{
   const recentLogs = await prisma.importLog.findMany({
     where: {
       shopDomain,
-      status: { in: ["completed", "failed", "completed_with_errors"] },
+      status: { in: ["completed", "failed", "completed_with_errors", "cancelled"] },
     },
     orderBy: { startedAt: "desc" },
     take: 10,
