@@ -29,28 +29,42 @@ export function getActiveImportCount(): number {
 }
 
 // --- Rate limiter for Shopify API ---
+// Token bucket: 5 tokens/sec refill, burst of 10.
+// Shopify cost-based throttling: queries = 1pt, mutations = 10pt.
+// At 5 req/s we stay well under the ~50 req/s limit for any mix of operations.
 
 const MAX_CONCURRENT = 10;
-let tokens = MAX_CONCURRENT;
+const TOKENS_PER_SECOND = 5;
+const MAX_BURST = 10;
+
+let tokens = MAX_BURST;
+let lastRefill = Date.now();
 const queue: Array<() => void> = [];
 
-function acquireToken(): Promise<void> {
-  if (tokens > 0) {
-    tokens--;
-    return Promise.resolve();
+function refillTokens() {
+  const now = Date.now();
+  const elapsed = (now - lastRefill) / 1000;
+  if (elapsed > 0) {
+    tokens = Math.min(MAX_BURST, tokens + elapsed * TOKENS_PER_SECOND);
+    lastRefill = now;
   }
-  return new Promise((resolve) => {
-    queue.push(resolve);
-  });
 }
 
-function releaseToken() {
-  if (queue.length > 0) {
-    const next = queue.shift()!;
-    next();
-  } else {
-    tokens++;
+function waitForToken(): Promise<void> {
+  refillTokens();
+  if (tokens >= 1) {
+    tokens -= 1;
+    return Promise.resolve();
   }
+  // Wait until at least 1 token is available
+  const waitMs = Math.ceil((1 - tokens) / TOKENS_PER_SECOND * 1000);
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      refillTokens();
+      tokens -= 1;
+      resolve();
+    }, waitMs);
+  });
 }
 
 function sleep(ms: number): Promise<void> {
@@ -63,7 +77,7 @@ export async function rateLimitedGraphql(
   vars: any,
   maxRetries = 3
 ): Promise<any> {
-  await acquireToken();
+  await waitForToken();
   try {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
@@ -122,6 +136,6 @@ export async function rateLimitedGraphql(
       }
     }
   } finally {
-    releaseToken();
+    // No release needed — token bucket is time-based, not counting-based
   }
 }
