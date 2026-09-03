@@ -107,6 +107,9 @@ export async function rateLimitedGraphql(
           await sleep(wait);
           continue;
         }
+        if (isUnauthorized) {
+          throw new Error(`Unauthorized: ${JSON.stringify(gqlErrors)}`);
+        }
         return json;
       } catch (error: any) {
         const msg = error?.message || error?.toString() || "";

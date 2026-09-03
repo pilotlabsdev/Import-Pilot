@@ -185,6 +185,9 @@ model ProductMapping {
   lastQuantity      Int?
   lastSyncAt        DateTime @default(now())
   lastImportSource  String?  // URL exacta o nombre de archivo exacto (para stock 0 selectivo)
+  postProcessStatus String  @default("pending") // pending | inventory | channels | images | complete | error | error_permanent
+  postProcessError  String?
+  postProcessRetries Int     @default(0)
   config            ImportConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
 
   @@unique([shopDomain, supplierSku])

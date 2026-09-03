@@ -34,6 +34,25 @@ export function getBulkWorkDir(): string {
   return BASE_WORK_DIR;
 }
 
+const MAX_POST_PROCESS_RETRIES = 10;
+
+async function withRetry<T>(fn: () => Promise<T>, label: string, maxRetries = 3): Promise<T> {
+  let lastError: any;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (e: any) {
+      lastError = e;
+      if (attempt < maxRetries) {
+        const wait = attempt * 2000;
+        console.log(`[Bulk] ${label}: retry ${attempt}/${maxRetries} in ${wait}ms: ${e?.message}`);
+        await new Promise((r) => setTimeout(r, wait));
+      }
+    }
+  }
+  throw lastError;
+}
+
 async function gql(admin: any, query: string, varsOrOptions?: any): Promise<any> {
   const vars = varsOrOptions?.variables !== undefined ? varsOrOptions.variables : varsOrOptions;
   try {
@@ -54,7 +73,7 @@ interface BulkImageTask {
   label: string;
 }
 
-async function processBulkImageQueue(admin: any, queue: BulkImageTask[], concurrency = 10): Promise<void> {
+async function processBulkImageQueue(admin: any, queue: BulkImageTask[], shopDomain?: string, concurrency = 10): Promise<void> {
   if (queue.length === 0) return;
   console.log(`[Bulk] Processing image queue: ${queue.length} products, batch size ${concurrency}`);
 
@@ -70,8 +89,28 @@ async function processBulkImageQueue(admin: any, queue: BulkImageTask[], concurr
           { variables: { id: task.productId, media: task.files } }
         );
         console.log(`[Bulk] Images OK: ${task.label} (${task.files.length} images)`);
+        // Mark product as complete after images uploaded
+        if (shopDomain) {
+          const skuMatch = task.label.match(/SKU=(.+)/);
+          if (skuMatch) {
+            await prisma.productMapping.update({
+              where: { shopDomain_supplierSku: { shopDomain, supplierSku: skuMatch[1] } },
+              data: { postProcessStatus: "complete", postProcessError: null },
+            }).catch(() => {});
+          }
+        }
       } catch (error: any) {
         console.error(`[Bulk] Images ERROR: ${task.label}:`, error?.message);
+        // Mark product with image error
+        if (shopDomain) {
+          const skuMatch = task.label.match(/SKU=(.+)/);
+          if (skuMatch) {
+            await prisma.productMapping.update({
+              where: { shopDomain_supplierSku: { shopDomain, supplierSku: skuMatch[1] } },
+              data: { postProcessError: `Images: ${error?.message}` },
+            }).catch(() => {});
+          }
+        }
       }
     });
     await Promise.all(promises);
@@ -472,8 +511,14 @@ async function handleLookupFinished(job: any, admin: any, status: string): Promi
   for (const m of allMappings) {
     if (!maps.bySku.has(m.supplierSku)) {
       if (m.shopifyProductId) {
-        orphanSkus.push(m.supplierSku);
-        console.log(`[Bulk] SKU ${m.supplierSku}: mapping huérfano (producto ${m.shopifyProductId} no existe en Shopify), se recreará en este ciclo`);
+        // Only delete orphan mappings if product was fully processed
+        // Incomplete products will be retried in retryPostProcess
+        if (m.postProcessStatus === "complete" || m.postProcessStatus === "pending" || !m.postProcessStatus) {
+          orphanSkus.push(m.supplierSku);
+          console.log(`[Bulk] SKU ${m.supplierSku}: mapping huérfano (status=${m.postProcessStatus || "pending"}, producto ${m.shopifyProductId} no existe en Shopify), se recreará`);
+        } else {
+          console.log(`[Bulk] SKU ${m.supplierSku}: mapping incompleto (status=${m.postProcessStatus}), NO se borra — se reintentará post-processing`);
+        }
       }
     } else {
       const existing = maps.bySku.get(m.supplierSku)!;
@@ -516,12 +561,212 @@ async function handleLookupFinished(job: any, admin: any, status: string): Promi
   const rules = await getActivePriceRules(job.shopDomain, job.configId);
   const locationId = await getLocationId(admin, job.shopDomain, job.configId);
 
+  // === RETRY INCOMPLETE POST-PROCESSING ===
+  // Find products that were created in previous runs but post-processing didn't complete
+  const incompleteMappings = await prisma.productMapping.findMany({
+    where: {
+      shopDomain: job.shopDomain,
+      configId: job.configId,
+      postProcessStatus: { notIn: ["complete", "pending", "error_permanent"] },
+    },
+  });
+
+  if (incompleteMappings.length > 0) {
+    console.log(`[Bulk] Found ${incompleteMappings.length} incomplete products, attempting repair...`);
+    for (const mapping of incompleteMappings) {
+      await retryPostProcess(admin, mapping, job, config, locationId).catch((e: any) => {
+        console.error(`[Bulk] retryPostProcess failed for SKU ${mapping.supplierSku}: ${e?.message}`);
+      });
+    }
+    console.log(`[Bulk] Repair pass complete`);
+  }
+
   await prepareAndLaunch(job, config, admin, columnMaps, rules, maps, bySkuMapping, job.filterType, job.filterSkus, job.filterCategories, locationId, sourceKey);
 
   await prisma.bulkJobOp.updateMany({
     where: { jobId: job.id, kind: "lookup" },
     data: { status: "processed" },
   });
+}
+
+async function retryPostProcess(
+  admin: any,
+  mapping: any,
+  job: any,
+  config: any,
+  locationId: string,
+): Promise<void> {
+  const sku = mapping.supplierSku;
+  const shopDomain = job.shopDomain;
+
+  // Check retry limit
+  if (mapping.postProcessRetries >= MAX_POST_PROCESS_RETRIES) {
+    if (mapping.postProcessStatus !== "error_permanent") {
+      console.log(`[Bulk] SKU ${sku}: ${mapping.postProcessRetries} retries exhausted, marking error_permanent`);
+      await prisma.productMapping.update({
+        where: { id: mapping.id },
+        data: { postProcessStatus: "error_permanent" },
+      }).catch(() => {});
+    }
+    return;
+  }
+
+  // Verify product still exists in Shopify
+  let productExists = false;
+  let variantId = mapping.shopifyVariantId;
+  let inventoryItemId = mapping.shopifyInventoryItemId;
+
+  try {
+    const lookup = await withRetry(() => gql(admin,
+      `#graphql
+      query ($id: ID!) {
+        product(id: $id) {
+          id
+          variants(first: 5) {
+            edges { node { id sku inventoryItem { id } } }
+          }
+        }
+      }`,
+      { variables: { id: mapping.shopifyProductId } }
+    ), `lookup-${sku}`);
+
+    const product = lookup.data?.product;
+    if (!product?.id) {
+      console.log(`[Bulk] SKU ${sku}: product ${mapping.shopifyProductId} no longer exists, marking error_permanent`);
+      await prisma.productMapping.update({
+        where: { id: mapping.id },
+        data: { postProcessStatus: "error_permanent", postProcessError: "Product deleted from Shopify" },
+      }).catch(() => {});
+      return;
+    }
+    productExists = true;
+
+    // Refresh variant/inventory IDs from Shopify
+    const v = product.variants?.edges?.[0]?.node;
+    if (v) {
+      variantId = v.id;
+      inventoryItemId = v.inventoryItem?.id || inventoryItemId;
+      // Update mapping with fresh IDs
+      await prisma.productMapping.update({
+        where: { id: mapping.id },
+        data: { shopifyVariantId: variantId, shopifyInventoryItemId: inventoryItemId },
+      }).catch(() => {});
+    }
+  } catch (e: any) {
+    console.error(`[Bulk] SKU ${sku}: retryPostProcess lookup failed: ${e?.message}`);
+    await prisma.productMapping.update({
+      where: { id: mapping.id },
+      data: { postProcessError: `Lookup: ${e?.message}`, postProcessRetries: { increment: 1 } },
+    }).catch(() => {});
+    return;
+  }
+
+  if (!productExists) return;
+
+  const status = mapping.postProcessStatus || "pending";
+
+  // Step 1: Inventory tracking + activation (if status is pending)
+  if (status === "pending" || status === "error") {
+    if (inventoryItemId) {
+      try {
+        const invInput: any = { tracked: true };
+        if (mapping.lastCost && mapping.lastCost > 0) invInput.cost = String(mapping.lastCost);
+        await withRetry(() => gql(admin,
+          `#graphql
+          mutation inventoryItemUpdate($id: ID!, $input: InventoryItemInput!) {
+            inventoryItemUpdate(id: $id, input: $input) {
+              inventoryItem { id tracked }
+              userErrors { field message }
+            }
+          }`,
+          { variables: { id: inventoryItemId, input: invInput } }
+        ), `retry-inv-track-${sku}`);
+
+        await withRetry(() => gql(admin,
+          `#graphql
+          mutation inventoryBulkToggleActivation($inventoryItemId: ID!, $inventoryItemUpdates: [InventoryBulkToggleActivationInput!]!) {
+            inventoryBulkToggleActivation(inventoryItemId: $inventoryItemId, inventoryItemUpdates: $inventoryItemUpdates) {
+              inventoryItem { id }
+              userErrors { field message code }
+            }
+          }`,
+          { variables: { inventoryItemId, inventoryItemUpdates: [{ locationId, activate: true }] } }
+        ), `retry-inv-activate-${sku}`);
+
+        console.log(`[Bulk] SKU ${sku}: retryPostProcess - inventory tracking + activation OK`);
+        await prisma.productMapping.update({
+          where: { id: mapping.id },
+          data: { postProcessStatus: "inventory", postProcessError: null, postProcessRetries: { increment: 1 } },
+        });
+        mapping.postProcessStatus = "inventory";
+      } catch (e: any) {
+        console.error(`[Bulk] SKU ${sku}: retryPostProcess inventory failed: ${e?.message}`);
+        await prisma.productMapping.update({
+          where: { id: mapping.id },
+          data: { postProcessError: `Inventory: ${e?.message}`, postProcessRetries: { increment: 1 } },
+        }).catch(() => {});
+        return;
+      }
+    } else {
+      // No inventoryItemId, skip to channels
+      await prisma.productMapping.update({
+        where: { id: mapping.id },
+        data: { postProcessStatus: "channels", postProcessRetries: { increment: 1 } },
+      });
+      mapping.postProcessStatus = "channels";
+    }
+  }
+
+  // Step 2: Channels (if status is inventory)
+  if (mapping.postProcessStatus === "inventory") {
+    const allPubIds: string[] = [];
+    if (config?.publicationIds) {
+      try { allPubIds.push(...JSON.parse(config.publicationIds)); } catch {}
+    }
+    if (allPubIds.length === 0 && config?.marketIds) {
+      try { allPubIds.push(...JSON.parse(config.marketIds)); } catch {}
+    }
+    if (allPubIds.length > 0) {
+      try {
+        const input = allPubIds.map((publicationId: string) => ({ publicationId }));
+        await withRetry(() => gql(admin,
+          `#graphql
+          mutation PublishablePublish($id: ID!, $input: [PublicationInput!]!) {
+            publishablePublish(id: $id, input: $input) { userErrors { field message } }
+          }`,
+          { variables: { id: mapping.shopifyProductId, input } }
+        ), `retry-channels-${sku}`);
+
+        console.log(`[Bulk] SKU ${sku}: retryPostProcess - channels OK`);
+        await prisma.productMapping.update({
+          where: { id: mapping.id },
+          data: { postProcessStatus: "channels", postProcessError: null },
+        });
+        mapping.postProcessStatus = "channels";
+      } catch (e: any) {
+        console.error(`[Bulk] SKU ${sku}: retryPostProcess channels failed: ${e?.message}`);
+        await prisma.productMapping.update({
+          where: { id: mapping.id },
+          data: { postProcessError: `Channels: ${e?.message}`, postProcessRetries: { increment: 1 } },
+        }).catch(() => {});
+        return;
+      }
+    } else {
+      await prisma.productMapping.update({
+        where: { id: mapping.id },
+        data: { postProcessStatus: "complete", postProcessError: null },
+      });
+      mapping.postProcessStatus = "complete";
+    }
+  }
+
+  // Step 3: Mark complete (images are handled separately by image queue if present)
+  if (mapping.postProcessStatus === "channels") {
+    await prisma.productMapping.update({
+      where: { id: mapping.id },
+      data: { postProcessStatus: "complete", postProcessError: null },
+    });
+  }
 }
 
 async function prepareAndLaunch(
@@ -1033,6 +1278,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
           lastQuantity: meta.stockQty,
           lastCost: meta.costPrice > 0 ? meta.costPrice : null,
           lastImportSource: sourceKey || null,
+          postProcessStatus: "pending",
         },
         update: {
           shopifyProductId: product.id,
@@ -1042,6 +1288,9 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
           lastComparePrice: meta.compareAtPrice,
           lastQuantity: meta.stockQty,
           lastImportSource: sourceKey || null,
+          postProcessStatus: "pending",
+          postProcessError: null,
+          postProcessRetries: 0,
         },
       });
 
@@ -1116,6 +1365,10 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
             }
           );
           console.log(`[Bulk] SKU ${meta.sku}: inventory tracked=true${meta.costPrice > 0 ? `, cost=${meta.costPrice}` : ""}`);
+          await prisma.productMapping.update({
+            where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: meta.sku } },
+            data: { postProcessStatus: "inventory", postProcessError: null },
+          }).catch(() => {});
         } catch (e: any) {
           console.error(`[Bulk] SKU ${meta.sku}: error habilitando inventory tracking: ${e?.message}`);
         }
@@ -1174,9 +1427,21 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
             { variables: { id: product.id, input } }
           );
           console.log(`[Bulk] SKU ${meta.sku}: publicado en ${allPubIds.length} publicación(es)`);
+          await prisma.productMapping.update({
+            where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: meta.sku } },
+            data: { postProcessStatus: "channels", postProcessError: null },
+          }).catch(() => {});
         } catch (error: any) {
           console.error(`[Bulk] SKU ${meta.sku}: error publicando: ${error?.message}`);
         }
+      }
+
+      // If product has no images, mark as complete right away
+      if (!meta.images || meta.images.length === 0) {
+        await prisma.productMapping.update({
+          where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: meta.sku } },
+          data: { postProcessStatus: "complete", postProcessError: null },
+        }).catch(() => {});
       }
     } else {
       const product = line.data?.productUpdate?.product;
@@ -1218,8 +1483,9 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
           lastQuantity: meta.stockApplied ? meta.stockQty : meta.prevQty,
           lastCost: meta.costPrice > 0 ? meta.costPrice : null,
           lastImportSource: sourceKey || null,
+          postProcessStatus: "complete",
         },
-        update: { ...patch, lastCost: meta.costPrice > 0 ? meta.costPrice : undefined, lastImportSource: sourceKey || undefined },
+        update: { ...patch, lastCost: meta.costPrice > 0 ? meta.costPrice : undefined, lastImportSource: sourceKey || undefined, postProcessStatus: "complete" },
       });
 
       updatedCount++;
@@ -1288,12 +1554,128 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       } else {
         console.log(`[Bulk] SKU ${meta.sku}: costo NO actualizado - inventoryItemId="${meta.inventoryItemId}", costPrice=${meta.costPrice}`);
       }
+
+      // === REPAIR INCOMPLETE PRODUCTS ===
+      // If this product was created in a previous bulk run but post-processing didn't complete,
+      // complete the missing steps here (inventory tracking, channels, images)
+      const existingMapping = await prisma.productMapping.findUnique({
+        where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: meta.sku } },
+        select: { postProcessStatus: true, id: true },
+      }).catch(() => null);
+
+      if (existingMapping && existingMapping.postProcessStatus !== "complete" && existingMapping.postProcessStatus !== "pending") {
+        console.log(`[Bulk] SKU ${meta.sku}: repairing incomplete product (status=${existingMapping.postProcessStatus})`);
+
+        // Step 1: If missing inventory tracking + activation
+        if (existingMapping.postProcessStatus === "pending" || !existingMapping.postProcessStatus) {
+          if (meta.inventoryItemId) {
+            try {
+              const invInput: any = { tracked: true };
+              if (meta.costPrice > 0) invInput.cost = String(meta.costPrice);
+              await withRetry(() => gql(admin,
+                `#graphql
+                mutation inventoryItemUpdate($id: ID!, $input: InventoryItemInput!) {
+                  inventoryItemUpdate(id: $id, input: $input) {
+                    inventoryItem { id tracked }
+                    userErrors { field message }
+                  }
+                }`,
+                { variables: { id: meta.inventoryItemId, input: invInput } }
+              ), `repair-inventory-${meta.sku}`);
+              console.log(`[Bulk] SKU ${meta.sku}: repair - inventory tracked=true`);
+
+              const locId = await getLocationId(admin, job.shopDomain, job.configId);
+              await withRetry(() => gql(admin,
+                `#graphql
+                mutation inventoryBulkToggleActivation($inventoryItemId: ID!, $inventoryItemUpdates: [InventoryBulkToggleActivationInput!]!) {
+                  inventoryBulkToggleActivation(inventoryItemId: $inventoryItemId, inventoryItemUpdates: $inventoryItemUpdates) {
+                    inventoryItem { id }
+                    userErrors { field message code }
+                  }
+                }`,
+                { variables: { inventoryItemId: meta.inventoryItemId, inventoryItemUpdates: [{ locationId: locId, activate: true }] } }
+              ), `repair-activation-${meta.sku}`);
+              console.log(`[Bulk] SKU ${meta.sku}: repair - inventory activated at location`);
+
+              await prisma.productMapping.update({
+                where: { id: existingMapping.id },
+                data: { postProcessStatus: "inventory", postProcessError: null, postProcessRetries: { increment: 1 } },
+              });
+              existingMapping.postProcessStatus = "inventory";
+            } catch (e: any) {
+              console.error(`[Bulk] SKU ${meta.sku}: repair inventory failed: ${e?.message}`);
+              await prisma.productMapping.update({
+                where: { id: existingMapping.id },
+                data: { postProcessError: `Inventory: ${e?.message}`, postProcessRetries: { increment: 1 } },
+              }).catch(() => {});
+            }
+          }
+        }
+
+        // Step 2: If missing channels
+        if (existingMapping.postProcessStatus === "inventory") {
+          const allPubIds: string[] = [];
+          if (config?.publicationIds) {
+            try { allPubIds.push(...JSON.parse(config.publicationIds)); } catch {}
+          }
+          if (allPubIds.length === 0 && config?.marketIds) {
+            try { allPubIds.push(...JSON.parse(config.marketIds)); } catch {}
+          }
+          if (allPubIds.length > 0) {
+            try {
+              const input = allPubIds.map((publicationId: string) => ({ publicationId }));
+              await withRetry(() => gql(admin,
+                `#graphql
+                mutation PublishablePublish($id: ID!, $input: [PublicationInput!]!) {
+                  publishablePublish(id: $id, input: $input) { userErrors { field message } }
+                }`,
+                { variables: { id: product.id, input } }
+              ), `repair-channels-${meta.sku}`);
+              console.log(`[Bulk] SKU ${meta.sku}: repair - published in ${allPubIds.length} channel(s)`);
+
+              await prisma.productMapping.update({
+                where: { id: existingMapping.id },
+                data: { postProcessStatus: "channels", postProcessError: null },
+              });
+              existingMapping.postProcessStatus = "channels";
+            } catch (e: any) {
+              console.error(`[Bulk] SKU ${meta.sku}: repair channels failed: ${e?.message}`);
+              await prisma.productMapping.update({
+                where: { id: existingMapping.id },
+                data: { postProcessError: `Channels: ${e?.message}`, postProcessRetries: { increment: 1 } },
+              }).catch(() => {});
+            }
+          } else {
+            // No channels configured, skip to complete
+            await prisma.productMapping.update({
+              where: { id: existingMapping.id },
+              data: { postProcessStatus: "complete", postProcessError: null },
+            });
+            existingMapping.postProcessStatus = "complete";
+          }
+        }
+
+        // Step 3: If missing images
+        if (existingMapping.postProcessStatus === "channels" && meta.images && meta.images.length > 0) {
+          imageQueue.push({
+            productId: product.id,
+            files: meta.images.map((url: string) => ({ originalSource: url, mediaContentType: "IMAGE" })),
+            label: `SKU=${meta.sku}`,
+          });
+        } else if (existingMapping.postProcessStatus === "channels") {
+          // No images, mark complete
+          await prisma.productMapping.update({
+            where: { id: existingMapping.id },
+            data: { postProcessStatus: "complete", postProcessError: null },
+          });
+        }
+      }
     }
   }
 
   // Process deferred image uploads in parallel batches
   if (imageQueue.length > 0) {
-    await processBulkImageQueue(admin, imageQueue);
+    await processBulkImageQueue(admin, imageQueue, job.shopDomain);
   }
 
   await fs.appendFile(inventoryQueuePath, inventoryWrites.length ? inventoryWrites.join("\n") + "\n" : "");

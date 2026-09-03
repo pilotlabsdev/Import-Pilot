@@ -307,12 +307,12 @@ export async function cancelQueueItem(itemId: string, shopDomain: string): Promi
   const item = await prisma.importQueue.findUnique({ where: { id: itemId } });
   if (!item) return { success: false, message: "Item no encontrado" };
 
-  if (item.status === "queued") {
+  if (item.status === "queued" || item.status === "failed" || item.status === "cancelled") {
     await prisma.importQueue.update({
       where: { id: itemId },
-      data: { status: "cancelled", finishedAt: new Date() },
+      data: { status: "cancelled", finishedAt: item.finishedAt || new Date() },
     });
-    return { success: true, message: "Importación cancelada de la cola" };
+    return { success: true, message: "Importación descartada de la cola" };
   }
 
   if (item.status === "running") {

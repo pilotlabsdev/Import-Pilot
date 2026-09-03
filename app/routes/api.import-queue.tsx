@@ -52,10 +52,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return data({ error: "Falta configId" }, { status: 400 });
     }
     const items = await prisma.importQueue.findMany({
-      where: { configId, status: { in: ["queued", "running"] } },
+      where: { configId, status: { in: ["queued", "running", "failed", "cancelled"] } },
     });
     await prisma.importQueue.updateMany({
-      where: { configId, status: { in: ["queued", "running"] } },
+      where: { configId, status: { in: ["queued", "running", "failed", "cancelled"] } },
       data: { status: "cancelled", finishedAt: new Date() },
     });
     // Also cancel stuck ImportLogs (they appear in schedulerActive without queue items)
