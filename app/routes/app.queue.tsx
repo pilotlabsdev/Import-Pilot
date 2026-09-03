@@ -59,13 +59,20 @@ export default function QueuePage() {
       try {
         const res = await fetch(`/api/import-queue?shop=${shopDomain}`);
         const json = await res.json();
-        if (active) setQueueData(json);
+        if (active) {
+          const hadItems = queueData && (
+            (queueData.queue?.length || 0) + (queueData.running?.length || 0) + (queueData.recent?.length || 0) > 0
+          );
+          const hasItems = (json.queue?.length || 0) + (json.running?.length || 0) + (json.recent?.length || 0) > 0;
+          setQueueData(json);
+          if (hadItems && !hasItems) revalidate();
+        }
       } catch {}
     };
     poll();
     const interval = setInterval(poll, 3000);
     return () => { active = false; clearInterval(interval); };
-  }, [shopDomain]);
+  }, [shopDomain, revalidate]);
 
   // Revalidate after cancel
   useEffect(() => {

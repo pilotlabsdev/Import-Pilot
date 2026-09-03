@@ -86,7 +86,7 @@ export default function App() {
   // Auto-refresh queue count every 15s and when tab becomes visible
   useEffect(() => {
     if (!hasPlan) return;
-    const interval = setInterval(revalidate, 15000);
+    const interval = setInterval(revalidate, 5000);
     const onVisible = () => { if (document.visibilityState === "visible") revalidate(); };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
