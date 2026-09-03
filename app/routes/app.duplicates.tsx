@@ -18,7 +18,7 @@ import { authenticate } from "~/shopify.server";
 import { prisma } from "~/lib/db.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shopDomain = session.shop;
 
   const duplicates = await prisma.duplicateLog.findMany({
@@ -65,10 +65,57 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     for (const m of mappings) {
       skuMap.set(`${m.ean}:${m.configId}`, m.supplierSku);
     }
+
+    // For EXTERNAL entries with empty supplierA_sku, look up SKU from Shopify by barcode
+    const externalEans = duplicates
+      .filter((d) => d.supplierA_id === "EXTERNAL" && !d.supplierA_sku && d.ean)
+      .map((d) => d.ean);
+    const uniqueExternalEans = [...new Set(externalEans)];
+
+    if (uniqueExternalEans.length > 0) {
+      try {
+        // Batch barcode lookups (max 10 per query)
+        for (let i = 0; i < uniqueExternalEans.length; i += 10) {
+          const batch = uniqueExternalEans.slice(i, i + 10);
+          const barcodeQuery = batch.map((b) => `barcode:${b}`).join(" OR ");
+          const resp = await admin.graphql(
+            `#graphql
+            query ($query: String!) {
+              products(first: 10, query: $query) {
+                edges {
+                  node {
+                    variants(first: 1) {
+                      edges {
+                        node {
+                          sku
+                          barcode
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }`,
+            { variables: { query: barcodeQuery } }
+          );
+          const data = await resp.json();
+          for (const edge of data?.data?.products?.edges || []) {
+            const variant = edge.node.variants.edges[0]?.node;
+            if (variant?.barcode && variant?.sku) {
+              skuMap.set(`EXTERNAL:${variant.barcode}`, variant.sku);
+            }
+          }
+        }
+      } catch (e) {
+        console.error("[Duplicates] Error looking up external SKUs from Shopify:", e);
+      }
+    }
   }
 
   const resolved = duplicates.map((d) => {
-    const aSku = d.supplierA_sku || skuMap.get(`${d.ean}:${d.supplierA_id}`) || "";
+    const aSku = d.supplierA_sku
+      || skuMap.get(`${d.ean}:${d.supplierA_id}`)
+      || (d.supplierA_id === "EXTERNAL" ? skuMap.get(`EXTERNAL:${d.ean}`) || "" : "");
     const bSku = d.supplierB_sku || skuMap.get(`${d.ean}:${d.supplierB_id}`) || "";
     return {
       ...d,
