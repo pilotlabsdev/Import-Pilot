@@ -1,4 +1,4 @@
-import { prisma, getOrCreateConfig, getEffectiveUrl, getSourceKey, cleanupOldLogs } from "./db.server";
+import { prisma, getOrCreateConfig, getEffectiveUrl, getSourceKey, cleanupOldLogs, refreshAccessToken } from "./db.server";
 import { resolveFileUrl } from "./storage.server";
 import { streamFile, isExcluded, parseExcludeFieldRules, getExcludedFields } from "./csv-parser.server";
 import { calculatePrices } from "./price-rules.server";
@@ -7,6 +7,12 @@ import { getLocationId } from "./location.server";
 import { checkDuplicate, logExternalDuplicate } from "./duplicate-detection.server";
 import { rateLimitedGraphql } from "./import-locks.server";
 import { ensureMetafieldDefinitions } from "./metafield-definitions";
+import shopify from "~/shopify.server";
+
+// Mutable admin ref for token refresh during long-running imports.
+// Set at the start of runImport; updated by graphqlWithRefresh on 401.
+let _adminRef: { current: any } = { current: null };
+let _shopDomainRef = "";
 
 async function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -44,8 +50,28 @@ async function processImageQueue(admin: any, queue: ImageUploadTask[], concurren
   console.log(`[Import] Image queue complete: ${queue.length} products processed`);
 }
 
-async function graphqlWithRetry(admin: any, query: string, vars: any, maxRetries = 3): Promise<any> {
-  return rateLimitedGraphql(admin, query, vars, maxRetries);
+async function graphqlWithRetry(_admin: any, query: string, vars: any, maxRetries = 3): Promise<any> {
+  // Always use module-level ref (may have been refreshed mid-import)
+  const admin = _adminRef.current || _admin;
+  try {
+    return await rateLimitedGraphql(admin, query, vars, maxRetries);
+  } catch (e: any) {
+    const msg = e?.message || "";
+    const isAuth = msg.includes("Unauthorized") || msg.includes("Session not found") || e?.response?.status === 401;
+    if (!isAuth || !_shopDomainRef) throw e;
+
+    console.log(`[Import] Token expired mid-import for ${_shopDomainRef}, refreshing...`);
+    const newToken = await refreshAccessToken(_shopDomainRef);
+    if (!newToken) {
+      throw new Error(`Token expirado para ${_shopDomainRef} y no se pudo refrescar.`);
+    }
+
+    const { admin: newAdmin } = await shopify.unauthenticated.admin(_shopDomainRef);
+    _adminRef.current = newAdmin;
+    console.log(`[Import] Token refreshed mid-import for ${_shopDomainRef}, retrying...`);
+
+    return rateLimitedGraphql(_adminRef.current, query, vars, maxRetries);
+  }
 }
 
 async function setInventoryQuantity(admin: any, inventoryItemId: string, locationId: string, quantity: number): Promise<void> {
@@ -249,6 +275,10 @@ interface ImportOptions {
 }
 
 export async function runImport({ shopDomain, admin, filterType, filterSkus, filterCategories, signal, triggerType, configId, queueItemId, resumeFromSku }: ImportOptions): Promise<ImportResult> {
+  // Set module-level refs for mid-import token refresh
+  _adminRef.current = admin;
+  _shopDomainRef = shopDomain;
+
   let config;
   const sourceKey = getSourceKey(configId ? await prisma.importConfig.findUnique({ where: { id: configId } }) || {} : await getOrCreateConfig(shopDomain));
   if (configId) {
