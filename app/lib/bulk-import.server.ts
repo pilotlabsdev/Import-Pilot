@@ -162,7 +162,7 @@ export async function cancelBulkImport(configId: string, shopDomain: string): Pr
     // Also fail any "running" ImportLogs for this config
     const stuckLogs = await prisma.importLog.updateMany({
       where: { configId, status: "running" },
-      data: { status: "cancelled", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "Cancelado manualmente" }]) },
+      data: { status: "cancelled", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "systemError.cancelled_manually" }]) },
     });
 
     if (stuckQueueItems.count > 0 || stuckLogs.count > 0) {
@@ -480,7 +480,7 @@ async function handleLookupFinished(job: any, admin: any, status: string): Promi
   if (claim.count === 0) return;
 
   if (status !== "completed") {
-    await failJob(job, `La bulk query de productos existentes terminó con estado "${status}"`);
+    await failJob(job, `systemError.query_bad_status`);
     return;
   }
 
@@ -489,7 +489,7 @@ async function handleLookupFinished(job: any, admin: any, status: string): Promi
   });
   const lookupOpId = op?.shopifyOpId || job.lookupOpId;
   if (!lookupOpId) {
-    await failJob(job, "Sin ID de bulk query de productos existentes");
+    await failJob(job, "systemError.no_lookup_op_id");
     return;
   }
 
@@ -896,7 +896,7 @@ async function prepareAndLaunch(
     allSkus.push(sku);
 
     if (!sku) {
-      errors.push({ sku: "UNKNOWN", error: "SKU vacío", lineNumber });
+      errors.push({ sku: "UNKNOWN", error: "systemError.empty_sku", lineNumber });
       continue;
     }
 
@@ -1197,7 +1197,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       where: { id: op.id },
       data: { status: "failed" },
     });
-    await failJob(job, `Operación bulk ${op.kind} #${op.index} terminó con estado "${status}"`);
+    await failJob(job, `systemError.op_bad_status`);
     return;
   }
 
@@ -1249,7 +1249,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       if (i === 0) console.log(`[Bulk] First result HAS ERRORS: ${JSON.stringify(userErrors)}`);
       opErrors++;
       errorWrites.push(
-        JSON.stringify({ sku: meta.sku, error: userErrors.join("; ") || "Error de variable", lineNumber: 0 })
+        JSON.stringify({ sku: meta.sku, error: userErrors.join("; ") || "systemError.variable_error", lineNumber: 0 })
       );
       continue;
     }
@@ -1259,7 +1259,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       const variant = product?.variants?.edges?.[0]?.node;
       if (!product?.id) {
         opErrors++;
-        errorWrites.push(JSON.stringify({ sku: meta.sku, error: "Sin ID de producto en resultado" }));
+        errorWrites.push(JSON.stringify({ sku: meta.sku, error: "systemError.no_product_id" }));
         continue;
       }
 
@@ -1451,7 +1451,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
           where: { shopDomain: job.shopDomain, supplierSku: meta.sku },
         });
         opErrors++;
-        errorWrites.push(JSON.stringify({ sku: meta.sku, error: "Producto eliminado de Shopify, mapping borrado", lineNumber: 0 }));
+        errorWrites.push(JSON.stringify({ sku: meta.sku, error: "systemError.product_deleted", lineNumber: 0 }));
         continue;
       }
 
@@ -1892,7 +1892,7 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
 
     await cleanupOldLogs(job.configId).catch(() => {});
   } catch (error: any) {
-    await failJob(job, error?.message || "Error finalizando importación bulk");
+    await failJob(job, error?.message || "systemError.finalize_error");
   }
 }
 
@@ -2042,35 +2042,35 @@ export async function reconcileStaleBulkJobs(): Promise<void> {
     // If lookup phase has no lookupOpId after 5 minutes, the lookup never completed → fail it
     if (job.phase === "lookup" && !job.lookupOpId && ageMs > 5 * 60 * 1000) {
       console.error(`[Bulk] Job ${job.id.slice(0,8)} stuck in lookup phase with no lookupOpId after ${Math.round(ageMs/60000)}min → failing`);
-      await failJob(job, "Lookup nunca completó (posible token inválido). Reinstala la app y vuelve a intentar.");
+      await failJob(job, "systemError.lookup_never_completed");
       continue;
     }
 
     // If lookup phase has lookupOpId but no mutations after 15 minutes → webhook never arrived
     if (job.phase === "lookup" && job.lookupOpId && ageMs > 15 * 60 * 1000) {
       console.error(`[Bulk] Job ${job.id.slice(0,8)} stuck in lookup phase with lookupOpId=${job.lookupOpId} after ${Math.round(ageMs/60000)}min (webhook never arrived) → failing`);
-      await failJob(job, `Webhook BULK_OPERATIONS_FINISH nunca llegó para lookup ${job.lookupOpId}. Verifica que la app esté instalada y los webhooks registrados.`);
+      await failJob(job, `systemError.webhook_never_arrived`);
       continue;
     }
 
     // If mutations phase has no manifestPath after 10 minutes → fail it
     if (job.phase === "mutations" && !job.manifestPath && ageMs > 10 * 60 * 1000) {
       console.error(`[Bulk] Job ${job.id.slice(0,8)} stuck in mutations phase with no manifestPath after ${Math.round(ageMs/60000)}min → failing`);
-      await failJob(job, "Mutations sin manifest (posible fallo durante preparación).");
+      await failJob(job, "systemError.mutations_no_manifest");
       continue;
     }
 
     // If mutations phase with no progress (mutationOpsDone = 0) after 20 minutes → webhook failing
     if (job.phase === "mutations" && job.manifestPath && (job.mutationOpsDone || 0) === 0 && ageMs > 20 * 60 * 1000) {
       console.error(`[Bulk] Job ${job.id.slice(0,8)} stuck in mutations phase with 0 ops done after ${Math.round(ageMs/60000)}min → failing`);
-      await failJob(job, "Mutations sin progreso (webhooks de mutaciones no llegaron). Verifica los webhooks.");
+      await failJob(job, "systemError.mutations_no_progress");
       continue;
     }
 
     // Any job older than 1 hour → fail it
     if (ageMs > 60 * 60 * 1000) {
       console.error(`[Bulk] Job ${job.id.slice(0,8)} alive for ${Math.round(ageMs/60000)}min → failing (max lifetime exceeded)`);
-      await failJob(job, `Job excedió tiempo máximo de vida (${Math.round(ageMs/60000)}min).`);
+      await failJob(job, `systemError.job_too_old`);
       continue;
     }
 
@@ -2096,10 +2096,10 @@ export async function reconcileStaleBulkJobs(): Promise<void> {
       );
       if (isAuth) {
         console.error(`[Bulk] Auth error in reconcile → failing job ${job.id.slice(0,8)}: ${msg}`);
-        await failJob(job, `Token inválido: ${msg}. Reinstala la app para obtener un nuevo token.`);
+        await failJob(job, `systemError.invalid_token`);
       } else if (isMissingFiles) {
         console.error(`[Bulk] Missing files (ephemeral filesystem?) → failing job ${job.id.slice(0,8)}`);
-        await failJob(job, `Archivos de importación perdidos (redeploy). La importación debe reiniciarse.`);
+        await failJob(job, `systemError.files_lost_redeploy`);
       }
       // Non-auth errors: log but continue to next reconcile cycle
     }
@@ -2171,7 +2171,7 @@ async function reconcileLookupPhase(job: any): Promise<void> {
     // Crash justo después de crear el job, antes de lanzar/registrar la lookup.
     const op = await runLookupQuery(admin);
     if (!op.id) {
-      await failJob(job, "No se pudo lanzar la bulk query de productos existentes (resume)");
+      await failJob(job, "systemError.resume_lookup_failed");
       return;
     }
     if (lookupRow) {
@@ -2204,7 +2204,7 @@ async function reconcileLookupPhase(job: any): Promise<void> {
 
 async function reconcileMutationsPhase(job: any): Promise<void> {
   if (!job.manifestPath) {
-    await failJob(job, "Job en fase mutations sin manifest (resume): imposible reanudar");
+    await failJob(job, "systemError.resume_no_manifest");
     return;
   }
 
@@ -2214,7 +2214,7 @@ async function reconcileMutationsPhase(job: any): Promise<void> {
   console.log(`[Bulk] Reconcile mutations: shop=${job.shopDomain}, sessionExpired=${isExpired}, accessToken=${bestSession?.accessToken ? "present" : "MISSING"}`);
 
   if (!bestSession) {
-    await failJob(job, `No hay sesión para ${job.shopDomain}. Instala la app desde el admin.`);
+    await failJob(job, `systemError.no_session`);
     return;
   }
 

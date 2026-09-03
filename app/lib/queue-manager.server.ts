@@ -224,7 +224,7 @@ async function processQueueItem(
         // Mark old log as failed (we extracted the checkpoint)
         await prisma.importLog.update({
           where: { id: orphanLog!.id },
-          data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "Replaced by resume", lineNumber: 0 }]) },
+          data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "systemError.replaced_by_resume", lineNumber: 0 }]) },
         }).catch(() => {});
       }
 
@@ -288,7 +288,7 @@ async function processQueueItem(
         status: "failed",
         totalProducts: 0, created: 0, updated: 0, unchanged: 0,
         priceChanges: 0, stockChanges: 0,
-        errors: [{ sku: "SYSTEM", error: error?.message || "Error desconocido", lineNumber: 0 }],
+        errors: [{ sku: "SYSTEM", error: error?.message || "systemError.unknown_error", lineNumber: 0 }],
         duration: `${Math.round((Date.now() - startTime) / 1000)}s`,
       }).catch(() => {});
     }
@@ -326,7 +326,7 @@ export async function cancelQueueItem(itemId: string, shopDomain: string): Promi
     if (item.logId) {
       await prisma.importLog.update({
         where: { id: item.logId },
-        data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "Cancelado manualmente" }]) },
+        data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "systemError.cancelled_manually" }]) },
       }).catch(() => {});
     }
     await sendNotification({
@@ -334,7 +334,7 @@ export async function cancelQueueItem(itemId: string, shopDomain: string): Promi
       status: "cancelled",
       totalProducts: 0, created: 0, updated: 0, unchanged: 0,
       priceChanges: 0, stockChanges: 0,
-      errors: [{ sku: "SYSTEM", error: "Cancelado manualmente" }],
+      errors: [{ sku: "SYSTEM", error: "systemError.cancelled_manually" }],
       duration: "0s",
     }).catch(() => {});
     return { success: true, message: aborted ? "Importación abortada" : "Importación marcada para cancelar" };

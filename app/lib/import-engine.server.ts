@@ -437,7 +437,7 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
         const sku = (getField(row, columnMaps, "sku") || row["SKU"] || row["sku"] || "").trim();
 
         if (!sku) {
-          result.errors.push({ sku: "UNKNOWN", error: "SKU vacío", lineNumber });
+          result.errors.push({ sku: "UNKNOWN", error: "systemError.empty_sku", lineNumber });
           continue;
         }
 
@@ -465,7 +465,7 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
             imageQueue,
           });
         } catch (error: any) {
-          const errorMsg = error?.message || "Error desconocido";
+          const errorMsg = error?.message || "systemError.unknown_error";
           let retried = false;
 
           for (let attempt = 1; attempt <= config.maxRetries; attempt++) {
@@ -579,7 +579,7 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
         stockChanges: result.stockChanges,
         excludedCount: excludedCount + result.excluded,
         errors: cancelled
-          ? JSON.stringify([{ sku: "SYSTEM", error: "Cancelado manualmente" }])
+          ? JSON.stringify([{ sku: "SYSTEM", error: "systemError.cancelled_manually" }])
           : result.errors.length > 0 ? JSON.stringify(result.errors) : null,
         lastSku: result.lastSku || null,
         completedAt: new Date(),
@@ -600,7 +600,7 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
         updated: result.updated,
         unchanged: result.unchanged,
         excludedCount: excludedCount + result.excluded,
-        errors: JSON.stringify([{ error: error?.message || "Error general" }]),
+        errors: JSON.stringify([{ error: error?.message || "systemError.general_error" }]),
         lastSku: result.lastSku || null,
         completedAt: new Date(),
       },

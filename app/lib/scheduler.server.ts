@@ -230,7 +230,7 @@ export function startScheduler() {
         if (item.logId) {
           await prisma.importLog.update({
             where: { id: item.logId },
-            data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "Timeout: no progress >15min", lineNumber: 0 }]) },
+            data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "systemError.timeout_no_progress", lineNumber: 0 }]) },
           }).catch(() => {});
         }
       }
@@ -256,7 +256,7 @@ export function startScheduler() {
           }
           await prisma.importLog.update({
             where: { id: log.id },
-            data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "Timeout: orphan, no progress >15min", lineNumber: 0 }]) },
+            data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "systemError.timeout_orphan", lineNumber: 0 }]) },
           }).catch(() => {});
           console.log(`[Scheduler] Limpiado orphan ImportLog ${log.id.slice(0, 8)}`);
         }
@@ -364,7 +364,7 @@ async function runScheduledImport(configId: string) {
           }).catch(() => {});
           await prisma.importLog.update({
             where: { id: activeQueueItem.logId },
-            data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "Timeout: no progress >15min", lineNumber: 0 }]) },
+            data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "systemError.timeout_no_progress", lineNumber: 0 }]) },
           }).catch(() => {});
         } else {
           console.log(`[Scheduler] ${configId.slice(0, 8)} ya tiene item en cola/running (${activeQueueItem.status}), skip`);

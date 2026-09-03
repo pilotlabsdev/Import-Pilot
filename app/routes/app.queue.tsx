@@ -15,6 +15,7 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
 import { useTranslation } from "react-i18next";
+import { parseSystemError } from "~/lib/system-errors";
 
 const STATUS_TONE: Record<string, "success" | "critical" | "attention" | "info" | "warning"> = {
   completed: "success",
@@ -260,11 +261,14 @@ export default function QueuePage() {
                             {item.errorCount} {t("common.errors")}
                           </summary>
                           <ul style={{ margin: "4px 0", padding: "0 16px", fontSize: "12px" }}>
-                            {(item.errorDetails || []).slice(0, 5).map((e: any, i: number) => (
-                              <li key={i}>
-                                <strong>{e.sku || "?"}</strong>: {e.error}
-                              </li>
-                            ))}
+                            {(item.errorDetails || []).slice(0, 5).map((e: any, i: number) => {
+                              const parsed = parseSystemError(e.error || "");
+                              return (
+                                <li key={i}>
+                                  <strong>{e.sku || "?"}</strong>: {t(parsed.key, parsed.vars || {})}
+                                </li>
+                              );
+                            })}
                             {(item.errorDetails || []).length > 5 && (
                               <li>{t("queue.andMore", { count: item.errorDetails.length - 5 })}</li>
                             )}

@@ -13,6 +13,7 @@ import { useTranslation } from "react-i18next";
 
 import { prisma } from "~/lib/db.server";
 import { authenticate } from "~/shopify.server";
+import { parseSystemError } from "~/lib/system-errors";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -66,11 +67,14 @@ export default function Logs() {
             {errors.length} {t("history.errors")}
           </summary>
           <ul style={{ margin: "4px 0", padding: "0 16px", fontSize: "12px" }}>
-            {errors.map((e: any, i: number) => (
-              <li key={i}>
-                <strong>{e.sku || "?"}</strong>: {e.error}{e.lineNumber ? ` (${t("history.line")} ${e.lineNumber})` : ""}
-              </li>
-            ))}
+            {errors.map((e: any, i: number) => {
+              const parsed = parseSystemError(e.error || "");
+              return (
+                <li key={i}>
+                  <strong>{e.sku || "?"}</strong>: {t(parsed.key, parsed.vars || {})}{e.lineNumber ? ` (${t("history.line")} ${e.lineNumber})` : ""}
+                </li>
+              );
+            })}
           </ul>
         </details>
       ) : (
