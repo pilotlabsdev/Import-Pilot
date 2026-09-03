@@ -232,6 +232,7 @@ export async function logExternalDuplicate(
       supplierB_name: configName,
       supplierB_sku: supplierSku,
       supplierB_title: "Importación actual",
+      resolved: false, // Show as pending so merchant knows product already exists in Shopify
     },
   });
 }

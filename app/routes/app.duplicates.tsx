@@ -21,10 +21,56 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
   const shopDomain = session.shop;
 
-  const duplicates = await prisma.duplicateLog.findMany({
+  let duplicates = await prisma.duplicateLog.findMany({
     where: { shopDomain },
     orderBy: { detectedAt: "desc" },
   });
+
+  // Cleanup orphaned EXTERNAL duplicates: check if product still exists in Shopify
+  const externalLogs = duplicates.filter(
+    (d) => d.supplierA_id === "EXTERNAL" && d.supplierA_title && !d.resolved
+  );
+  if (externalLogs.length > 0) {
+    const productIds = externalLogs.map((d) => d.supplierA_title).filter(Boolean);
+    // Extract numeric IDs from GIDs for Shopify query
+    const numericIds = productIds.map((gid) => gid.replace("gid://shopify/Product/", ""));
+    const existingIds = new Set<string>();
+    // Batch check (max 10 per query)
+    for (let i = 0; i < numericIds.length; i += 10) {
+      const batch = numericIds.slice(i, i + 10);
+      const idQuery = batch.map((id) => `id:${id}`).join(" OR ");
+      try {
+        const resp = await admin.graphql(
+          `#graphql
+          query ($query: String!) {
+            products(first: 10, query: $query) {
+              edges { node { id } }
+            }
+          }`,
+          { variables: { query: idQuery } }
+        );
+        const result = await resp.json();
+        for (const edge of result?.data?.products?.edges || []) {
+          existingIds.add(edge.node.id); // Full GID like gid://shopify/Product/xxx
+        }
+      } catch (e) {
+        console.error("[Duplicates] Error checking EXTERNAL products:", e);
+      }
+    }
+    // Delete logs for products that no longer exist
+    const orphanIds = externalLogs
+      .filter((d) => !existingIds.has(d.supplierA_title))
+      .map((d) => d.id);
+    if (orphanIds.length > 0) {
+      await prisma.duplicateLog.deleteMany({ where: { id: { in: orphanIds } } });
+      console.log(`[Duplicates] Cleaned ${orphanIds.length} orphaned EXTERNAL duplicate logs`);
+      // Reload after cleanup
+      duplicates = await prisma.duplicateLog.findMany({
+        where: { shopDomain },
+        orderBy: { detectedAt: "desc" },
+      });
+    }
+  }
 
   // Resolve supplier names from ImportConfig by ID (stored names may be stale)
   const allConfigIds = new Set<string>();
