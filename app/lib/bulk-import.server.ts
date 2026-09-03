@@ -943,7 +943,7 @@ async function prepareAndLaunch(
           const existingIndex = priorityList.indexOf(existingDup.configId);
           if (currentIndex === -1 || (existingIndex !== -1 && existingIndex <= currentIndex)) {
             // Current supplier has LOWER or equal priority → skip
-            await logDuplicate(job.shopDomain, ean, { supplierSku: existingDup.supplierSku, configId: existingDup.configId, config: { name: existingDup.configName }, shopifyProductId: "" }, config.id);
+            await logDuplicate(job.shopDomain, ean, { supplierSku: existingDup.supplierSku, configId: existingDup.configId, config: { name: existingDup.configName }, shopifyProductId: "" }, config.id, sku);
             duplicateSkippedCount++;
             continue;
           }
@@ -952,7 +952,7 @@ async function prepareAndLaunch(
           priorityReplaceConfigId = existingDup.configId;
         } else {
           // skip_existing
-          await logDuplicate(job.shopDomain, ean, { supplierSku: existingDup.supplierSku, configId: existingDup.configId, config: { name: existingDup.configName }, shopifyProductId: "" }, config.id);
+          await logDuplicate(job.shopDomain, ean, { supplierSku: existingDup.supplierSku, configId: existingDup.configId, config: { name: existingDup.configName }, shopifyProductId: "" }, config.id, sku);
           duplicateSkippedCount++;
           continue;
         }

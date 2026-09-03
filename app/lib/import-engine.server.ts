@@ -815,7 +815,7 @@ async function processProduct({
     const shopSettings = await prisma.shopSettings.findUnique({ where: { shopDomain } });
     const dupPolicy = shopSettings?.duplicatePolicy || "create_both";
     if (rowEan && (dupPolicy === "skip_existing" || dupPolicy === "priority")) {
-      const dupCheck = await checkDuplicate(shopDomain, config.id, rowEan);
+      const dupCheck = await checkDuplicate(shopDomain, config.id, rowEan, sku);
       if (dupCheck.shouldSkip) {
         console.log(`[Import] SKU ${sku}: EAN ${rowEan} duplicado de proveedor "${dupCheck.existingSupplierName}", saltando por ${dupPolicy}`);
         result.excluded++;

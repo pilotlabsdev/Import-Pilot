@@ -18,7 +18,8 @@ export type DuplicateCheckResult = {
 export async function checkDuplicate(
   shopDomain: string,
   currentConfigId: string,
-  ean: string
+  ean: string,
+  newSku?: string
 ): Promise<DuplicateCheckResult> {
   if (!ean || !ean.trim()) {
     return { isDuplicate: false, shouldSkip: false, shouldReplace: false };
@@ -60,7 +61,7 @@ export async function checkDuplicate(
     case "priority": {
       const priorityJson = settings?.supplierPriority;
       if (!priorityJson) {
-        await logDuplicate(shopDomain, ean, existingMappings[0], currentConfigId);
+        await logDuplicate(shopDomain, ean, existingMappings[0], currentConfigId, newSku);
         return {
           isDuplicate: true,
           shouldSkip: true,
@@ -74,7 +75,7 @@ export async function checkDuplicate(
       try {
         priorityList = JSON.parse(priorityJson);
       } catch {
-        await logDuplicate(shopDomain, ean, existingMappings[0], currentConfigId);
+        await logDuplicate(shopDomain, ean, existingMappings[0], currentConfigId, newSku);
         return {
           isDuplicate: true,
           shouldSkip: true,
@@ -99,7 +100,7 @@ export async function checkDuplicate(
 
       // Current supplier has LOWER or equal priority than the winner → skip
       if (currentIndex === -1 || (winnerIndex !== -1 && winnerIndex <= currentIndex)) {
-        await logDuplicate(shopDomain, ean, winner, currentConfigId);
+        await logDuplicate(shopDomain, ean, winner, currentConfigId, newSku);
         return {
           isDuplicate: true,
           shouldSkip: true,
@@ -132,7 +133,7 @@ export async function checkDuplicate(
       });
 
       if (anyExisting) {
-        await logDuplicate(shopDomain, ean, anyExisting, currentConfigId);
+        await logDuplicate(shopDomain, ean, anyExisting, currentConfigId, newSku);
         return {
           isDuplicate: true,
           shouldSkip: true,
@@ -154,7 +155,8 @@ export async function logDuplicate(
   shopDomain: string,
   ean: string,
   existingMapping: { supplierSku: string; configId: string; config?: { name: string }; shopifyProductId: string },
-  newConfigId: string
+  newConfigId: string,
+  newSku?: string
 ) {
   // Check if this exact duplicate pair already logged
   const existing = await prisma.duplicateLog.findFirst({
@@ -177,8 +179,6 @@ export async function logDuplicate(
   // Try to get the product title from the existing mapping's product
   let title = "Desconocido";
   try {
-    // We can't query Shopify here easily, so use a placeholder
-    // The title will be updated when the duplicate is viewed
     title = `Producto (${existingMapping.shopifyProductId})`;
   } catch {}
 
@@ -192,7 +192,7 @@ export async function logDuplicate(
       supplierA_title: title,
       supplierB_id: newConfigId,
       supplierB_name: newConfig?.name || "Proveedor actual",
-      supplierB_sku: "", // Will be filled by the caller
+      supplierB_sku: newSku || "",
       supplierB_title: "Importación actual",
     },
   });
@@ -225,7 +225,7 @@ export async function logExternalDuplicate(
       shopDomain,
       ean,
       supplierA_id: "EXTERNAL",
-      supplierA_name: "Producto externo/manual en Shopify",
+      supplierA_name: "Ya creado en Shopify",
       supplierA_sku: "",
       supplierA_title: shopifyProductId,
       supplierB_id: configId,

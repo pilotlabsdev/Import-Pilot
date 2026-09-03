@@ -26,9 +26,31 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     orderBy: { detectedAt: "desc" },
   });
 
-  const unresolvedCount = duplicates.filter((d) => !d.resolved).length;
+  // Resolve supplier names from ImportConfig by ID (stored names may be stale)
+  const allConfigIds = new Set<string>();
+  for (const d of duplicates) {
+    if (d.supplierA_id && d.supplierA_id !== "EXTERNAL") allConfigIds.add(d.supplierA_id);
+    if (d.supplierB_id) allConfigIds.add(d.supplierB_id);
+  }
 
-  return data({ duplicates, unresolvedCount });
+  const configs = await prisma.importConfig.findMany({
+    where: { id: { in: [...allConfigIds] } },
+    select: { id: true, name: true },
+  });
+  const configMap = new Map(configs.map((c) => [c.id, c.name]));
+
+  const resolved = duplicates.map((d) => ({
+    ...d,
+    supplierA_name:
+      d.supplierA_id === "EXTERNAL"
+        ? "Ya creado en Shopify"
+        : configMap.get(d.supplierA_id) || d.supplierA_name,
+    supplierB_name: configMap.get(d.supplierB_id) || d.supplierB_name,
+  }));
+
+  const unresolvedCount = resolved.filter((d) => !d.resolved).length;
+
+  return data({ duplicates: resolved, unresolvedCount });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
