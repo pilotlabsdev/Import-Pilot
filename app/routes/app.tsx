@@ -4,7 +4,8 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { NavMenu } from "@shopify/app-bridge-react";
 import { useTranslation } from "react-i18next";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useRevalidator } from "react-router";
 
 import { authenticate } from "~/shopify.server";
 import { prisma } from "~/lib/db.server";
@@ -80,6 +81,19 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export default function App() {
   const { apiKey, shopDomain, unresolvedCount, queueCount, planLabel, hasPlan } = useLoaderData<typeof loader>();
   const { t } = useTranslation();
+  const { revalidate } = useRevalidator();
+
+  // Auto-refresh queue count every 15s and when tab becomes visible
+  useEffect(() => {
+    if (!hasPlan) return;
+    const interval = setInterval(revalidate, 15000);
+    const onVisible = () => { if (document.visibilityState === "visible") revalidate(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [hasPlan, revalidate]);
 
   if (!hasPlan) {
     return (
