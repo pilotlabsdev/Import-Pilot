@@ -39,14 +39,48 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   });
   const configMap = new Map(configs.map((c) => [c.id, c.name]));
 
-  const resolved = duplicates.map((d) => ({
-    ...d,
-    supplierA_name:
-      d.supplierA_id === "EXTERNAL"
-        ? "Ya creado en Shopify"
-        : configMap.get(d.supplierA_id) || d.supplierA_name,
-    supplierB_name: configMap.get(d.supplierB_id) || d.supplierB_name,
-  }));
+  // Resolve SKUs from ProductMapping for logs with empty SKUs
+  const skusToResolve = duplicates.filter((d) => !d.supplierA_sku || !d.supplierB_sku);
+  const skuMap = new Map<string, string>();
+  if (skusToResolve.length > 0) {
+    const eanConfigPairs = skusToResolve.map((d) => ({
+      ean: d.ean,
+      configId: d.supplierA_id !== "EXTERNAL" ? d.supplierA_id : d.supplierB_id,
+      isA: d.supplierA_id !== "EXTERNAL" && !d.supplierA_sku,
+      isB: !d.supplierB_sku,
+    }));
+
+    const uniqueEans = [...new Set(skusToResolve.map((d) => d.ean))];
+    const uniqueConfigIds = [...new Set(eanConfigPairs.map((p) => p.configId))];
+
+    const mappings = await prisma.productMapping.findMany({
+      where: {
+        shopDomain,
+        ean: { in: uniqueEans },
+        configId: { in: uniqueConfigIds },
+      },
+      select: { ean: true, configId: true, supplierSku: true },
+    });
+
+    for (const m of mappings) {
+      skuMap.set(`${m.ean}:${m.configId}`, m.supplierSku);
+    }
+  }
+
+  const resolved = duplicates.map((d) => {
+    const aSku = d.supplierA_sku || skuMap.get(`${d.ean}:${d.supplierA_id}`) || "";
+    const bSku = d.supplierB_sku || skuMap.get(`${d.ean}:${d.supplierB_id}`) || "";
+    return {
+      ...d,
+      supplierA_name:
+        d.supplierA_id === "EXTERNAL"
+          ? "Ya creado en Shopify"
+          : configMap.get(d.supplierA_id) || d.supplierA_name,
+      supplierA_sku: aSku,
+      supplierB_name: configMap.get(d.supplierB_id) || d.supplierB_name,
+      supplierB_sku: bSku,
+    };
+  });
 
   const unresolvedCount = resolved.filter((d) => !d.resolved).length;
 
