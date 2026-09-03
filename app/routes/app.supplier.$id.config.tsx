@@ -1037,6 +1037,7 @@ export default function Config() {
               setDataSource("url");
               setFileSwitched(true);
             }
+            setUploadError(null);
             setDeleteConfirmFile(null);
           },
         }}
