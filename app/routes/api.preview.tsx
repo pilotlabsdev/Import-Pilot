@@ -370,6 +370,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         const category = getField(row, "category");
         const ean = getField(row, "ean") || row["ean"] || "";
 
+        const passesPreviewFilterStat = !hasAnyPreviewFilter || (skuSet?.has(skuLower) ?? false) || (catSet?.has(category.toLowerCase()) ?? false);
+        if (!passesPreviewFilterStat) continue;
+
         const passesImportFilter = !hasAnyImportFilter || (importSkuSet?.has(skuLower) ?? false) || (importCatSet?.has(category.toLowerCase()) ?? false);
         if (!passesImportFilter || importSeenSkus.has(skuLower)) continue;
         importSeenSkus.add(skuLower);

@@ -53,17 +53,63 @@ async function withRetry<T>(fn: () => Promise<T>, label: string, maxRetries = 3)
   throw lastError;
 }
 
-async function gql(admin: any, query: string, varsOrOptions?: any): Promise<any> {
+// Track last refresh time per shop to avoid refreshing too often
+const lastRefreshAt = new Map<string, number>();
+const MIN_REFRESH_INTERVAL_MS = 30_000; // Don't refresh more than once per 30 seconds
+
+/**
+ * Proactively refresh the token if it's about to expire.
+ * Called before each batch of mutations to prevent mid-batch 401 errors.
+ */
+export async function ensureFreshTokenForBulk(shopDomain: string): Promise<void> {
+  const now = Date.now();
+  const lastRefresh = lastRefreshAt.get(shopDomain) || 0;
+  if (now - lastRefresh < MIN_REFRESH_INTERVAL_MS) return; // Too soon
+
+  try {
+    await ensureFreshToken(shopDomain);
+    lastRefreshAt.set(shopDomain, now);
+  } catch (e: any) {
+    console.error(`[Bulk] Proactive token refresh failed for ${shopDomain}: ${e?.message}`);
+  }
+}
+
+async function gql(admin: any, query: string, varsOrOptions?: any, shopDomain?: string): Promise<any> {
   const vars = varsOrOptions?.variables !== undefined ? varsOrOptions.variables : varsOrOptions;
   try {
     return await rateLimitedGraphql(admin, query, vars || {});
   } catch (e: any) {
     const msg = e?.message || "";
-    if (msg.includes("Unauthorized") || msg.includes("Session not found") || e?.response?.status === 401) {
-      console.error(`[Bulk] Auth error en gql: ${msg}`);
+    const isAuth = msg.includes("Unauthorized") || msg.includes("Session not found") || e?.response?.status === 401;
+    if (!isAuth) throw e;
+
+    // Token expired mid-import → refresh and retry once
+    if (!shopDomain) {
+      console.error(`[Bulk] Auth error en gql (no shopDomain): ${msg}`);
       throw new Error(`Token inválido o expirado. Reinstala la app para obtener un nuevo token.`);
     }
-    throw e;
+
+    const now = Date.now();
+    const lastRefresh = lastRefreshAt.get(shopDomain) || 0;
+    if (now - lastRefresh < MIN_REFRESH_INTERVAL_MS) {
+      // Already refreshed recently, don't retry
+      console.error(`[Bulk] Auth error after recent refresh for ${shopDomain}: ${msg}`);
+      throw new Error(`Token inválido o expirado tras refresh reciente para ${shopDomain}.`);
+    }
+
+    console.log(`[Bulk] Token expired mid-import for ${shopDomain}, refreshing...`);
+    const newToken = await refreshAccessToken(shopDomain);
+    if (!newToken) {
+      throw new Error(`Token expirado para ${shopDomain} y no se pudo refrescar. El merchant debe acceder al admin para renovar.`);
+    }
+
+    lastRefreshAt.set(shopDomain, now);
+
+    // Recreate admin client with new token
+    const { admin: newAdmin } = await shopify.unauthenticated.admin(shopDomain);
+    console.log(`[Bulk] Token refreshed for ${shopDomain}, retrying...`);
+
+    return rateLimitedGraphql(newAdmin, query, vars || {});
   }
 }
 
@@ -86,7 +132,8 @@ async function processBulkImageQueue(admin: any, queue: BulkImageTask[], shopDom
           mutation productCreateMedia($id: ID!, $media: [CreateMediaInput!]!) {
             productCreateMedia(productId: $id, media: $media) { media { id } userErrors { field message } }
           }`,
-          { variables: { id: task.productId, media: task.files } }
+          { variables: { id: task.productId, media: task.files } },
+          shopDomain
         );
         console.log(`[Bulk] Images OK: ${task.label} (${task.files.length} images)`);
         // Mark product as complete after images uploaded
@@ -203,7 +250,7 @@ export async function cancelBulkImport(configId: string, shopDomain: string): Pr
               userErrors { field message }
             }
           }
-        `, { id: op.shopifyOpId });
+        `, { id: op.shopifyOpId }, shopDomain);
       } catch {}
     }
   }
@@ -366,7 +413,7 @@ export async function runBulkImport({
 
   // Pre-flight: verify token is valid before starting bulk operation
   try {
-    const pingRes = await gql(admin, `{ shop { name } }`);
+    const pingRes = await gql(admin, `{ shop { name } }`, undefined, shopDomain);
     if (pingRes.errors?.length) {
       const errMsg = pingRes.errors.map((e: any) => e.message).join(", ");
       console.error(`[Bulk] Pre-flight GQL errors for ${shopDomain}:`, errMsg);
@@ -413,7 +460,7 @@ export async function runBulkImport({
     },
   });
 
-  const lookupOp = await runLookupQuery(admin);
+  const lookupOp = await runLookupQuery(admin, shopDomain);
   if (!lookupOp.id) {
     throw new Error("No se pudo crear la bulk query de productos existentes");
   }
@@ -494,7 +541,7 @@ async function handleLookupFinished(job: any, admin: any, status: string): Promi
   }
 
   const lookupPath = path.join(job.workDir, "lookup-result.jsonl");
-  await downloadOperationResult(admin, lookupOpId, lookupPath);
+  await downloadOperationResult(admin, lookupOpId, lookupPath, job.shopDomain);
 
   const maps = await buildLookupMaps(lookupPath);
   const sampleSkus = [...maps.bySku.entries()].slice(0, 3);
@@ -511,9 +558,9 @@ async function handleLookupFinished(job: any, admin: any, status: string): Promi
   for (const m of allMappings) {
     if (!maps.bySku.has(m.supplierSku)) {
       if (m.shopifyProductId) {
-        // Only delete orphan mappings if product was fully processed
-        // Incomplete products will be retried in retryPostProcess
-        if (m.postProcessStatus === "complete" || m.postProcessStatus === "pending" || !m.postProcessStatus) {
+        // Delete orphan mappings if product was fully processed, pending, or permanently failed
+        // Incomplete products (inventory/channels/images/error) will be retried in retryPostProcess
+        if (m.postProcessStatus === "complete" || m.postProcessStatus === "pending" || !m.postProcessStatus || m.postProcessStatus === "error_permanent") {
           orphanSkus.push(m.supplierSku);
           console.log(`[Bulk] SKU ${m.supplierSku}: mapping huérfano (status=${m.postProcessStatus || "pending"}, producto ${m.shopifyProductId} no existe en Shopify), se recreará`);
         } else {
@@ -567,7 +614,7 @@ async function handleLookupFinished(job: any, admin: any, status: string): Promi
     where: {
       shopDomain: job.shopDomain,
       configId: job.configId,
-      postProcessStatus: { notIn: ["complete", "pending", "error_permanent"] },
+      postProcessStatus: { notIn: ["complete", "error_permanent"] },
     },
   });
 
@@ -708,12 +755,12 @@ async function retryPostProcess(
         return;
       }
     } else {
-      // No inventoryItemId, skip to channels
+      // No inventoryItemId, skip to channels (set to "inventory" so step 2 picks it up)
       await prisma.productMapping.update({
         where: { id: mapping.id },
-        data: { postProcessStatus: "channels", postProcessRetries: { increment: 1 } },
+        data: { postProcessStatus: "inventory", postProcessRetries: { increment: 1 } },
       });
-      mapping.postProcessStatus = "channels";
+      mapping.postProcessStatus = "inventory";
     }
   }
 
@@ -1150,11 +1197,14 @@ async function prepareAndLaunch(
   let launchedCreates = 0;
   let launchedUpdates = 0;
 
+  // Proactive refresh before launching mutations
+  await ensureFreshTokenForBulk(job.shopDomain);
+
   for (let i = 0; i < createFiles.length; i++) {
     const pending = await prisma.bulkJobOp.create({
       data: { jobId: job.id, kind: "create", index: i, status: "pending" },
     });
-    const opId = await stageAndLaunch(admin, CREATE_MUTATION, createFiles[i]);
+    const opId = await stageAndLaunch(admin, CREATE_MUTATION, createFiles[i], job.shopDomain);
     await prisma.bulkJobOp.update({
       where: { id: pending.id },
       data: { shopifyOpId: opId, status: "launched" },
@@ -1162,11 +1212,14 @@ async function prepareAndLaunch(
     launchedCreates++;
   }
 
+  // Proactive refresh before launching updates
+  await ensureFreshTokenForBulk(job.shopDomain);
+
   for (let i = 0; i < updateFiles.length; i++) {
     const pending = await prisma.bulkJobOp.create({
       data: { jobId: job.id, kind: "update", index: i, status: "pending" },
     });
-    const opId = await stageAndLaunch(admin, UPDATE_MUTATION, updateFiles[i]);
+    const opId = await stageAndLaunch(admin, UPDATE_MUTATION, updateFiles[i], job.shopDomain);
     await prisma.bulkJobOp.update({
       where: { id: pending.id },
       data: { shopifyOpId: opId, status: "launched" },
@@ -1209,7 +1262,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
   const resultPath = path.join(workDir, `${op.kind}-result-${op.index}.jsonl`);
   console.log(`[Bulk] Downloading result from op ${op.shopifyOpId}...`);
   try {
-    await downloadOperationResult(admin, op.shopifyOpId, resultPath);
+    await downloadOperationResult(admin, op.shopifyOpId, resultPath, job.shopDomain);
     console.log(`[Bulk] Download OK to ${resultPath}`);
   } catch (e: any) {
     console.error(`[Bulk] Download FAILED: ${e?.message}`);
@@ -1229,6 +1282,9 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
   let priceChanges = 0;
   let stockChanges = 0;
   let opErrors = 0;
+
+  // Proactive refresh before post-processing mutations
+  await ensureFreshTokenForBulk(job.shopDomain);
   const inventoryWrites: string[] = [];
   const errorWrites: string[] = [];
   const imageQueue: BulkImageTask[] = [];
@@ -1327,7 +1383,8 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
                 userErrors { field message }
               }
             }`,
-            { variables: { productId: product.id, variants: [variantInput] } }
+            { variables: { productId: product.id, variants: [variantInput] } },
+            job.shopDomain
           );
           console.log(`[Bulk] SKU ${meta.sku}: precio=${meta.regularPrice}${meta.compareAtPrice ? `, compareAt=${meta.compareAtPrice}` : ""}${meta.ean ? `, barcode=${meta.ean}` : ""}`);
         } catch (e: any) {
@@ -1362,7 +1419,8 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
                 id: variant.inventoryItem.id,
                 input: invInput,
               },
-            }
+            },
+            job.shopDomain
           );
           console.log(`[Bulk] SKU ${meta.sku}: inventory tracked=true${meta.costPrice > 0 ? `, cost=${meta.costPrice}` : ""}`);
           await prisma.productMapping.update({
@@ -1389,7 +1447,8 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
                 inventoryItemId: variant.inventoryItem.id,
                 inventoryItemUpdates: [{ locationId: locId, activate: true }],
               },
-            }
+            },
+            job.shopDomain
           );
           const actErrors = actRes.data?.inventoryBulkToggleActivation?.userErrors;
           if (actErrors?.length > 0) {
@@ -1424,7 +1483,8 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
                 userErrors { field message }
               }
             }`,
-            { variables: { id: product.id, input } }
+            { variables: { id: product.id, input } },
+            job.shopDomain
           );
           console.log(`[Bulk] SKU ${meta.sku}: publicado en ${allPubIds.length} publicación(es)`);
           await prisma.productMapping.update({
@@ -1510,7 +1570,8 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
                     ...(meta.compareAtPrice && !isNaN(meta.compareAtPrice) ? { compareAtPrice: String(meta.compareAtPrice) } : {}),
                   }],
                 },
-              }
+              },
+              job.shopDomain
             );
           } catch (e: any) {
             console.error(`[Bulk] SKU ${meta.sku}: error actualizando precio: ${e?.message}`);
@@ -1541,7 +1602,8 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
                 id: meta.inventoryItemId,
                 input: { cost: String(meta.costPrice) },
               },
-            }
+            },
+            job.shopDomain
           );
           if (costRes?.data?.inventoryItemUpdate?.userErrors?.length) {
             console.error(`[Bulk] SKU ${meta.sku}: userErrors seteando costo:`, JSON.stringify(costRes.data.inventoryItemUpdate.userErrors));
@@ -1563,11 +1625,11 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
         select: { postProcessStatus: true, id: true },
       }).catch(() => null);
 
-      if (existingMapping && existingMapping.postProcessStatus !== "complete" && existingMapping.postProcessStatus !== "pending") {
+      if (existingMapping && existingMapping.postProcessStatus !== "complete") {
         console.log(`[Bulk] SKU ${meta.sku}: repairing incomplete product (status=${existingMapping.postProcessStatus})`);
 
         // Step 1: If missing inventory tracking + activation
-        if (existingMapping.postProcessStatus === "pending" || !existingMapping.postProcessStatus) {
+        if (!existingMapping.postProcessStatus || existingMapping.postProcessStatus === "pending" || existingMapping.postProcessStatus === "error") {
           if (meta.inventoryItemId) {
             try {
               const invInput: any = { tracked: true };
@@ -1580,7 +1642,8 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
                     userErrors { field message }
                   }
                 }`,
-                { variables: { id: meta.inventoryItemId, input: invInput } }
+                { variables: { id: meta.inventoryItemId, input: invInput } },
+                job.shopDomain
               ), `repair-inventory-${meta.sku}`);
               console.log(`[Bulk] SKU ${meta.sku}: repair - inventory tracked=true`);
 
@@ -1593,7 +1656,8 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
                     userErrors { field message code }
                   }
                 }`,
-                { variables: { inventoryItemId: meta.inventoryItemId, inventoryItemUpdates: [{ locationId: locId, activate: true }] } }
+                { variables: { inventoryItemId: meta.inventoryItemId, inventoryItemUpdates: [{ locationId: locId, activate: true }] } },
+                job.shopDomain
               ), `repair-activation-${meta.sku}`);
               console.log(`[Bulk] SKU ${meta.sku}: repair - inventory activated at location`);
 
@@ -1612,8 +1676,8 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
           }
         }
 
-        // Step 2: If missing channels
-        if (existingMapping.postProcessStatus === "inventory") {
+        // Step 2: If missing channels (or retry from error after inventory step)
+        if (existingMapping.postProcessStatus === "inventory" || existingMapping.postProcessStatus === "error") {
           const allPubIds: string[] = [];
           if (config?.publicationIds) {
             try { allPubIds.push(...JSON.parse(config.publicationIds)); } catch {}
@@ -1629,7 +1693,8 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
                 mutation PublishablePublish($id: ID!, $input: [PublicationInput!]!) {
                   publishablePublish(id: $id, input: $input) { userErrors { field message } }
                 }`,
-                { variables: { id: product.id, input } }
+                { variables: { id: product.id, input } },
+                job.shopDomain
               ), `repair-channels-${meta.sku}`);
               console.log(`[Bulk] SKU ${meta.sku}: repair - published in ${allPubIds.length} channel(s)`);
 
@@ -1747,6 +1812,9 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
     const inventoryQueuePath = path.join(workDir, "inventory-queue.jsonl");
     const queue = await readJsonLines(inventoryQueuePath);
 
+    // Proactive refresh before inventory batch flush
+    await ensureFreshTokenForBulk(job.shopDomain);
+
     for (let i = 0; i < queue.length; i += 100) {
       const batch = queue.slice(i, i + 100);
       const quantities = batch.map((q: any) => ({
@@ -1774,7 +1842,8 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
               },
               idempotencyKey: `bulk-inv-${job.id}-${i}`,
             },
-          }
+          },
+          job.shopDomain
         );
         const invErrors = invRes.data?.inventorySetQuantities?.userErrors;
         if (invErrors?.length > 0) {
@@ -1818,7 +1887,8 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
                 },
                 idempotencyKey: `bulk-inv-absent-${mapping.shopifyInventoryItemId || mapping.shopifyProductId}-${locationId}-${Date.now()}`,
               },
-            }
+            },
+            job.shopDomain
           );
           await prisma.productMapping.update({
             where: { id: mapping.id },
@@ -2169,7 +2239,7 @@ async function reconcileLookupPhase(job: any): Promise<void> {
 
   if (!lookupRow || !lookupRow.shopifyOpId) {
     // Crash justo después de crear el job, antes de lanzar/registrar la lookup.
-    const op = await runLookupQuery(admin);
+    const op = await runLookupQuery(admin, job.shopDomain);
     if (!op.id) {
       await failJob(job, "systemError.resume_lookup_failed");
       return;
@@ -2193,7 +2263,7 @@ async function reconcileLookupPhase(job: any): Promise<void> {
 
   await resetStaleProcessing(lookupRow);
 
-  const bulk = await getBulkOperation(admin, lookupRow.shopifyOpId);
+  const bulk = await getBulkOperation(admin, lookupRow.shopifyOpId, job.shopDomain);
   if (!bulk) return;
 
   const status = (bulk.status || "").toLowerCase();
@@ -2252,7 +2322,7 @@ async function reconcileMutationsPhase(job: any): Promise<void> {
       continue;
     }
 
-    const bulk = await getBulkOperation(admin, op.shopifyOpId);
+    const bulk = await getBulkOperation(admin, op.shopifyOpId, job.shopDomain);
     if (!bulk) continue;
 
     const status = (bulk.status || "").toLowerCase();
@@ -2279,7 +2349,7 @@ async function resumeMissingMutationOp(
   inputPath: string
 ): Promise<void> {
   if (kind === "update") {
-    const opId = await stageAndLaunch(admin, UPDATE_MUTATION, inputPath);
+    const opId = await stageAndLaunch(admin, UPDATE_MUTATION, inputPath, job.shopDomain);
     await prisma.bulkJobOp.create({
       data: { jobId: job.id, shopifyOpId: opId, kind, index, status: "launched" },
     });
@@ -2299,7 +2369,7 @@ async function resumePendingMutationOp(
 ): Promise<void> {
   if (kind === "update") {
     // productUpdate es idempotente: relanzar es seguro aunque exista una op fantasma.
-    const opId = await stageAndLaunch(admin, UPDATE_MUTATION, inputPath);
+    const opId = await stageAndLaunch(admin, UPDATE_MUTATION, inputPath, job.shopDomain);
     await prisma.bulkJobOp.update({
       where: { id: op.id },
       data: { shopifyOpId: opId, status: "launched" },
@@ -2325,6 +2395,9 @@ async function resumeOrRebuildCreateOp(
   const workDir = job.workDir;
   const metaPath = path.join(workDir, `create-meta-${index}.jsonl`);
 
+  // Proactive refresh before resume operations
+  await ensureFreshTokenForBulk(job.shopDomain);
+
   const sourceKeyConfig = await prisma.importConfig.findUnique({ where: { id: job.configId } });
   const sourceKey = sourceKeyConfig ? getSourceKey(sourceKeyConfig) : null;
 
@@ -2335,7 +2408,7 @@ async function resumeOrRebuildCreateOp(
 
   const metas = (await readJsonLines(metaPath)) as MetaLine[];
   const skus = metas.map((m) => m.sku).filter(Boolean);
-  const existing = await lookupSkusSync(admin, skus);
+  const existing = await lookupSkusSync(admin, skus, job.shopDomain);
 
   const rawInput = await fs.readFile(inputPath, "utf-8").catch(() => "");
   const inputLines = rawInput.split("\n").filter((l) => l.trim());
@@ -2395,7 +2468,8 @@ async function resumeOrRebuildCreateOp(
                   id: match.inventoryItemId,
                 input: { cost: String(meta.costPrice) },
                 },
-              }
+              },
+              job.shopDomain
             );
           } catch (e: any) {
             console.error(`[Bulk] SKU ${meta.sku}: error seteando costo en adoptado: ${e?.message}`);
@@ -2433,7 +2507,7 @@ async function resumeOrRebuildCreateOp(
   await fs.writeFile(inputPath, missing.map((m) => m.line).join("\n") + "\n");
   await fs.writeFile(metaPath, missing.map((m) => JSON.stringify(m.meta)).join("\n") + "\n");
 
-  const opId = await stageAndLaunch(admin, CREATE_MUTATION, inputPath);
+  const opId = await stageAndLaunch(admin, CREATE_MUTATION, inputPath, job.shopDomain);
   if (target.opId) {
     await prisma.bulkJobOp.update({
       where: { id: target.opId },
@@ -2451,7 +2525,7 @@ async function findGhostMutationOps(
   job: any,
   admin: any
 ): Promise<Array<{ id: string; status: string; createdAt: string }>> {
-  const recent = await listRecentMutationOps(admin);
+  const recent = await listRecentMutationOps(admin, job.shopDomain);
   const known = new Set<string>();
   for (const op of job.ops) {
     if (op.shopifyOpId) known.add(op.shopifyOpId);
@@ -2464,7 +2538,8 @@ async function findGhostMutationOps(
 }
 
 async function listRecentMutationOps(
-  admin: any
+  admin: any,
+  shopDomain?: string
 ): Promise<Array<{ id: string; status: string; createdAt: string }>> {
   const json = await gql(admin,
     `#graphql
@@ -2474,13 +2549,15 @@ async function listRecentMutationOps(
           node { id status createdAt }
         }
       }
-    }`
+    }`,
+    undefined,
+    shopDomain
   );
   return (json.data?.bulkOperations?.edges || []).map((e: any) => e.node);
 }
 
 // Lookup síncrono y acotado a los SKUs indicados (solo en recuperación).
-async function lookupSkusSync(admin: any, skus: string[]): Promise<Map<string, LookupMatch>> {
+async function lookupSkusSync(admin: any, skus: string[], shopDomain?: string): Promise<Map<string, LookupMatch>> {
   const result = new Map<string, LookupMatch>();
   const unique = [...new Set(skus)].filter(Boolean);
 
@@ -2505,7 +2582,8 @@ async function lookupSkusSync(admin: any, skus: string[]): Promise<Map<string, L
           }
         }
       }`,
-      { variables: { q: query } }
+      { variables: { q: query } },
+      shopDomain
     );
 
     for (const edge of json.data?.products?.edges || []) {
@@ -2529,7 +2607,7 @@ async function lookupSkusSync(admin: any, skus: string[]): Promise<Map<string, L
 
 // --- Helpers de Shopify ---
 
-async function runLookupQuery(admin: any) {
+async function runLookupQuery(admin: any, shopDomain?: string) {
   const json = await gql(admin,
     `#graphql
     mutation bulkOp($query: String!) {
@@ -2538,7 +2616,8 @@ async function runLookupQuery(admin: any) {
         userErrors { field message }
       }
     }`,
-    { variables: { query: LOOKUP_QUERY } }
+    { variables: { query: LOOKUP_QUERY } },
+    shopDomain
   );
   const userErrors = json.data?.bulkOperationRunQuery?.userErrors || [];
   if (userErrors.length > 0) {
@@ -2547,7 +2626,7 @@ async function runLookupQuery(admin: any) {
   return json.data?.bulkOperationRunQuery?.bulkOperation || {};
 }
 
-async function getBulkOperation(admin: any, id: string) {
+async function getBulkOperation(admin: any, id: string, shopDomain?: string) {
   const json = await gql(admin,
     `#graphql
     query bulkOp($id: ID!) {
@@ -2555,13 +2634,14 @@ async function getBulkOperation(admin: any, id: string) {
         id status errorCode completedAt objectCount fileSize url partialDataUrl
       }
     }`,
-    { variables: { id } }
+    { variables: { id } },
+    shopDomain
   );
   return json.data?.bulkOperation;
 }
 
-async function downloadOperationResult(admin: any, opId: string, targetPath: string): Promise<void> {
-  const op = await getBulkOperation(admin, opId);
+async function downloadOperationResult(admin: any, opId: string, targetPath: string, shopDomain?: string): Promise<void> {
+  const op = await getBulkOperation(admin, opId, shopDomain);
   const url = op?.url || op?.partialDataUrl;
   if (!url) {
     throw new Error(`Operación bulk ${opId} sin URL de resultados (status ${op?.status})`);
@@ -2585,7 +2665,7 @@ async function downloadOperationResult(admin: any, opId: string, targetPath: str
   });
 }
 
-async function stageAndLaunch(admin: any, mutation: string, inputPath: string): Promise<string> {
+async function stageAndLaunch(admin: any, mutation: string, inputPath: string, shopDomain?: string): Promise<string> {
   const content = await fs.readFile(inputPath);
 
   let staged;
@@ -2613,7 +2693,8 @@ async function stageAndLaunch(admin: any, mutation: string, inputPath: string): 
             },
           ],
         },
-      }
+      },
+      shopDomain
     );
   } catch (e: any) {
     const msg = e?.message || "";
@@ -2652,7 +2733,8 @@ async function stageAndLaunch(admin: any, mutation: string, inputPath: string): 
           userErrors { field message }
         }
       }`,
-      { variables: { mutation, stagedUploadPath: key } }
+      { variables: { mutation, stagedUploadPath: key } },
+      shopDomain
     );
   } catch (e: any) {
     const msg = e?.message || "";
