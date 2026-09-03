@@ -4,7 +4,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { NavMenu } from "@shopify/app-bridge-react";
 import { useTranslation } from "react-i18next";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useRevalidator } from "react-router";
 
 import { authenticate } from "~/shopify.server";
@@ -132,7 +132,27 @@ export default function App() {
 }
 
 export function ErrorBoundary() {
-  return boundary.error(useRouteError());
+  const error = useRouteError();
+
+  if (error instanceof Response && error.status === 401) {
+    return <SessionExpiredRedirect />;
+  }
+
+  return boundary.error(error);
+}
+
+function SessionExpiredRedirect() {
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("id_token");
+    url.searchParams.set(
+      "shopify-reload",
+      `${window.location.origin}${url.pathname}?${url.searchParams.toString()}`
+    );
+    url.pathname = "/auth/session-token";
+    window.location.href = url.toString();
+  }, []);
+  return null;
 }
 
 export const headers: HeadersFunction = (headersArgs) => {
