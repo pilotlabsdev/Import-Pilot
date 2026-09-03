@@ -166,7 +166,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         console.log(`[Webhook] PRODUCT_DELETE: ${deleted.count} mapping(s) eliminados para ${deletedId}`);
       }
 
-      // Also clean up DuplicateLog records referencing this product's EAN
+      // Clean up DuplicateLog records referencing this product's EAN
       if (mappingToDelete?.ean) {
         const dupDeleted = await prisma.duplicateLog.deleteMany({
           where: { shopDomain: shop, ean: mappingToDelete.ean },
@@ -174,6 +174,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         if (dupDeleted.count > 0) {
           console.log(`[Webhook] PRODUCT_DELETE: ${dupDeleted.count} duplicate log(s) eliminados para EAN ${mappingToDelete.ean}`);
         }
+      }
+
+      // Also clean up "EXTERNAL" DuplicateLogs where supplierA_title is the deleted product ID
+      const extDupDeleted = await prisma.duplicateLog.deleteMany({
+        where: {
+          shopDomain: shop,
+          supplierA_id: "EXTERNAL",
+          supplierA_title: deletedId,
+        },
+      });
+      if (extDupDeleted.count > 0) {
+        console.log(`[Webhook] PRODUCT_DELETE: ${extDupDeleted.count} external duplicate log(s) eliminados para ${deletedId}`);
       }
       break;
     }
