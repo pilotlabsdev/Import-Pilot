@@ -80,9 +80,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
 
       // Delete from bucket or local disk
-      if (isBucketKey(config.localFilePath || "")) {
-        // Delete specific file by key, or fall back to active file
-        const keyToDelete = fileKey || config.localFilePath!;
+      // Check fileKey first (always present for bucket files), fallback to config.localFilePath
+      const keyToDelete = fileKey || config.localFilePath || "";
+      if (isBucketKey(keyToDelete)) {
         await deleteFromStorage(keyToDelete);
         // If deleting the active file, clear localFilePath
         if (keyToDelete === config.localFilePath) {
