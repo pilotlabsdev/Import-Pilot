@@ -2089,6 +2089,7 @@ export async function reconcileStaleBulkJobs(): Promise<void> {
     } catch (error: any) {
       const msg = error?.message || "";
       const isAuth = msg.includes("Token inválido") || msg.includes("Session not found") || msg.includes("Unauthorized") || msg.includes("No se pudo crear admin client");
+      const isMissingFiles = msg.includes("ENOENT");
       console.error(
         `[Bulk] Error reanudando job ${job.id} (fase ${job.phase}):`,
         msg || error
@@ -2096,6 +2097,9 @@ export async function reconcileStaleBulkJobs(): Promise<void> {
       if (isAuth) {
         console.error(`[Bulk] Auth error in reconcile → failing job ${job.id.slice(0,8)}: ${msg}`);
         await failJob(job, `Token inválido: ${msg}. Reinstala la app para obtener un nuevo token.`);
+      } else if (isMissingFiles) {
+        console.error(`[Bulk] Missing files (ephemeral filesystem?) → failing job ${job.id.slice(0,8)}`);
+        await failJob(job, `Archivos de importación perdidos (redeploy). La importación debe reiniciarse.`);
       }
       // Non-auth errors: log but continue to next reconcile cycle
     }
