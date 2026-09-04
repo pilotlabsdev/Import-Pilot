@@ -391,6 +391,7 @@ interface MetaLine {
   inventoryItemId?: string;
   priceChanged?: boolean;
   stockChanged?: boolean;
+  costChanged?: boolean;
   priceApplied?: boolean;
   stockApplied?: boolean;
   skipPrice?: boolean;
@@ -1122,8 +1123,9 @@ async function prepareAndLaunch(
 
       // With productSet, price and stock are always sent in the mutation.
       // Track as "applied" whenever the option is selected (productSet handles idempotency).
-      const priceChanged = effectiveOpts.has("price");
-      const stockChanged = effectiveOpts.has("stock") && stockQty >= 0;
+      // Compare against previous values to detect actual changes.
+      const priceChanged = effectiveOpts.has("price") && (lastPrice === null || lastPrice !== prices.regularPrice);
+      const stockChanged = effectiveOpts.has("stock") && stockQty >= 0 && (lastQty === null || lastQty !== stockQty);
       const costChanged =
         costPrice > 0 && !!match.inventoryItemId && Math.abs((mapping?.lastCost ?? 0) - costPrice) > 0.001;
 
@@ -1134,8 +1136,9 @@ async function prepareAndLaunch(
       meta.inventoryItemId = match.inventoryItemId;
       meta.priceChanged = priceChanged;
       meta.stockChanged = stockChanged;
-      meta.priceApplied = priceChanged;
-      meta.stockApplied = stockChanged;
+      meta.costChanged = costChanged;
+      meta.priceApplied = effectiveOpts.has("price");
+      meta.stockApplied = effectiveOpts.has("stock") && stockQty >= 0;
       meta.skipPrice = excludedFields?.includes("price") || false;
       meta.skipStock = excludedFields?.includes("stock") || false;
       meta.prevPrice = lastPrice;
@@ -1305,6 +1308,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
 
   let createdCount = 0;
   let updatedCount = 0;
+  let unchangedCount = 0;
   let priceChanges = 0;
   let stockChanges = 0;
   let opErrors = 0;
@@ -1441,9 +1445,13 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
         data: { postProcessStatus: "complete", postProcessError: null },
       }).catch(() => {});
     } else {
-      updatedCount++;
-      if (meta.priceChanged) priceChanges++;
-      if (meta.stockChanged) stockChanges++;
+      if (meta.priceChanged || meta.stockChanged || meta.costChanged) {
+        updatedCount++;
+        if (meta.priceChanged) priceChanges++;
+        if (meta.stockChanged) stockChanges++;
+      } else {
+        unchangedCount++;
+      }
     }
   }
 
@@ -1460,6 +1468,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       mutationOpsDone: { increment: 1 },
       createCount: { increment: op.kind === "create" ? createdCount : 0 },
       updateCount: { increment: op.kind === "update" ? updatedCount : 0 },
+      unchangedCount: { increment: op.kind === "update" ? unchangedCount : 0 },
       priceChanges: { increment: priceChanges },
       stockChanges: { increment: stockChanges },
       errorCount: { increment: opErrors },

@@ -477,6 +477,7 @@ export async function getQueueStatus(shopDomain: string): Promise<{
         const processed = (log.created || 0) + (log.updated || 0) + (log.unchanged || 0) + (log.excludedCount || 0);
         const errorCount = log.errors ? (JSON.parse(log.errors) as any[]).length : 0;
         // For bulk: use BulkJob counts (more accurate than ImportLog during processing)
+        // Fall back to ImportLog when BulkJob counters are still 0 (before first webhook)
         const total = bulkJob.totalCount || log.totalProducts || 0;
         const done = (bulkJob.createCount || 0) + (bulkJob.updateCount || 0) + (bulkJob.unchangedCount || 0) + (bulkJob.excludedCount || 0);
         progress = {
@@ -485,9 +486,9 @@ export async function getQueueStatus(shopDomain: string): Promise<{
           lastSku: log.lastSku || "",
           status: log.status,
           errors: errorCount,
-          created: bulkJob.createCount || 0,
-          updated: bulkJob.updateCount || 0,
-          unchanged: bulkJob.unchangedCount || 0,
+          created: bulkJob.createCount || log.created || 0,
+          updated: bulkJob.updateCount || log.updated || 0,
+          unchanged: bulkJob.unchangedCount || log.unchanged || 0,
           phase: bulkJob.phase,
         };
       }
