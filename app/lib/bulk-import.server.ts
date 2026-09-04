@@ -1165,7 +1165,8 @@ async function prepareAndLaunch(
         locationId!,
         config.defaultTags || undefined,
         categoryTags || undefined,
-        shopifyProductType
+        shopifyProductType,
+        config.productStatus || undefined
       );
       meta.images = inputObj.files?.map((f: any) => f.originalSource) || [];
       meta.replaceMappingId = priorityReplaceMappingId;

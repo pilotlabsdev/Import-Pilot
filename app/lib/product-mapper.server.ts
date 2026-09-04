@@ -20,6 +20,7 @@ export interface ProductSetInput {
   descriptionHtml?: string;
   productType?: string;
   vendor?: string;
+  status?: string;
   tags?: string[];
   metafields?: Array<{
     namespace: string;
@@ -289,7 +290,8 @@ export function mapCsvRowToProductSet(
   locationId: string,
   defaultTags?: string,
   categoryTags?: string,
-  shopifyProductType?: string | null
+  shopifyProductType?: string | null,
+  productStatus?: string
 ): ProductSetInput {
   const name = getField(row, columnMaps, "title") || "Sin nombre";
   const description = getField(row, columnMaps, "description");
@@ -344,6 +346,7 @@ export function mapCsvRowToProductSet(
     descriptionHtml: description,
     productType: shopifyProductType || category,
     vendor: brand,
+    status: productStatus || "DRAFT",
     tags,
     productOptions: [{ name: "Title", values: [{ name: "Default Title" }] }],
     metafields,
