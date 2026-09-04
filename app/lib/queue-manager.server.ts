@@ -647,7 +647,7 @@ export async function getQueueItemProgress(itemId: string): Promise<{
   // For bulk mode, also fetch BulkJob for real-time progress
   const bulkJob = item.importMode === "bulk"
     ? await prisma.bulkJob.findFirst({
-        where: { logId: log.status === "running" ? item.logId : "", phase: { in: ["lookup", "mutations", "finalizing"] } },
+        where: { logId: item.logId },
         select: {
           phase: true,
           totalMutationOps: true,
@@ -658,6 +658,7 @@ export async function getQueueItemProgress(itemId: string): Promise<{
           unchangedCount: true,
           excludedCount: true,
         },
+        orderBy: { createdAt: "desc" },
       }).catch(() => null)
     : null;
 
