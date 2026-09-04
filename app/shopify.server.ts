@@ -125,7 +125,7 @@ const shopify = shopifyApp({
           try {
             await admin.graphql(`
               mutation webhookSubscriptionCreate($topic: WebhookSubscriptionTopic!, $callbackUrl: URL!) {
-                webhookSubscriptionCreate(topic: $topic, callbackUrl: $callbackUrl, format: JSON) {
+                webhookSubscriptionCreate(topic: $topic, webhookSubscription: { callbackUrl: $callbackUrl, format: JSON }) {
                   webhookSubscription { id }
                   userErrors { field message }
                 }

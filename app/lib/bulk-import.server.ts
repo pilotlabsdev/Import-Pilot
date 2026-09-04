@@ -22,7 +22,7 @@ import shopify from "~/shopify.server";
 
 /**
  * Creates a fresh GraphQL client that always reads the current access token from DB.
- * This avoids stale token issues when the token is refreshed mid-import.
+ * Returns a Response-like object compatible with Shopify's admin.graphql() interface.
  */
 export async function getFreshAdminClient(shopDomain: string) {
   const session = await prisma.session.findFirst({
@@ -55,7 +55,7 @@ export async function getFreshAdminClient(shopDomain: string) {
         throw new Error(`GraphQL request failed: ${res.status} ${text}`);
       }
 
-      return res.json();
+      return res; // Raw fetch Response — callers use res.json()
     },
   };
 }
