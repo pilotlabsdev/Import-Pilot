@@ -172,10 +172,88 @@ async function checkBulkOperations() {
   }
 }
 
+async function startupCleanup(): Promise<void> {
+  console.log("[Scheduler] Running startup cleanup...");
+
+  // 1. Fail stuck BulkJobs (from previous process killed by SIGTERM/OOM)
+  const stuckBulkJobs = await prisma.bulkJob.findMany({
+    where: { phase: { in: ["lookup", "mutations", "finalizing"] } },
+    select: { id: true, configId: true, shopDomain: true, logId: true, phase: true },
+  });
+
+  for (const job of stuckBulkJobs) {
+    console.log(`[Scheduler] Startup: failing stuck BulkJob ${job.id.slice(0,8)} (phase=${job.phase})`);
+    await prisma.bulkJob.update({
+      where: { id: job.id },
+      data: { phase: "failed" },
+    }).catch(() => {});
+
+    // Fail associated ImportLog
+    if (job.logId) {
+      await prisma.importLog.update({
+        where: { id: job.logId },
+        data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "systemError.process_restarted", lineNumber: 0 }]) },
+      }).catch(() => {});
+    }
+
+    // Release associated queue items
+    await prisma.importQueue.updateMany({
+      where: { configId: job.configId, status: "running" },
+      data: { status: "failed", finishedAt: new Date() },
+    }).catch(() => {});
+  }
+
+  // 2. Fail stuck ImportLogs (status "running" from previous process)
+  const stuckLogs = await prisma.importLog.findMany({
+    where: { status: "running" },
+    select: { id: true, configId: true },
+  });
+  for (const log of stuckLogs) {
+    console.log(`[Scheduler] Startup: failing stuck ImportLog ${log.id.slice(0,8)}`);
+    await prisma.importLog.update({
+      where: { id: log.id },
+      data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "systemError.process_restarted", lineNumber: 0 }]) },
+    }).catch(() => {});
+    await prisma.importQueue.updateMany({
+      where: { configId: log.configId, logId: log.id, status: "running" },
+      data: { status: "failed", finishedAt: new Date() },
+    }).catch(() => {});
+  }
+
+  // 3. Fail stuck queue items (status "running" with no matching active process)
+  const stuckQueue = await prisma.importQueue.findMany({
+    where: { status: "running" },
+    select: { id: true, configId: true, shopDomain: true },
+  });
+  for (const item of stuckQueue) {
+    console.log(`[Scheduler] Startup: failing stuck queue item ${item.id.slice(0,8)}`);
+    await prisma.importQueue.update({
+      where: { id: item.id },
+      data: { status: "failed", finishedAt: new Date() },
+    }).catch(() => {});
+  }
+
+  // 4. Process any remaining queued items
+  const shops = new Set(stuckBulkJobs.map((j) => j.shopDomain).concat(stuckQueue.map((q) => q.shopDomain)));
+  for (const shop of shops) {
+    void processNext(shop).catch(() => {});
+  }
+
+  const totalFreed = stuckBulkJobs.length + stuckLogs.length + stuckQueue.length;
+  if (totalFreed > 0) {
+    console.log(`[Scheduler] Startup cleanup: freed ${stuckBulkJobs.length} BulkJobs, ${stuckLogs.length} ImportLogs, ${stuckQueue.length} queue items`);
+  }
+}
+
 export function startScheduler() {
   if (started) return;
   started = true;
   console.log("[Scheduler] Iniciando scheduler de importaciones...");
+
+  // Startup cleanup: fail stuck BulkJobs and queue items from previous process (e.g. SIGTERM)
+  void startupCleanup().catch((error: any) =>
+    console.error("[Scheduler] Error en startup cleanup:", error)
+  );
 
   setInterval(() => {
     void reconcileStaleBulkJobs().catch((error: any) =>

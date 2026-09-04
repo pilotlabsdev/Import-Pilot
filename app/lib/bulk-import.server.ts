@@ -1827,15 +1827,15 @@ export async function reconcileStaleBulkJobs(): Promise<void> {
       continue;
     }
 
-    // If mutations phase with no progress (mutationOpsDone = 0) after 6 hours → something is seriously wrong
-    if (job.phase === "mutations" && job.manifestPath && (job.mutationOpsDone || 0) === 0 && ageMs > 6 * 60 * 60 * 1000) {
+    // If mutations phase with no progress (mutationOpsDone = 0) after 30 minutes → something is seriously wrong
+    if (job.phase === "mutations" && job.manifestPath && (job.mutationOpsDone || 0) === 0 && ageMs > 30 * 60 * 1000) {
       console.error(`[Bulk] Job ${job.id.slice(0,8)} stuck in mutations phase with 0 ops done after ${Math.round(ageMs/60000)}min → failing`);
       await failJob(job, "systemError.mutations_no_progress");
       continue;
     }
 
-    // Any job older than 1 hour → fail it
-    if (ageMs > 60 * 60 * 1000) {
+    // Any job older than 30 minutes → fail it
+    if (ageMs > 30 * 60 * 1000) {
       const minutes = Math.round(ageMs / 60000);
       console.error(`[Bulk] Job ${job.id.slice(0,8)} alive for ${minutes}min → failing (max lifetime exceeded)`);
       await failJob(job, `Job excedió tiempo máximo de vida (${minutes}min).`);
