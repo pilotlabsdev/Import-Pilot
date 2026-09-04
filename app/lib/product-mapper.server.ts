@@ -225,11 +225,28 @@ export function mapCsvRowToBulkUpdateInput(
   prices: PriceResult,
   collections: string[],
   variantId: string,
-  updateOptions?: Set<UpdateOption>
+  updateOptions?: Set<UpdateOption>,
+  defaultTags?: string,
+  categoryTags?: string
 ): BulkProductInput {
   const opts = updateOptions ?? new Set<UpdateOption>(UPDATE_OPTIONS);
   const base = buildProductBase(row, columnMaps, prices);
   const ean = getField(row, columnMaps, "ean");
+
+  // Build tags from defaultTags/categoryTags (buildProductBase always returns [])
+  const tags: string[] = [];
+  if (defaultTags) {
+    for (const t of defaultTags.split(",")) {
+      const trimmed = t.trim();
+      if (trimmed) tags.push(trimmed);
+    }
+  }
+  if (categoryTags) {
+    for (const t of categoryTags.split(",")) {
+      const trimmed = t.trim();
+      if (trimmed && !tags.includes(trimmed)) tags.push(trimmed);
+    }
+  }
 
   const input: BulkProductInput = {};
 
@@ -240,7 +257,7 @@ export function mapCsvRowToBulkUpdateInput(
   }
   if (opts.has("productType")) input.productType = base.productType;
   if (opts.has("vendor")) input.vendor = base.vendor;
-  if (opts.has("tags") && base.tags && base.tags.length > 0) input.tags = base.tags;
+  if (opts.has("tags") && tags.length > 0) input.tags = tags;
   if (opts.has("metafields")) {
     input.metafields = base.metafields;
   } else {
@@ -371,7 +388,9 @@ export function mapCsvRowToProductSetUpdate(
   prices: PriceResult,
   collections: string[],
   locationId: string,
-  updateOptions?: Set<UpdateOption>
+  updateOptions?: Set<UpdateOption>,
+  defaultTags?: string,
+  categoryTags?: string
 ): ProductSetInput {
   const opts = updateOptions ?? new Set<UpdateOption>(UPDATE_OPTIONS);
   const name = getField(row, columnMaps, "title") || "Sin nombre";
@@ -388,12 +407,26 @@ export function mapCsvRowToProductSetUpdate(
   const stockQty = quantity;
   const costNum = costo ? parseFloat(costo.replace(",", ".")) : 0;
 
+  const tags: string[] = [];
+  if (defaultTags) {
+    for (const t of defaultTags.split(",")) {
+      const trimmed = t.trim();
+      if (trimmed) tags.push(trimmed);
+    }
+  }
+  if (categoryTags) {
+    for (const t of categoryTags.split(",")) {
+      const trimmed = t.trim();
+      if (trimmed && !tags.includes(trimmed)) tags.push(trimmed);
+    }
+  }
+
   const input: ProductSetInput = {
     title: name,
     descriptionHtml: description,
     productType: category,
     vendor: brand,
-    tags: [],
+    tags,
     metafields: [],
     seo: { title: name, description: stripHtml(shortDescription) || name },
     files: [],

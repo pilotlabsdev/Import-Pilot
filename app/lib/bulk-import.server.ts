@@ -1151,7 +1151,9 @@ async function prepareAndLaunch(
         prices,
         collectionIds,
         locationId!,
-        effectiveOpts
+        effectiveOpts,
+        config.defaultTags || undefined,
+        categoryTags || undefined
       );
       await pushUpdate(inputObj, meta, { id: match.productId });
     } else {
