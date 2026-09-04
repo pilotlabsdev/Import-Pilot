@@ -345,6 +345,7 @@ export function mapCsvRowToProductSet(
     productType: shopifyProductType || category,
     vendor: brand,
     tags,
+    productOptions: [{ name: "Title", values: [{ name: "Default Title" }] }],
     metafields,
     seo: {
       title: name,
@@ -427,6 +428,7 @@ export function mapCsvRowToProductSetUpdate(
     productType: category,
     vendor: brand,
     tags,
+    productOptions: [{ name: "Title", values: [{ name: "Default Title" }] }],
     metafields: [],
     seo: { title: name, description: stripHtml(shortDescription) || name },
     files: [],
