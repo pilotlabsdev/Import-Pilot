@@ -1111,7 +1111,6 @@ async function prepareAndLaunch(
 
       const lastPrice = mapping?.lastPrice ?? null;
       const lastQty = mapping?.lastQuantity ?? null;
-      const hasVariant = !!match.variantId && !!match.inventoryItemId;
 
       const excludedFields = getExcludedFields(sku, fieldRules);
       if (excludedFields) {
@@ -1121,10 +1120,10 @@ async function prepareAndLaunch(
         ? new Set([...updateOpts].filter((o) => !excludedFields.includes(o)))
         : updateOpts;
 
-      const priceChanged =
-        effectiveOpts.has("price") && (lastPrice === null || lastPrice !== prices.regularPrice);
-      const stockChanged =
-        effectiveOpts.has("stock") && hasVariant && (lastQty === null || lastQty !== stockQty);
+      // With productSet, price and stock are always sent in the mutation.
+      // Track as "applied" whenever the option is selected (productSet handles idempotency).
+      const priceChanged = effectiveOpts.has("price");
+      const stockChanged = effectiveOpts.has("stock") && stockQty >= 0;
       const costChanged =
         costPrice > 0 && !!match.inventoryItemId && Math.abs((mapping?.lastCost ?? 0) - costPrice) > 0.001;
 
