@@ -236,6 +236,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const filterSkus = url.searchParams.get("filterSkus") || "";
     const filterCategories = url.searchParams.get("filterCategories") || "";
     const configIdParam = url.searchParams.get("configId") || "";
+    const forceRefresh = url.searchParams.get("forceRefresh") === "1";
 
     if (!shopDomain) return data({ preview: [], totalRows: 0, filteredTotal: 0, stats: { creates: 0, updates: 0, unchanged: 0, excluded: 0 }, page, perPage, error: "shop required" });
 
@@ -305,9 +306,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const pageItems: any[] = [];
 
     const streamStart = Date.now();
-    const { rows: csvRows } = await getCachedCsvRows(config.id, effectiveUrl, config.csvDelimiter);
+    const { rows: csvRows } = await getCachedCsvRows(config.id, effectiveUrl, config.csvDelimiter, forceRefresh);
     const streamTime = ((Date.now() - streamStart) / 1000).toFixed(1);
-    console.log(`[Preview] Got ${csvRows.length} cached rows in ${streamTime}s`);
+    console.log(`[Preview] Got ${csvRows.length} cached rows in ${streamTime}s (forceRefresh=${forceRefresh})`);
 
     let filteredCount = 0;
     const allFilteredSkus = new Set<string>();

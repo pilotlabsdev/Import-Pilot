@@ -236,29 +236,47 @@ export async function getCachedHeaders(
 export async function getCachedCsvRows(
   configId: string,
   url: string,
-  delimiter: string
+  delimiter: string,
+  forceRefresh: boolean = false
 ): Promise<{ rows: Array<Record<string, string | undefined>>; headers: string[] }> {
   const modTime = await getFileModTime(url);
   const key = makeCacheKey(configId, url, delimiter) + `|rows|${modTime}`;
 
-  const cached = rowCache.get(key);
-  if (cached && Date.now() - cached.createdAt < TTL_MS) {
-    console.log(`[CsvCache] Rows hit: ${cached.rows.length} rows for ${configId}`);
-    return { rows: cached.rows, headers: cached.headers };
+  if (!forceRefresh) {
+    const cached = rowCache.get(key);
+    if (cached && Date.now() - cached.createdAt < TTL_MS) {
+      console.log(`[CsvCache] Rows hit: ${cached.rows.length} rows for ${configId}`);
+      return { rows: cached.rows, headers: cached.headers };
+    }
+  } else {
+    rowCache.delete(key);
+    console.log(`[CsvCache] Force refresh: cache cleared for ${configId}`);
   }
 
   console.log(`[CsvCache] Rows miss: parsing ${url}`);
   const startTime = Date.now();
   const rows: Array<Record<string, string | undefined>> = [];
   let headers: string[] = [];
+  let streamError: string | null = null;
 
-  for await (const item of streamFile(url, delimiter)) {
-    if (headers.length === 0) headers = item.headers;
-    rows.push(item.row);
+  try {
+    for await (const item of streamFile(url, delimiter)) {
+      if (headers.length === 0) headers = item.headers;
+      rows.push(item.row);
+    }
+  } catch (e: any) {
+    streamError = e?.message || String(e);
+    console.error(`[CsvCache] Stream error after ${rows.length} rows: ${streamError}`);
   }
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-  console.log(`[CsvCache] Parsed ${rows.length} rows in ${elapsed}s`);
+  console.log(`[CsvCache] Parsed ${rows.length} rows in ${elapsed}s (error=${streamError || "none"})`);
+
+  // Don't cache if stream errored with partial data — next request will retry
+  if (streamError && rows.length > 0) {
+    console.warn(`[CsvCache] NOT caching ${rows.length} partial rows due to stream error — will retry next request`);
+    return { rows, headers };
+  }
 
   // Evict oldest row cache entries
   if (rowCache.size >= MAX_ROW_ENTRIES) {

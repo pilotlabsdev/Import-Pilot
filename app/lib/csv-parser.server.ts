@@ -133,7 +133,12 @@ export async function* streamCSV(
 
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          // Flush remaining bytes from the decoder
+          const remaining = decoder.decode();
+          if (remaining) buffer += remaining;
+          break;
+        }
 
         buffer += decoder.decode(value, { stream: true });
 
@@ -213,6 +218,7 @@ export async function* streamCSV(
         }
       }
 
+      console.log(`[streamCSV] Stream complete: ${lineNumber} lines processed (${lineNumber > 1 ? lineNumber - 1 : 0} data rows)`);
       return; // Success, exit retry loop
     } catch (error: any) {
       lastError = error;
