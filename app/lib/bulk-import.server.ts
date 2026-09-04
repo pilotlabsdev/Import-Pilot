@@ -1128,17 +1128,8 @@ async function prepareAndLaunch(
       const costChanged =
         costPrice > 0 && !!match.inventoryItemId && Math.abs((mapping?.lastCost ?? 0) - costPrice) > 0.001;
 
-      if (updateDebugLogged < 1) {
-        updateDebugLogged++;
-        console.log(`[Bulk DEBUG] First update SKU=${sku}: inventoryItemId="${match.inventoryItemId}", costPrice=${costPrice}, lastCost=${mapping?.lastCost}, lastPrice=${lastPrice}, csvPrice=${prices.regularPrice}, lastQty=${lastQty}, csvQty=${stockQty}, costChanged=${costChanged}, priceChanged=${priceChanged}, stockChanged=${stockChanged}, hasVariant=${hasVariant}`);
-      }
-
-      if (!priceChanged && !stockChanged && !costChanged) {
-        matchedUnchangedCount++;
-        unchangedCount++;
-        continue;
-      }
-
+      // With productSet we always send the product — the mutation is idempotent
+      // and the user may have selected non-price/stock fields (name, description, etc.)
       meta.productId = match.productId;
       meta.variantId = match.variantId;
       meta.inventoryItemId = match.inventoryItemId;
