@@ -1064,7 +1064,6 @@ async function prepareAndLaunch(
           continue;
         }
         if (!anyMapping) {
-          const locId = locationId || "";
           const adopted = await prisma.productMapping.create({
             data: {
               shopDomain: job.shopDomain,
@@ -1076,10 +1075,28 @@ async function prepareAndLaunch(
               ean: ean || null,
               lastPrice: null,
               lastQuantity: null,
+              postProcessStatus: "pending",
             },
           }).catch(() => null);
           if (adopted) {
             selfEanMappings.add(ean);
+            const adoptPubIds: string[] = [];
+            if (config?.publicationIds) { try { adoptPubIds.push(...JSON.parse(config.publicationIds)); } catch {} }
+            if (adoptPubIds.length === 0 && config?.marketIds) { try { adoptPubIds.push(...JSON.parse(config.marketIds)); } catch {} }
+            if (adoptPubIds.length > 0 && matchInfo?.productId) {
+              try {
+                await gql(admin,
+                  `mutation PublishablePublish($id: ID!, $input: [PublicationInput!]!) { publishablePublish(id: $id, input: $input) { userErrors { field message } } }`,
+                  { variables: { id: matchInfo.productId, input: adoptPubIds.map((pid: string) => ({ publicationId: pid })) } },
+                  job.shopDomain
+                );
+                await prisma.productMapping.update({ where: { id: adopted.id }, data: { postProcessStatus: "complete" } }).catch(() => {});
+              } catch (e: any) {
+                console.error(`[Bulk] SKU ${sku}: orphan adopt channels failed: ${e?.message}`);
+              }
+            } else {
+              await prisma.productMapping.update({ where: { id: adopted.id }, data: { postProcessStatus: "complete" } }).catch(() => {});
+            }
           }
         }
       }
