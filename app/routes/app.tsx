@@ -132,27 +132,7 @@ export default function App() {
 }
 
 export function ErrorBoundary() {
-  const error = useRouteError();
-
-  if (error instanceof Response && error.status === 401) {
-    return <SessionExpiredRedirect />;
-  }
-
-  return boundary.error(error);
-}
-
-function SessionExpiredRedirect() {
-  useEffect(() => {
-    const url = new URL(window.location.href);
-    url.searchParams.delete("id_token");
-    url.searchParams.set(
-      "shopify-reload",
-      `${window.location.origin}${url.pathname}?${url.searchParams.toString()}`
-    );
-    url.pathname = "/auth/session-token";
-    window.location.href = url.toString();
-  }, []);
-  return null;
+  return boundary.error(useRouteError());
 }
 
 export const headers: HeadersFunction = (headersArgs) => {
