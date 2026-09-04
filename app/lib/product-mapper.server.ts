@@ -357,7 +357,7 @@ export function mapCsvRowToProductSet(
     })),
     variants: [
       {
-        optionValues: [],
+        optionValues: [{ optionName: "Title", name: "Default Title" }],
         sku: sku || undefined,
         price: String(prices.regularPrice),
         ...(prices.compareAtPrice
