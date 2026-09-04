@@ -1053,11 +1053,34 @@ async function prepareAndLaunch(
           continue;
         }
       } else if (maps.byBarcode.has(ean) && !selfEanMappings.has(ean)) {
-        if (duplicatePolicy === "skip_existing" || duplicatePolicy === "priority") {
-          const matchInfo = maps.byBarcode.get(ean);
+        const matchInfo = maps.byBarcode.get(ean);
+        const anyMapping = await prisma.productMapping.findFirst({
+          where: { shopDomain: job.shopDomain, shopifyProductId: matchInfo?.productId || "" },
+          select: { id: true, configId: true },
+        }).catch(() => null);
+        if (anyMapping && anyMapping.configId !== config.id && (duplicatePolicy === "skip_existing" || duplicatePolicy === "priority")) {
           await logExternalDuplicate(job.shopDomain, ean, matchInfo?.productId || "", sku, config.id, config.name || "Proveedor");
           duplicateSkippedCount++;
           continue;
+        }
+        if (!anyMapping) {
+          const locId = locationId || "";
+          const adopted = await prisma.productMapping.create({
+            data: {
+              shopDomain: job.shopDomain,
+              configId: config.id,
+              supplierSku: sku,
+              shopifyProductId: matchInfo?.productId || "",
+              shopifyVariantId: matchInfo?.variantId || "",
+              shopifyInventoryItemId: matchInfo?.inventoryItemId || "",
+              ean: ean || null,
+              lastPrice: null,
+              lastQuantity: null,
+            },
+          }).catch(() => null);
+          if (adopted) {
+            selfEanMappings.add(ean);
+          }
         }
       }
     }
