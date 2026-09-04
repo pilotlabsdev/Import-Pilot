@@ -1622,6 +1622,18 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
       data: { phase: "done" },
     });
 
+    // Mark the queue item as completed so processNext can launch the next queued import
+    await prisma.importQueue.updateMany({
+      where: { configId: job.configId, logId: log.id, status: "running" },
+      data: { status: "completed", finishedAt: new Date() },
+    }).catch(() => {});
+
+    // Trigger processNext so the next queued import starts immediately
+    try {
+      const { processNext } = await import("./queue-manager.server");
+      await processNext(job.shopDomain);
+    } catch {}
+
     await sendNotification({
       shopDomain: job.shopDomain,
       status,
@@ -1673,6 +1685,16 @@ async function failJob(job: any, message: string): Promise<void> {
     errors: [{ sku: "SYSTEM", error: message, lineNumber: 0 }],
     duration: "0s",
   });
+
+  // Release queue item so the next queued import can start
+  await prisma.importQueue.updateMany({
+    where: { configId: job.configId, logId: job.logId, status: "running" },
+    data: { status: "failed", finishedAt: new Date() },
+  }).catch(() => {});
+  try {
+    const { processNext } = await import("./queue-manager.server");
+    await processNext(job.shopDomain);
+  } catch {}
 }
 
 // Limpieza de jobs stuck (sin lookupOpId o manifestPath) que no se resolverán solos

@@ -207,9 +207,11 @@ async function processQueueItem(
         return;
       }
 
+      // For bulk: keep queue item as "running" until BulkJob finishes (webhook/reconcile → finalizeBulkImport marks it completed)
+      // Store the bulkJobId so we can link them
       await prisma.importQueue.update({
         where: { id: item.id },
-        data: { status: "completed", finishedAt: new Date(), logId: bulkResult.logId },
+        data: { logId: bulkResult.logId },
       });
 
       const duration = `${Math.round((Date.now() - startTime) / 1000)}s`;
