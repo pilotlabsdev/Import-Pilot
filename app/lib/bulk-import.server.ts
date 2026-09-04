@@ -1806,41 +1806,40 @@ export async function reconcileStaleBulkJobs(): Promise<void> {
     const ageMs = Date.now() - new Date(job.updatedAt).getTime();
     if (ageMs < 60_000) continue;
 
-    // If lookup phase has no lookupOpId after 5 minutes, the lookup never completed → fail it
-    if (job.phase === "lookup" && !job.lookupOpId && ageMs > 5 * 60 * 1000) {
+    // LOOKUP PHASE: timeout basado en actividad
+    // No lookupOpId después de 15 min → la query nunca se lanzó o falló silenciosamente
+    if (job.phase === "lookup" && !job.lookupOpId && ageMs > 15 * 60 * 1000) {
       console.error(`[Bulk] Job ${job.id.slice(0,8)} stuck in lookup phase with no lookupOpId after ${Math.round(ageMs/60000)}min → failing`);
       await failJob(job, "systemError.lookup_never_completed");
       continue;
     }
 
-    // If lookup phase has lookupOpId but no mutations after 15 minutes → webhook never arrived
-    if (job.phase === "lookup" && job.lookupOpId && ageMs > 15 * 60 * 1000) {
-      console.error(`[Bulk] Job ${job.id.slice(0,8)} stuck in lookup phase with lookupOpId=${job.lookupOpId} after ${Math.round(ageMs/60000)}min (webhook never arrived) → failing`);
+    // Tiene lookupOpId pero no pasó a mutations después de 60 min → webhook nunca llegó
+    // (catalogos grandes pueden tardar 30+ min en la query de Shopify)
+    if (job.phase === "lookup" && job.lookupOpId && ageMs > 60 * 60 * 1000) {
+      console.error(`[Bulk] Job ${job.id.slice(0,8)} stuck in lookup phase with lookupOpId=${job.lookupOpId} after ${Math.round(ageMs/60000)}min → failing`);
       await failJob(job, `systemError.webhook_never_arrived`);
       continue;
     }
 
-    // If mutations phase has no manifestPath after 10 minutes → fail it
-    if (job.phase === "mutations" && !job.manifestPath && ageMs > 10 * 60 * 1000) {
+    // MUTATIONS PHASE: timeout basado en actividad
+    // No manifest después de 15 min → la preparación falló
+    if (job.phase === "mutations" && !job.manifestPath && ageMs > 15 * 60 * 1000) {
       console.error(`[Bulk] Job ${job.id.slice(0,8)} stuck in mutations phase with no manifestPath after ${Math.round(ageMs/60000)}min → failing`);
       await failJob(job, "systemError.mutations_no_manifest");
       continue;
     }
 
-    // If mutations phase with no progress (mutationOpsDone = 0) after 30 minutes → something is seriously wrong
-    if (job.phase === "mutations" && job.manifestPath && (job.mutationOpsDone || 0) === 0 && ageMs > 30 * 60 * 1000) {
+    // 0 ops completadas después de 45 min de inactividad → algo fue mal
+    // (updatedAt solo cambia cuando una op completa, así que si ageMs > 45min, no ha habido progreso)
+    if (job.phase === "mutations" && job.manifestPath && (job.mutationOpsDone || 0) === 0 && ageMs > 45 * 60 * 1000) {
       console.error(`[Bulk] Job ${job.id.slice(0,8)} stuck in mutations phase with 0 ops done after ${Math.round(ageMs/60000)}min → failing`);
       await failJob(job, "systemError.mutations_no_progress");
       continue;
     }
 
-    // Any job older than 30 minutes → fail it
-    if (ageMs > 30 * 60 * 1000) {
-      const minutes = Math.round(ageMs / 60000);
-      console.error(`[Bulk] Job ${job.id.slice(0,8)} alive for ${minutes}min → failing (max lifetime exceeded)`);
-      await failJob(job, `Job excedió tiempo máximo de vida (${minutes}min).`);
-      continue;
-    }
+    // NO HAY timeout de "vida máxima" — los imports grandes pueden durar horas.
+    // Siempre confiamos en los timeouts por actividad de cada fase.
 
     try {
       console.log(`[Bulk] Reconcile: resuming job ${job.id.slice(0,8)} (phase=${job.phase}, age=${Math.round(ageMs/1000)}s)`);
