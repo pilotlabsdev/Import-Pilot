@@ -1862,7 +1862,6 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
         inventoryItemId: q.inventoryItemId,
         locationId,
         quantity: q.quantity,
-        changeFromQuantity: null,
       }));
 
       try {
@@ -1879,6 +1878,7 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
               input: {
                 reason: "correction",
                 name: "available",
+                ignoreCompareQuantity: true,
                 quantities,
               },
               idempotencyKey: `bulk-inv-${job.id}-${i}`,
