@@ -1389,6 +1389,9 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
     if (isNewProduct) {
       createdCount++;
 
+      // TEST: inventoryBulkToggleActivation deshabilitado — productSet ya incluye inventoryQuantities
+      // Si el stock NO aparece bien en la tienda, descomentar este bloque:
+      /*
       if (variant?.inventoryItem?.id) {
         try {
           const locId = await getLocationId(admin, job.shopDomain, job.configId);
@@ -1419,6 +1422,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
           console.error(`[Bulk] SKU ${meta.sku}: error activando inventory en ubicacion: ${e?.message}`);
         }
       }
+      */
 
       const allPubIds: string[] = [];
       if (config?.publicationIds) {
