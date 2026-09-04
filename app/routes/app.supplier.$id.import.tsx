@@ -353,7 +353,7 @@ export default function ImportTab() {
                 : runAction.message || t("import.launchedMessage")}
               {runAction.queued && (
                 <div style={{ marginTop: "8px" }}>
-                  <Button url="/app/queue" size="slim">{t("import.viewQueue")}</Button>
+                  <Button size="slim" onClick={() => navigate("/app/queue")}>{t("import.viewQueue")}</Button>
                 </div>
               )}
             </Banner>

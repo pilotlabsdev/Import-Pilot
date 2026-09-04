@@ -110,11 +110,23 @@ export async function processNext(shopDomain: string): Promise<void> {
   if (queued.length === 0) return;
 
   for (const item of queued) {
-    // Check if this configId already has a running import
-    const hasRunning = await prisma.importQueue.findFirst({
+    // Check if this configId already has a running import (queue, bulk, or chunks)
+    const hasRunningInQueue = await prisma.importQueue.findFirst({
       where: { configId: item.configId, status: "running" },
     });
-    if (hasRunning) continue;
+    if (hasRunningInQueue) continue;
+
+    const hasActiveBulkJob = await prisma.bulkJob.findFirst({
+      where: { configId: item.configId, phase: { in: ["lookup", "mutations", "finalizing"] } },
+      select: { id: true },
+    }).catch(() => null);
+    if (hasActiveBulkJob) continue;
+
+    const hasRunningLog = await prisma.importLog.findFirst({
+      where: { configId: item.configId, status: "running" },
+      select: { id: true },
+    }).catch(() => null);
+    if (hasRunningLog) continue;
 
     // Check if this specific item was cancelled
     const stillQueued = await prisma.importQueue.findUnique({ where: { id: item.id } });
