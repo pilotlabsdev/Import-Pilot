@@ -378,6 +378,8 @@
   "queue.andMore": "…und {{count}} weitere",
   "queue.products": "Produkte",
   "queue.lastSku": "Letzte SKU:",
+  "queue.opsProgress": "Op {{done}}/{{total}}",
+  "queue.processedOf": "{{done}} von {{total}} Produkten",
   "queue.finalizingInventory": "Inventarisierung wird abgeschlossen…",
   "queue.number": "#",
 

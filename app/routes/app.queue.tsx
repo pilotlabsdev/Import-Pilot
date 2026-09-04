@@ -161,7 +161,11 @@ export default function QueuePage() {
                                 <Text as="span" variant="bodySm" tone="subdued">
                                   {progress.phase === "finalizing"
                                     ? t("queue.finalizingInventory")
-                                    : `${t("common.created")}: ${progress.created || 0} · ${t("common.updated")}: ${progress.updated || 0} · ${t("common.unchanged")}: ${progress.unchanged || 0}`
+                                    : progress.totalMutationOps > 0
+                                      ? progress.created > 0 || progress.updated > 0 || progress.unchanged > 0
+                                        ? `${t("common.created")}: ${progress.created || 0} · ${t("common.updated")}: ${progress.updated || 0} · ${t("common.unchanged")}: ${progress.unchanged || 0}`
+                                        : `${t("queue.opsProgress", { done: progress.mutationOpsDone, total: progress.totalMutationOps })} · ${t("queue.processedOf", { done: progress.processedProducts, total: progress.totalProducts })}${progress.excluded > 0 ? ` · ${t("common.excluded")}: ${progress.excluded}` : ""}`
+                                      : `${t("queue.processedOf", { done: progress.processedProducts, total: progress.totalProducts })}${progress.excluded > 0 ? ` · ${t("common.excluded")}: ${progress.excluded}` : ""}`
                                   }
                                 </Text>
                               ) : (

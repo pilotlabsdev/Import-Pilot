@@ -507,7 +507,10 @@ export async function getQueueStatus(shopDomain: string): Promise<{
           created: bulkJob.createCount || log.created || 0,
           updated: bulkJob.updateCount || log.updated || 0,
           unchanged: bulkJob.unchangedCount || log.unchanged || 0,
+          excluded: bulkJob.excludedCount || log.excludedCount || 0,
           phase: bulkJob.phase,
+          mutationOpsDone: bulkJob.mutationOpsDone || 0,
+          totalMutationOps: bulkJob.totalMutationOps || 0,
         };
       }
     }
