@@ -574,7 +574,7 @@ async function handleLookupFinished(job: any, admin: any, status: string): Promi
   if (claim.count === 0) return;
 
   if (status !== "completed") {
-    await failJob(job, `systemError.query_bad_status`);
+    await failJob(job, `La bulk query de productos existentes terminó con estado "${status}"`);
     return;
   }
 
