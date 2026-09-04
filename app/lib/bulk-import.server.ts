@@ -12,6 +12,8 @@ import { rateLimitedGraphql } from "./import-locks.server";
 import {
   mapCsvRowToBulkCreateInput,
   mapCsvRowToBulkUpdateInput,
+  mapCsvRowToProductSet,
+  mapCsvRowToProductSetUpdate,
   parseUpdateOptions,
   getField,
 } from "./product-mapper.server";
@@ -314,7 +316,12 @@ export async function cancelBulkImport(configId: string, shopDomain: string): Pr
   return { success: true, message: "Importación bulk cancelada" };
 }
 
-const CREATE_MUTATION = `mutation call($input: ProductInput!) { productCreate(input: $input) { product { id title variants { edges { node { id sku barcode inventoryItem { id } } } } } userErrors { field message } } }`;
+// --- productSet unified mutation (replaces productCreate + productUpdate + post-processing) ---
+const PRODUCT_SET_MUTATION = `mutation call($input: ProductSetInput!) { productSet(input: $input) { product { id title variants(first: 1) { edges { node { id sku barcode price compareAtPrice inventoryItem { id } } } } } userErrors { field message } } }`;
+
+// Legacy mutations kept for backward compatibility during reconcile of in-flight jobs
+const LEGACY_CREATE_MUTATION = `mutation call($input: ProductInput!) { productCreate(input: $input) { product { id title variants { edges { node { id sku barcode inventoryItem { id } } } } } userErrors { field message } } }`;
+const LEGACY_UPDATE_MUTATION = `mutation call($input: ProductInput!) { productUpdate(input: $input) { product { id variants { edges { node { id sku barcode inventoryItem { id } } } } } userErrors { field message } } }`;
 
 async function setVariantSkuViaRest(shopDomain: string, productId: string, variantId: string, sku: string): Promise<void> {
   const session = await prisma.session.findFirst({
@@ -342,7 +349,6 @@ async function setVariantSkuViaRest(shopDomain: string, productId: string, varia
   }
   console.log(`[Bulk] SKU ${sku}: set via REST PUT`);
 }
-const UPDATE_MUTATION = `mutation call($input: ProductInput!) { productUpdate(input: $input) { product { id variants { edges { node { id sku barcode inventoryItem { id } } } } } userErrors { field message } } }`;
 const LOOKUP_QUERY = `{
   products {
     edges {
@@ -1144,39 +1150,27 @@ async function prepareAndLaunch(
       meta.prevQty = lastQty;
       matchedUpdateCount++;
 
-      const inputObj: any = mapCsvRowToBulkUpdateInput(
+      const inputObj: any = mapCsvRowToProductSetUpdate(
         row,
         columnMaps,
         prices,
         collectionIds,
-        match.variantId,
+        locationId!,
         effectiveOpts
       );
-      inputObj.id = match.productId;
-      delete inputObj.variants;
-      delete inputObj.seo;
-
       await pushUpdate(inputObj, meta);
     } else {
-      const inputObj = mapCsvRowToBulkCreateInput(
+      const inputObj = mapCsvRowToProductSet(
         row,
         columnMaps,
         prices,
         collectionIds,
-        config.productStatus,
-        locationId,
+        locationId!,
         config.defaultTags || undefined,
-        categoryTags || undefined
+        categoryTags || undefined,
+        shopifyProductType
       );
-      if (shopifyProductType) inputObj.productType = shopifyProductType;
-      const images: string[] = [];
-      for (let i = 1; i <= 5; i++) {
-        const img = getField(row, columnMaps, `image${i}`);
-        if (img) images.push(img);
-      }
-      delete inputObj.files;
-      delete inputObj.seo;
-      meta.images = images;
+      meta.images = inputObj.files?.map((f: any) => f.originalSource) || [];
       meta.replaceMappingId = priorityReplaceMappingId;
       meta.replaceOldConfigId = priorityReplaceConfigId;
       await pushCreate(inputObj, meta);
@@ -1245,7 +1239,7 @@ async function prepareAndLaunch(
     const pending = await prisma.bulkJobOp.create({
       data: { jobId: job.id, kind: "create", index: i, status: "pending" },
     });
-    const opId = await stageAndLaunch(admin, CREATE_MUTATION, createFiles[i], job.shopDomain);
+    const opId = await stageAndLaunch(admin, PRODUCT_SET_MUTATION, createFiles[i], job.shopDomain);
     await prisma.bulkJobOp.update({
       where: { id: pending.id },
       data: { shopifyOpId: opId, status: "launched" },
@@ -1260,7 +1254,7 @@ async function prepareAndLaunch(
     const pending = await prisma.bulkJobOp.create({
       data: { jobId: job.id, kind: "update", index: i, status: "pending" },
     });
-    const opId = await stageAndLaunch(admin, UPDATE_MUTATION, updateFiles[i], job.shopDomain);
+    const opId = await stageAndLaunch(admin, PRODUCT_SET_MUTATION, updateFiles[i], job.shopDomain);
     await prisma.bulkJobOp.update({
       where: { id: pending.id },
       data: { shopifyOpId: opId, status: "launched" },
@@ -1315,7 +1309,6 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
   const resultLines = await readJsonLines(resultPath);
   console.log(`[Bulk] Meta lines: ${metaLines.length}, Result lines: ${resultLines.length}`);
 
-  const inventoryQueuePath = path.join(workDir, "inventory-queue.jsonl");
   const errorsPath = manifest.errorsPath;
 
   let createdCount = 0;
@@ -1326,9 +1319,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
 
   // Proactive refresh before post-processing mutations
   await ensureFreshTokenForBulk(job.shopDomain);
-  const inventoryWrites: string[] = [];
   const errorWrites: string[] = [];
-  const imageQueue: BulkImageTask[] = [];
 
   for (let i = 0; i < resultLines.length; i++) {
     const meta = metaLines[i] as MetaLine | undefined;
@@ -1351,127 +1342,52 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       continue;
     }
 
-    if (op.kind === "create") {
-      const product = line.data?.productCreate?.product;
-      const variant = product?.variants?.edges?.[0]?.node;
-      if (!product?.id) {
-        opErrors++;
-        errorWrites.push(JSON.stringify({ sku: meta.sku, error: "systemError.no_product_id" }));
-        continue;
-      }
+    const product = line.data?.productSet?.product || line.data?.productCreate?.product || line.data?.productUpdate?.product;
+    const variant = product?.variants?.edges?.[0]?.node;
+    if (!product?.id) {
+      opErrors++;
+      errorWrites.push(JSON.stringify({ sku: meta.sku, error: "systemError.no_product_id" }));
+      continue;
+    }
 
-      await prisma.productMapping.upsert({
-        where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: meta.sku } },
-        create: {
-          shopDomain: job.shopDomain,
-          configId: job.configId,
-          supplierSku: meta.sku,
-          ean: meta.ean || null,
-          shopifyProductId: product.id,
-          shopifyVariantId: variant?.id ?? null,
-          shopifyInventoryItemId: variant?.inventoryItem?.id ?? null,
-          lastPrice: meta.regularPrice,
-          lastComparePrice: meta.compareAtPrice,
-          lastQuantity: meta.stockQty,
-          lastCost: meta.costPrice > 0 ? meta.costPrice : null,
-          lastImportSource: sourceKey || null,
-          postProcessStatus: "pending",
-        },
-        update: {
-          shopifyProductId: product.id,
-          shopifyVariantId: variant?.id ?? null,
-          shopifyInventoryItemId: variant?.inventoryItem?.id ?? null,
-          lastPrice: meta.regularPrice,
-          lastComparePrice: meta.compareAtPrice,
-          lastQuantity: meta.stockQty,
-          lastImportSource: sourceKey || null,
-          postProcessStatus: "pending",
-          postProcessError: null,
-          postProcessRetries: 0,
-        },
-      });
+    const isNewProduct = op.kind === "create";
 
+    await prisma.productMapping.upsert({
+      where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: meta.sku } },
+      create: {
+        shopDomain: job.shopDomain,
+        configId: job.configId,
+        supplierSku: meta.sku,
+        ean: meta.ean || null,
+        shopifyProductId: product.id,
+        shopifyVariantId: variant?.id ?? null,
+        shopifyInventoryItemId: variant?.inventoryItem?.id ?? null,
+        lastPrice: meta.regularPrice,
+        lastComparePrice: meta.compareAtPrice,
+        lastQuantity: meta.stockQty,
+        lastCost: meta.costPrice > 0 ? meta.costPrice : null,
+        lastImportSource: sourceKey || null,
+        postProcessStatus: isNewProduct ? "pending" : "complete",
+      },
+      update: {
+        shopifyProductId: product.id,
+        shopifyVariantId: variant?.id ?? null,
+        shopifyInventoryItemId: variant?.inventoryItem?.id ?? null,
+        lastPrice: meta.priceApplied !== false ? meta.regularPrice : undefined,
+        lastComparePrice: meta.priceApplied !== false ? meta.compareAtPrice : undefined,
+        lastQuantity: meta.stockApplied !== false ? meta.stockQty : undefined,
+        lastCost: meta.costPrice > 0 ? meta.costPrice : undefined,
+        lastImportSource: sourceKey || undefined,
+        postProcessStatus: isNewProduct ? "pending" : "complete",
+        postProcessError: null,
+        postProcessRetries: 0,
+      },
+    });
+
+    if (isNewProduct) {
       createdCount++;
 
-      if (meta.images && meta.images.length > 0) {
-        imageQueue.push({
-          productId: product.id,
-          files: meta.images.map((url: string) => ({
-            originalSource: url,
-            mediaContentType: "IMAGE",
-          })),
-          label: `SKU=${meta.sku}`,
-        });
-      }
-
-      if (variant?.id) {
-        try {
-          const variantInput: any = {
-            id: variant.id,
-            price: String(isNaN(meta.regularPrice) ? 0 : meta.regularPrice),
-          };
-          if (meta.compareAtPrice && !isNaN(meta.compareAtPrice)) {
-            variantInput.compareAtPrice = String(meta.compareAtPrice);
-          }
-          if (meta.ean) {
-            variantInput.barcode = meta.ean;
-          }
-          await gql(admin,
-            `#graphql
-            mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-              productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-                productVariants { id sku barcode price compareAtPrice }
-                userErrors { field message }
-              }
-            }`,
-            { variables: { productId: product.id, variants: [variantInput] } },
-            job.shopDomain
-          );
-          console.log(`[Bulk] SKU ${meta.sku}: precio=${meta.regularPrice}${meta.compareAtPrice ? `, compareAt=${meta.compareAtPrice}` : ""}${meta.ean ? `, barcode=${meta.ean}` : ""}`);
-        } catch (e: any) {
-          console.error(`[Bulk] SKU ${meta.sku}: error seteando precio/barcode: ${e?.message}`);
-        }
-
-        if (meta.sku && variant.sku !== meta.sku) {
-          try {
-            await setVariantSkuViaRest(job.shopDomain, product.id, variant.id, meta.sku);
-          } catch (e: any) {
-            console.error(`[Bulk] SKU ${meta.sku}: error REST seteando SKU: ${e?.message}`);
-          }
-        }
-      }
-
       if (variant?.inventoryItem?.id) {
-        try {
-          const invInput: any = { tracked: true };
-          if (meta.costPrice > 0) {
-            invInput.cost = String(meta.costPrice);
-          }
-          await gql(admin,
-            `#graphql
-            mutation inventoryItemUpdate($id: ID!, $input: InventoryItemInput!) {
-              inventoryItemUpdate(id: $id, input: $input) {
-                inventoryItem { id tracked unitCost { amount } }
-                userErrors { field message }
-              }
-            }`,
-            {
-              variables: {
-                id: variant.inventoryItem.id,
-                input: invInput,
-              },
-            },
-            job.shopDomain
-          );
-          console.log(`[Bulk] SKU ${meta.sku}: inventory tracked=true${meta.costPrice > 0 ? `, cost=${meta.costPrice}` : ""}`);
-          await prisma.productMapping.update({
-            where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: meta.sku } },
-            data: { postProcessStatus: "inventory", postProcessError: null },
-          }).catch(() => {});
-        } catch (e: any) {
-          console.error(`[Bulk] SKU ${meta.sku}: error habilitando inventory tracking: ${e?.message}`);
-        }
-
         try {
           const locId = await getLocationId(admin, job.shopDomain, job.configId);
           const actRes = await gql(admin,
@@ -1500,13 +1416,8 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
         } catch (e: any) {
           console.error(`[Bulk] SKU ${meta.sku}: error activando inventory en ubicacion: ${e?.message}`);
         }
-
-        inventoryWrites.push(
-          JSON.stringify({ inventoryItemId: variant.inventoryItem.id, quantity: meta.stockQty })
-        );
       }
 
-      // Publish to selected sales channels (priority) or markets (only on CREATE)
       const allPubIds: string[] = [];
       if (config?.publicationIds) {
         try { allPubIds.push(...JSON.parse(config.publicationIds)); } catch {}
@@ -1516,7 +1427,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       }
       if (allPubIds.length > 0) {
         try {
-          const input = allPubIds.map((publicationId: string) => ({ publicationId }));
+          const pubInput = allPubIds.map((publicationId: string) => ({ publicationId }));
           await gql(admin,
             `#graphql
             mutation PublishablePublish($id: ID!, $input: [PublicationInput!]!) {
@@ -1524,267 +1435,26 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
                 userErrors { field message }
               }
             }`,
-            { variables: { id: product.id, input } },
+            { variables: { id: product.id, input: pubInput } },
             job.shopDomain
           );
-          console.log(`[Bulk] SKU ${meta.sku}: publicado en ${allPubIds.length} publicación(es)`);
-          await prisma.productMapping.update({
-            where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: meta.sku } },
-            data: { postProcessStatus: "channels", postProcessError: null },
-          }).catch(() => {});
+          console.log(`[Bulk] SKU ${meta.sku}: publicado en ${allPubIds.length} publicacion(es)`);
         } catch (error: any) {
           console.error(`[Bulk] SKU ${meta.sku}: error publicando: ${error?.message}`);
         }
       }
 
-      // If product has no images, mark as complete right away
-      if (!meta.images || meta.images.length === 0) {
-        await prisma.productMapping.update({
-          where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: meta.sku } },
-          data: { postProcessStatus: "complete", postProcessError: null },
-        }).catch(() => {});
-      }
+      await prisma.productMapping.update({
+        where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: meta.sku } },
+        data: { postProcessStatus: "complete", postProcessError: null },
+      }).catch(() => {});
     } else {
-      const product = line.data?.productUpdate?.product;
-      if (!product?.id) {
-        console.log(`[Bulk] SKU ${meta.sku}: producto no encontrado en Shopify, borrando mapping para recrear en próximo cron`);
-        await prisma.productMapping.deleteMany({
-          where: { shopDomain: job.shopDomain, supplierSku: meta.sku },
-        });
-        opErrors++;
-        errorWrites.push(JSON.stringify({ sku: meta.sku, error: "systemError.product_deleted", lineNumber: 0 }));
-        continue;
-      }
-
-      if (updatedCount === 0) {
-        console.log(`[Bulk] UPDATE path first product: SKU=${meta.sku}, inventoryItemId=${meta.inventoryItemId}, costPrice=${meta.costPrice}`);
-      }
-
-      const patch: any = { shopifyProductId: product.id };
-      if (meta.priceApplied) {
-        patch.lastPrice = meta.regularPrice;
-        patch.lastComparePrice = meta.compareAtPrice;
-      }
-      if (meta.stockApplied) {
-        patch.lastQuantity = meta.stockQty;
-      }
-
-      await prisma.productMapping.upsert({
-        where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: meta.sku } },
-        create: {
-          shopDomain: job.shopDomain,
-          configId: job.configId,
-          supplierSku: meta.sku,
-          ean: meta.ean || null,
-          shopifyProductId: product.id,
-          shopifyVariantId: meta.variantId || null,
-          shopifyInventoryItemId: meta.inventoryItemId || null,
-          lastPrice: meta.priceApplied ? meta.regularPrice : meta.prevPrice,
-          lastComparePrice: meta.priceApplied ? meta.compareAtPrice : null,
-          lastQuantity: meta.stockApplied ? meta.stockQty : meta.prevQty,
-          lastCost: meta.costPrice > 0 ? meta.costPrice : null,
-          lastImportSource: sourceKey || null,
-          postProcessStatus: "complete",
-        },
-        update: { ...patch, lastCost: meta.costPrice > 0 ? meta.costPrice : undefined, lastImportSource: sourceKey || undefined, postProcessStatus: "complete" },
-      });
-
       updatedCount++;
-      if (meta.priceChanged) {
-        priceChanges++;
-        if (meta.variantId) {
-          try {
-            await gql(admin,
-              `#graphql
-              mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-                productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-                  productVariants { id price }
-                  userErrors { field message }
-                }
-              }`,
-              {
-                variables: {
-                  productId: product.id,
-                  variants: [{
-                    id: meta.variantId,
-                    price: String(isNaN(meta.regularPrice) ? 0 : meta.regularPrice),
-                    ...(meta.compareAtPrice && !isNaN(meta.compareAtPrice) ? { compareAtPrice: String(meta.compareAtPrice) } : {}),
-                  }],
-                },
-              },
-              job.shopDomain
-            );
-          } catch (e: any) {
-            console.error(`[Bulk] SKU ${meta.sku}: error actualizando precio: ${e?.message}`);
-          }
-        }
-      }
-      if (meta.stockChanged) {
-        stockChanges++;
-        if (meta.inventoryItemId) {
-          inventoryWrites.push(
-            JSON.stringify({ inventoryItemId: meta.inventoryItemId, quantity: meta.stockQty, prevQty: meta.prevQty ?? 0 })
-          );
-        }
-      }
-      if (meta.inventoryItemId && meta.costPrice > 0 && !meta.skipPrice) {
-        console.log(`[Bulk] SKU ${meta.sku}: intentando costo=${meta.costPrice} en inventoryItem=${meta.inventoryItemId}`);
-        try {
-          const costRes = await gql(admin,
-            `#graphql
-            mutation inventoryItemUpdate($id: ID!, $input: InventoryItemInput!) {
-              inventoryItemUpdate(id: $id, input: $input) {
-                inventoryItem { id unitCost { amount } }
-                userErrors { field message }
-              }
-            }`,
-            {
-              variables: {
-                id: meta.inventoryItemId,
-                input: { cost: String(meta.costPrice) },
-              },
-            },
-            job.shopDomain
-          );
-          if (costRes?.data?.inventoryItemUpdate?.userErrors?.length) {
-            console.error(`[Bulk] SKU ${meta.sku}: userErrors seteando costo:`, JSON.stringify(costRes.data.inventoryItemUpdate.userErrors));
-          } else {
-            console.log(`[Bulk] SKU ${meta.sku}: costo OK = ${costRes?.data?.inventoryItemUpdate?.inventoryItem?.unitCost?.amount}`);
-          }
-        } catch (e: any) {
-          console.error(`[Bulk] SKU ${meta.sku}: error seteando costo: ${e?.message}`);
-        }
-      } else {
-        console.log(`[Bulk] SKU ${meta.sku}: costo NO actualizado - inventoryItemId="${meta.inventoryItemId}", costPrice=${meta.costPrice}`);
-      }
-
-      // === REPAIR INCOMPLETE PRODUCTS ===
-      // If this product was created in a previous bulk run but post-processing didn't complete,
-      // complete the missing steps here (inventory tracking, channels, images)
-      const existingMapping = await prisma.productMapping.findUnique({
-        where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: meta.sku } },
-        select: { postProcessStatus: true, id: true },
-      }).catch(() => null);
-
-      if (existingMapping && existingMapping.postProcessStatus !== "complete") {
-        console.log(`[Bulk] SKU ${meta.sku}: repairing incomplete product (status=${existingMapping.postProcessStatus})`);
-
-        // Step 1: If missing inventory tracking + activation
-        if (!existingMapping.postProcessStatus || existingMapping.postProcessStatus === "pending" || existingMapping.postProcessStatus === "error") {
-          if (meta.inventoryItemId) {
-            try {
-              const invInput: any = { tracked: true };
-              if (meta.costPrice > 0) invInput.cost = String(meta.costPrice);
-              await withRetry(() => gql(admin,
-                `#graphql
-                mutation inventoryItemUpdate($id: ID!, $input: InventoryItemInput!) {
-                  inventoryItemUpdate(id: $id, input: $input) {
-                    inventoryItem { id tracked }
-                    userErrors { field message }
-                  }
-                }`,
-                { variables: { id: meta.inventoryItemId, input: invInput } },
-                job.shopDomain
-              ), `repair-inventory-${meta.sku}`);
-              console.log(`[Bulk] SKU ${meta.sku}: repair - inventory tracked=true`);
-
-              const locId = await getLocationId(admin, job.shopDomain, job.configId);
-              await withRetry(() => gql(admin,
-                `#graphql
-                mutation inventoryBulkToggleActivation($inventoryItemId: ID!, $inventoryItemUpdates: [InventoryBulkToggleActivationInput!]!) {
-                  inventoryBulkToggleActivation(inventoryItemId: $inventoryItemId, inventoryItemUpdates: $inventoryItemUpdates) {
-                    inventoryItem { id }
-                    userErrors { field message code }
-                  }
-                }`,
-                { variables: { inventoryItemId: meta.inventoryItemId, inventoryItemUpdates: [{ locationId: locId, activate: true }] } },
-                job.shopDomain
-              ), `repair-activation-${meta.sku}`);
-              console.log(`[Bulk] SKU ${meta.sku}: repair - inventory activated at location`);
-
-              await prisma.productMapping.update({
-                where: { id: existingMapping.id },
-                data: { postProcessStatus: "inventory", postProcessError: null, postProcessRetries: { increment: 1 } },
-              });
-              existingMapping.postProcessStatus = "inventory";
-            } catch (e: any) {
-              console.error(`[Bulk] SKU ${meta.sku}: repair inventory failed: ${e?.message}`);
-              await prisma.productMapping.update({
-                where: { id: existingMapping.id },
-                data: { postProcessError: `Inventory: ${e?.message}`, postProcessRetries: { increment: 1 } },
-              }).catch(() => {});
-            }
-          }
-        }
-
-        // Step 2: If missing channels (or retry from error after inventory step)
-        if (existingMapping.postProcessStatus === "inventory" || existingMapping.postProcessStatus === "error") {
-          const allPubIds: string[] = [];
-          if (config?.publicationIds) {
-            try { allPubIds.push(...JSON.parse(config.publicationIds)); } catch {}
-          }
-          if (allPubIds.length === 0 && config?.marketIds) {
-            try { allPubIds.push(...JSON.parse(config.marketIds)); } catch {}
-          }
-          if (allPubIds.length > 0) {
-            try {
-              const input = allPubIds.map((publicationId: string) => ({ publicationId }));
-              await withRetry(() => gql(admin,
-                `#graphql
-                mutation PublishablePublish($id: ID!, $input: [PublicationInput!]!) {
-                  publishablePublish(id: $id, input: $input) { userErrors { field message } }
-                }`,
-                { variables: { id: product.id, input } },
-                job.shopDomain
-              ), `repair-channels-${meta.sku}`);
-              console.log(`[Bulk] SKU ${meta.sku}: repair - published in ${allPubIds.length} channel(s)`);
-
-              await prisma.productMapping.update({
-                where: { id: existingMapping.id },
-                data: { postProcessStatus: "channels", postProcessError: null },
-              });
-              existingMapping.postProcessStatus = "channels";
-            } catch (e: any) {
-              console.error(`[Bulk] SKU ${meta.sku}: repair channels failed: ${e?.message}`);
-              await prisma.productMapping.update({
-                where: { id: existingMapping.id },
-                data: { postProcessError: `Channels: ${e?.message}`, postProcessRetries: { increment: 1 } },
-              }).catch(() => {});
-            }
-          } else {
-            // No channels configured, skip to complete
-            await prisma.productMapping.update({
-              where: { id: existingMapping.id },
-              data: { postProcessStatus: "complete", postProcessError: null },
-            });
-            existingMapping.postProcessStatus = "complete";
-          }
-        }
-
-        // Step 3: If missing images
-        if (existingMapping.postProcessStatus === "channels" && meta.images && meta.images.length > 0) {
-          imageQueue.push({
-            productId: product.id,
-            files: meta.images.map((url: string) => ({ originalSource: url, mediaContentType: "IMAGE" })),
-            label: `SKU=${meta.sku}`,
-          });
-        } else if (existingMapping.postProcessStatus === "channels") {
-          // No images, mark complete
-          await prisma.productMapping.update({
-            where: { id: existingMapping.id },
-            data: { postProcessStatus: "complete", postProcessError: null },
-          });
-        }
-      }
+      if (meta.priceChanged) priceChanges++;
+      if (meta.stockChanged) stockChanges++;
     }
   }
 
-  // Process deferred image uploads in parallel batches
-  if (imageQueue.length > 0) {
-    await processBulkImageQueue(admin, imageQueue, job.shopDomain);
-  }
-
-  await fs.appendFile(inventoryQueuePath, inventoryWrites.length ? inventoryWrites.join("\n") + "\n" : "");
   await fs.appendFile(errorsPath, errorWrites.length ? errorWrites.join("\n") + "\n" : "");
 
   await prisma.bulkJobOp.update({
@@ -1850,58 +1520,10 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
   const sourceKey = config ? getSourceKey(config) : null;
   const locationId = await getLocationId(admin, job.shopDomain, job.configId);
 
-    const inventoryQueuePath = path.join(workDir, "inventory-queue.jsonl");
-    const queue = await readJsonLines(inventoryQueuePath);
+    // productSet already sets inventory quantities directly, so the old inventorySetQuantities batch is no longer needed.
+    // We still zero stock for SKUs absent from the CSV.
 
-    // Proactive refresh before inventory batch flush
     await ensureFreshTokenForBulk(job.shopDomain);
-
-    for (let i = 0; i < queue.length; i += 100) {
-      const batch = queue.slice(i, i + 100);
-      const quantities = batch.map((q: any) => ({
-        inventoryItemId: q.inventoryItemId,
-        locationId,
-        quantity: q.quantity,
-      }));
-
-      try {
-        const invRes = await gql(admin,
-          `#graphql
-          mutation inv($input: InventorySetQuantitiesInput!, $idempotencyKey: String!) {
-            inventorySetQuantities(input: $input) @idempotent(key: $idempotencyKey) {
-              userErrors { code field message }
-              inventoryAdjustmentGroup { id changes { name delta } }
-            }
-          }`,
-          {
-            variables: {
-              input: {
-                reason: "correction",
-                name: "available",
-                ignoreCompareQuantity: true,
-                quantities,
-              },
-              idempotencyKey: `bulk-inv-${job.id}-${i}`,
-            },
-          },
-          job.shopDomain
-        );
-        const invErrors = invRes.data?.inventorySetQuantities?.userErrors;
-        if (invErrors?.length > 0) {
-          console.error(`[Bulk] inventorySetQuantities userErrors:`, JSON.stringify(invErrors));
-        } else {
-          const changes = invRes.data?.inventorySetQuantities?.inventoryAdjustmentGroup?.changes || [];
-          console.log(`[Bulk] inventorySetQuantities OK: ${changes.length} cambios`);
-        }
-      } catch (error: any) {
-        const gqlErrors = error?.graphQLErrors?.map((e: any) => ({
-          message: e.message,
-          field: e.extensions?.field,
-          code: e.extensions?.code,
-        }));
-        console.error(`[Bulk] Error ajustando inventario: ${error?.message || String(error)}`, gqlErrors ? JSON.stringify(gqlErrors) : "");
-      }
-    }
 
     const allSkus = new Set(await readJsonLines(manifest.allSkusPath));
     const existingMappings = await prisma.productMapping.findMany({
@@ -2185,8 +1807,9 @@ export async function reconcileStaleBulkJobs(): Promise<void> {
 
     // Any job older than 1 hour → fail it
     if (ageMs > 60 * 60 * 1000) {
-      console.error(`[Bulk] Job ${job.id.slice(0,8)} alive for ${Math.round(ageMs/60000)}min → failing (max lifetime exceeded)`);
-      await failJob(job, `systemError.job_too_old`);
+      const minutes = Math.round(ageMs / 60000);
+      console.error(`[Bulk] Job ${job.id.slice(0,8)} alive for ${minutes}min → failing (max lifetime exceeded)`);
+      await failJob(job, `Job excedió tiempo máximo de vida (${minutes}min).`);
       continue;
     }
 
@@ -2397,7 +2020,7 @@ async function resumeMissingMutationOp(
   inputPath: string
 ): Promise<void> {
   if (kind === "update") {
-    const opId = await stageAndLaunch(admin, UPDATE_MUTATION, inputPath, job.shopDomain);
+    const opId = await stageAndLaunch(admin, LEGACY_UPDATE_MUTATION, inputPath, job.shopDomain);
     await prisma.bulkJobOp.create({
       data: { jobId: job.id, shopifyOpId: opId, kind, index, status: "launched" },
     });
@@ -2417,7 +2040,7 @@ async function resumePendingMutationOp(
 ): Promise<void> {
   if (kind === "update") {
     // productUpdate es idempotente: relanzar es seguro aunque exista una op fantasma.
-    const opId = await stageAndLaunch(admin, UPDATE_MUTATION, inputPath, job.shopDomain);
+    const opId = await stageAndLaunch(admin, LEGACY_UPDATE_MUTATION, inputPath, job.shopDomain);
     await prisma.bulkJobOp.update({
       where: { id: op.id },
       data: { shopifyOpId: opId, status: "launched" },
@@ -2555,7 +2178,7 @@ async function resumeOrRebuildCreateOp(
   await fs.writeFile(inputPath, missing.map((m) => m.line).join("\n") + "\n");
   await fs.writeFile(metaPath, missing.map((m) => JSON.stringify(m.meta)).join("\n") + "\n");
 
-  const opId = await stageAndLaunch(admin, CREATE_MUTATION, inputPath, job.shopDomain);
+  const opId = await stageAndLaunch(admin, LEGACY_CREATE_MUTATION, inputPath, job.shopDomain);
   if (target.opId) {
     await prisma.bulkJobOp.update({
       where: { id: target.opId },
@@ -2872,6 +2495,7 @@ function extractUserErrors(line: any): string[] {
   if (!data) return [];
   const createErrors = data.productCreate?.userErrors;
   const updateErrors = data.productUpdate?.userErrors;
-  const errors = createErrors || updateErrors || [];
+  const setErrors = data.productSet?.userErrors;
+  const errors = createErrors || updateErrors || setErrors || [];
   return (errors as any[]).map((e: any) => e.message || "Error");
 }

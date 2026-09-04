@@ -773,7 +773,7 @@ async function processProduct({
       }
 
       // Update images — deferred to batch queue
-      if (productInput2.files.length > 0) {
+      if (productInput2.files && productInput2.files.length > 0) {
         imageQueue.push({
           productId: existing.shopifyProductId,
           files: productInput2.files.map((f) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType })),
@@ -953,7 +953,7 @@ async function processProduct({
         }
 
         // Update images — deferred to batch queue
-        if (productInput2.files.length > 0) {
+        if (productInput2.files && productInput2.files.length > 0) {
           imageQueue.push({
             productId: dupCheck.existingShopifyProductId,
             files: productInput2.files.map((f) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType })),
@@ -1385,7 +1385,7 @@ async function processProduct({
     }
 
     // Update images — deferred to batch queue
-    if (productInput2.files.length > 0) {
+    if (productInput2.files && productInput2.files.length > 0) {
       imageQueue.push({
         productId: priorityReplaceTarget.shopifyProductId,
         files: productInput2.files.map((f) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType })),
@@ -1436,7 +1436,7 @@ async function processProduct({
     const stockChanged = updateOpts.has("stock") && existing.shopifyInventoryItemId && (lastQty === null || lastQty !== newQty);
     const costChanged = costPrice > 0 && existing.shopifyInventoryItemId && Math.abs((lastCost ?? 0) - costPrice) > 0.001;
 
-    const imagesChanged = updateOpts.has("images") && productInput.files.length > 0;
+    const imagesChanged = updateOpts.has("images") && (productInput.files?.length ?? 0) > 0;
 
     // Only count as "unchanged" if price/stock/cost/images didn't change
     // Data fields are always sent (idempotent) but don't count toward "updated"
@@ -1484,7 +1484,7 @@ async function processProduct({
       }
     }
 
-    if (imagesChanged) {
+    if (imagesChanged && productInput.files) {
       imageQueue.push({
         productId: existing.shopifyProductId,
         files: productInput.files.map((f) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType })),

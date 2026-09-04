@@ -16,39 +16,44 @@ function stripHtml(html: string): string {
 }
 
 export interface ProductSetInput {
-  title: string;
-  descriptionHtml: string;
-  productType: string;
-  vendor: string;
-  tags: string[];
-  metafields: Array<{
+  title?: string;
+  descriptionHtml?: string;
+  productType?: string;
+  vendor?: string;
+  tags?: string[];
+  metafields?: Array<{
     namespace: string;
     key: string;
     value: string;
     type: string;
   }>;
-  seo: {
+  seo?: {
     title: string;
     description: string;
   };
-  files: Array<{
+  files?: Array<{
     originalSource: string;
     alt: string;
     contentType: string;
   }>;
-  variants: Array<{
+  variants?: Array<{
     optionValues?: Array<{ optionName: string; name: string }>;
-    price: string;
+    sku?: string;
+    price?: string;
     compareAtPrice?: string;
-    barcode: string;
-    inventoryQuantities: Array<{
+    barcode?: string;
+    inventoryQuantities?: Array<{
       locationId: string;
       name: string;
       quantity: number;
     }>;
-    inventoryPolicy: string;
+    inventoryPolicy?: string;
+    inventoryItem?: {
+      tracked?: boolean;
+      cost?: string;
+    };
   }>;
-  collections: string[];
+  collections?: string[];
 }
 
 interface ColumnMap {
@@ -262,7 +267,8 @@ export function mapCsvRowToProductSet(
   collections: string[],
   locationId: string,
   defaultTags?: string,
-  categoryTags?: string
+  categoryTags?: string,
+  shopifyProductType?: string | null
 ): ProductSetInput {
   const name = getField(row, columnMaps, "title") || "Sin nombre";
   const description = getField(row, columnMaps, "description");
@@ -310,11 +316,12 @@ export function mapCsvRowToProductSet(
   }
 
   const stockQty = quantity;
+  const costNum = costo ? parseFloat(costo.replace(",", ".")) : 0;
 
   return {
     title: name,
     descriptionHtml: description,
-    productType: category,
+    productType: shopifyProductType || category,
     vendor: brand,
     tags,
     metafields,
@@ -330,6 +337,7 @@ export function mapCsvRowToProductSet(
     variants: [
       {
         optionValues: [],
+        sku: sku || undefined,
         price: String(prices.regularPrice),
         ...(prices.compareAtPrice
           ? { compareAtPrice: String(prices.compareAtPrice) }
@@ -343,8 +351,99 @@ export function mapCsvRowToProductSet(
           },
         ],
         inventoryPolicy: "DENY",
+        inventoryItem: {
+          tracked: true,
+          ...(costNum > 0 ? { cost: String(costNum) } : {}),
+        },
       },
     ],
     collections,
   };
+}
+
+export function mapCsvRowToProductSetUpdate(
+  row: ProductRow,
+  columnMaps: ColumnMap[],
+  prices: PriceResult,
+  collections: string[],
+  locationId: string,
+  updateOptions?: Set<UpdateOption>
+): ProductSetInput {
+  const opts = updateOptions ?? new Set<UpdateOption>(UPDATE_OPTIONS);
+  const name = getField(row, columnMaps, "title") || "Sin nombre";
+  const description = getField(row, columnMaps, "description");
+  const shortDescription = getField(row, columnMaps, "short_description");
+  const category = getField(row, columnMaps, "category");
+  const brand = getField(row, columnMaps, "brand");
+  const sku = getField(row, columnMaps, "sku");
+  const ean = getField(row, columnMaps, "ean");
+  const tipoProducto = getField(row, columnMaps, "tipo_producto");
+  const link = getField(row, columnMaps, "link");
+  const costo = getField(row, columnMaps, "price");
+  const quantity = getFieldNumber(row, columnMaps, "quantity");
+  const stockQty = quantity;
+  const costNum = costo ? parseFloat(costo.replace(",", ".")) : 0;
+
+  const input: ProductSetInput = {
+    title: name,
+    descriptionHtml: description,
+    productType: category,
+    vendor: brand,
+    tags: [],
+    metafields: [],
+    seo: { title: name, description: stripHtml(shortDescription) || name },
+    files: [],
+    variants: [],
+    collections: [],
+  };
+
+  if (!opts.has("name")) delete input.title;
+  if (!opts.has("description")) { delete input.descriptionHtml; delete input.seo; }
+  if (!opts.has("productType")) delete input.productType;
+  if (!opts.has("vendor")) delete input.vendor;
+  if (!opts.has("tags")) delete input.tags;
+  if (!opts.has("metafields")) {
+    input.metafields = [];
+  } else {
+    const metafields = [];
+    if (sku) metafields.push({ namespace: "custom", key: "supplier_sku", value: sku, type: "single_line_text_field" });
+    if (costo) metafields.push({ namespace: "custom", key: "costo", value: costo.replace(",", "."), type: "number_decimal" });
+    if (shortDescription) metafields.push({ namespace: "global", key: "description_tag", value: stripHtml(shortDescription), type: "single_line_text_field" });
+    if (tipoProducto) metafields.push({ namespace: "custom", key: "tipo_producto", value: tipoProducto, type: "single_line_text_field" });
+    if (link) metafields.push({ namespace: "custom", key: "supplier_url", value: link, type: "single_line_text_field" });
+    input.metafields = metafields;
+  }
+
+  if (!opts.has("collections")) delete input.collections;
+
+  const variant: any = {
+    optionValues: [],
+    sku: sku || undefined,
+    barcode: ean,
+    inventoryQuantities: [],
+    inventoryPolicy: "DENY",
+  };
+
+  if (opts.has("price")) {
+    variant.price = String(prices.regularPrice);
+    if (prices.compareAtPrice) variant.compareAtPrice = String(prices.compareAtPrice);
+  }
+
+  if (opts.has("stock")) {
+    variant.inventoryQuantities = [{ locationId, name: "available", quantity: stockQty }];
+  }
+
+  if (costNum > 0) {
+    variant.inventoryItem = { tracked: true, cost: String(costNum) };
+  }
+
+  input.variants = [variant];
+
+  if (opts.has("collections")) {
+    input.collections = collections;
+  }
+
+  delete input.files;
+
+  return input;
 }
