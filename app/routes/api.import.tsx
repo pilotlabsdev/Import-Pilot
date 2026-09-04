@@ -45,7 +45,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     const isActive = isImportActive(config.id);
 
-    if (isActive) {
+    // Also check for active BulkJob (bulk mode) and running ImportLogs
+    const activeBulkJob = isActive ? null : await prisma.bulkJob.findFirst({
+      where: { configId: config.id, phase: { in: ["lookup", "mutations", "finalizing"] } },
+      select: { id: true },
+    }).catch(() => null);
+    const activeImportLog = isActive ? null : await prisma.importLog.findFirst({
+      where: { configId: config.id, status: "running" },
+      select: { id: true },
+    }).catch(() => null);
+    const activeQueueItem = isActive ? null : await prisma.importQueue.findFirst({
+      where: { configId: config.id, status: { in: ["queued", "running"] } },
+      select: { id: true },
+    }).catch(() => null);
+
+    const anyActive = isActive || !!activeBulkJob || !!activeImportLog || !!activeQueueItem;
+
+    if (anyActive) {
       // Already running → enqueue
       const sourceLabel = config.dataSource === "file"
         ? config.localFilePath?.split(/[/\\]/).pop() || "Archivo local"
