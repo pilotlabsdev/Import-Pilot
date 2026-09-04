@@ -1298,6 +1298,10 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
     console.log(`[Bulk] Download OK to ${resultPath}`);
   } catch (e: any) {
     console.error(`[Bulk] Download FAILED: ${e?.message}`);
+    await prisma.bulkJobOp.update({
+      where: { id: op.id },
+      data: { status: "launched", startedAt: null },
+    });
     return;
   }
 

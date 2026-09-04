@@ -445,7 +445,7 @@ export async function getQueueStatus(shopDomain: string): Promise<{
   // 2. From active BulkJobs (bulk mode - async, continues after scheduler releases)
   const activeBulkJobs = await prisma.bulkJob.findMany({
     where: { shopDomain, phase: { in: ["lookup", "mutations", "finalizing"] } },
-    select: { id: true, configId: true, logId: true, phase: true, totalCount: true, createCount: true, updateCount: true, unchangedCount: true, excludedCount: true },
+    select: { id: true, configId: true, logId: true, phase: true, totalCount: true, createCount: true, updateCount: true, unchangedCount: true, excludedCount: true, mutationOpsDone: true, totalMutationOps: true },
   });
 
   for (const bulkJob of activeBulkJobs) {
@@ -474,15 +474,21 @@ export async function getQueueStatus(shopDomain: string): Promise<{
         },
       });
       if (log) {
-        const processed = (log.created || 0) + (log.updated || 0) + (log.unchanged || 0) + (log.excludedCount || 0);
         const errorCount = log.errors ? (JSON.parse(log.errors) as any[]).length : 0;
-        // For bulk: use BulkJob counts (more accurate than ImportLog during processing)
-        // Fall back to ImportLog when BulkJob counters are still 0 (before first webhook)
         const total = bulkJob.totalCount || log.totalProducts || 0;
-        const done = (bulkJob.createCount || 0) + (bulkJob.updateCount || 0) + (bulkJob.unchangedCount || 0) + (bulkJob.excludedCount || 0);
+        const counterDone = (bulkJob.createCount || 0) + (bulkJob.updateCount || 0) + (bulkJob.unchangedCount || 0) + (bulkJob.excludedCount || 0);
+
+        // Estimate progress from ops when per-product counters haven't updated yet
+        let processedProducts = counterDone;
+        if (counterDone <= (bulkJob.excludedCount || 0) && bulkJob.totalMutationOps > 0 && (bulkJob.mutationOpsDone || 0) > 0 && total > 0) {
+          const excluded = bulkJob.excludedCount || 0;
+          const importable = total - excluded;
+          processedProducts = excluded + Math.round((bulkJob.mutationOpsDone / bulkJob.totalMutationOps) * importable);
+        }
+
         progress = {
           totalProducts: total,
-          processedProducts: done || processed,
+          processedProducts,
           lastSku: log.lastSku || "",
           status: log.status,
           errors: errorCount,
