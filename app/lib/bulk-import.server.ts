@@ -573,7 +573,7 @@ async function handleLookupFinished(job: any, admin: any, status: string): Promi
   });
   if (claim.count === 0) return;
 
-  if (status !== "completed") {
+  if (status.toLowerCase() !== "completed") {
     await failJob(job, `La bulk query de productos existentes terminó con estado "${status}"`);
     return;
   }
@@ -1277,7 +1277,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
     return;
   }
 
-  if (status !== "completed") {
+  if (status.toLowerCase() !== "completed") {
     await prisma.bulkJobOp.update({
       where: { id: op.id },
       data: { status: "failed" },
