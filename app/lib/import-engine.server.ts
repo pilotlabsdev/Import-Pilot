@@ -1456,7 +1456,7 @@ async function processProduct({
     }
     if (updateOpts.has("productType")) productPatch.productType = productInput.productType;
     if (updateOpts.has("vendor")) productPatch.vendor = productInput.vendor;
-    if (updateOpts.has("tags")) productPatch.tags = productInput.tags;
+    if (updateOpts.has("tags") && productInput.tags?.length) productPatch.tags = productInput.tags;
     if (updateOpts.has("metafields")) {
       productPatch.metafields = productInput.metafields;
     } else {

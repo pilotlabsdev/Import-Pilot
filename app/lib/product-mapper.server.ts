@@ -240,7 +240,7 @@ export function mapCsvRowToBulkUpdateInput(
   }
   if (opts.has("productType")) input.productType = base.productType;
   if (opts.has("vendor")) input.vendor = base.vendor;
-  if (opts.has("tags")) input.tags = base.tags;
+  if (opts.has("tags") && base.tags && base.tags.length > 0) input.tags = base.tags;
   if (opts.has("metafields")) {
     input.metafields = base.metafields;
   } else {
@@ -259,7 +259,7 @@ export function mapCsvRowToBulkUpdateInput(
     ];
   }
 
-  if (opts.has("collections")) input.collectionsToJoin = collections;
+  if (opts.has("collections") && collections.length > 0) input.collectionsToJoin = collections;
 
   return input;
 }
