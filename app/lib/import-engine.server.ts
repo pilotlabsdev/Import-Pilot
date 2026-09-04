@@ -649,7 +649,7 @@ async function processProduct({
 
   const costPrice = parseFloat((getField(row, columnMaps, "price") || "0").replace(",", "."));
   const category = getField(row, columnMaps, "category");
-  const newQty = parseInt((getField(row, columnMaps, "quantity") || row["quantity"] || "0").replace(",", "."));
+  const newQty = Math.max(0, parseInt((getField(row, columnMaps, "quantity") || row["quantity"] || "0").replace(",", ".")));
   console.log(`[Import] processProduct SKU=${sku}, existing=${!!existing}, qty=${newQty}, skipZero=${config.skipZeroStockCreate}, columnMaps=${JSON.stringify(columnMaps.map(m => m.shopifyField + "->" + m.csvColumn))}`);
 
   // === INTER-SUPPLIER CHECK: existing mapping may belong to another supplier ===
@@ -1669,7 +1669,7 @@ async function processProduct({
             {
               locationId,
               name: "available",
-              quantity: parseInt((getField(row, columnMaps, "quantity") || row["quantity"] || "0").replace(",", ".")) || 0,
+              quantity: Math.max(0, parseInt((getField(row, columnMaps, "quantity") || row["quantity"] || "0").replace(",", ".")) || 0),
             },
           ],
         },

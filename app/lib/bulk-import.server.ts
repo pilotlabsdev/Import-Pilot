@@ -20,6 +20,46 @@ import { ensureMetafieldDefinitions } from "./metafield-definitions";
 import { sendNotification } from "./notifications.server";
 import shopify from "~/shopify.server";
 
+/**
+ * Creates a fresh GraphQL client that always reads the current access token from DB.
+ * This avoids stale token issues when the token is refreshed mid-import.
+ */
+export async function getFreshAdminClient(shopDomain: string) {
+  const session = await prisma.session.findFirst({
+    where: { shop: shopDomain, isOnline: false },
+    select: { accessToken: true },
+    orderBy: { expires: "desc" },
+  });
+
+  if (!session?.accessToken) {
+    throw new Error(`No session found for ${shopDomain}`);
+  }
+
+  const endpoint = `https://${shopDomain}/admin/api/2026-01/graphql.json`;
+  const token = session.accessToken;
+
+  return {
+    graphql: async (query: string, options?: { variables?: any }) => {
+      const vars = options?.variables || {};
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "X-Shopify-Access-Token": token,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ query, variables: vars }),
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`GraphQL request failed: ${res.status} ${text}`);
+      }
+
+      return res.json();
+    },
+  };
+}
+
 const MAX_CHUNK_BYTES = 80 * 1024 * 1024; // Shopify limita JSONL a 100MB
 
 // Directorio de trabajo persistente (configurable vía env) para poder reanudar jobs tras un reinicio.
@@ -105,11 +145,11 @@ async function gql(admin: any, query: string, varsOrOptions?: any, shopDomain?: 
 
     lastRefreshAt.set(shopDomain, now);
 
-    // Recreate admin client with new token
-    const { admin: newAdmin } = await shopify.unauthenticated.admin(shopDomain);
+    // Recreate admin client with fresh token from DB
+    const freshAdmin = await getFreshAdminClient(shopDomain);
     console.log(`[Bulk] Token refreshed for ${shopDomain}, retrying...`);
 
-    return rateLimitedGraphql(newAdmin, query, vars || {});
+    return rateLimitedGraphql(freshAdmin, query, vars || {});
   }
 }
 
@@ -184,9 +224,9 @@ async function gqlWithRefresh(shopDomain: string, adminRef: { current: any }, qu
       throw new Error(`Token expirado para ${shopDomain} y no se pudo refrescar. El merchant debe acceder al admin para renovar.`);
     }
 
-    // Recreate admin client with new token
-    const { admin: newAdmin } = await shopify.unauthenticated.admin(shopDomain);
-    adminRef.current = newAdmin;
+    // Recreate admin client with fresh token from DB
+    const freshAdmin = await getFreshAdminClient(shopDomain);
+    adminRef.current = freshAdmin;
     console.log(`[Bulk] Token refreshed mid-import for ${shopDomain}, retrying...`);
 
     return rateLimitedGraphql(adminRef.current, query, vars || {});
@@ -239,7 +279,7 @@ export async function cancelBulkImport(configId: string, shopDomain: string): Pr
   const pendingOps = await prisma.bulkJobOp.findMany({
     where: { jobId: activeJob.id, status: { in: ["pending", "launched", "processing"] } },
   });
-  const { admin } = await shopify.unauthenticated.admin(shopDomain);
+  const admin = await getFreshAdminClient(shopDomain);
   for (const op of pendingOps) {
     if (op.shopifyOpId) {
       try {
@@ -408,7 +448,7 @@ export async function runBulkImport({
 
   console.log(`[Bulk] Best session for ${shopDomain}: id=${bestSession.id}, expires=${bestSession.expires?.toISOString() || "null"}`);
 
-  const { admin } = await shopify.unauthenticated.admin(shopDomain);
+  const admin = await getFreshAdminClient(shopDomain);
   console.log(`[Bulk] Admin client created for ${shopDomain}`);
 
   // Pre-flight: verify token is valid before starting bulk operation
@@ -1030,7 +1070,8 @@ async function prepareAndLaunch(
         return row[m.csvColumn] || m.defaultValue || "0";
       })()
     );
-    const stockQty = quantity;
+    // Ensure quantity is never negative (Shopify doesn't accept negative stock)
+    const stockQty = Math.max(0, quantity);
 
     if (config.skipZeroStockCreate && stockQty <= 0) {
       zeroStockSkippedCount++;
@@ -2152,7 +2193,7 @@ export async function reconcileStaleBulkJobs(): Promise<void> {
         await reconcileMutationsPhase(job);
       } else if (job.phase === "finalizing") {
         await ensureSingleSession(job.shopDomain);
-        const { admin } = await shopify.unauthenticated.admin(job.shopDomain);
+        const admin = await getFreshAdminClient(job.shopDomain);
         console.log(`[Bulk] Reconcile finalizing: admin client created for ${job.shopDomain}`);
         await finalizeBulkImport(job, admin);
       }
@@ -2231,7 +2272,7 @@ async function reconcileLookupPhase(job: any): Promise<void> {
     return;
   }
 
-  const { admin } = await shopify.unauthenticated.admin(job.shopDomain);
+  const admin = await getFreshAdminClient(job.shopDomain);
 
   const lookupRow =
     job.ops.find((o: any) => o.kind === "lookup" && o.shopifyOpId === job.lookupOpId) ||
@@ -2288,7 +2329,7 @@ async function reconcileMutationsPhase(job: any): Promise<void> {
     return;
   }
 
-  const { admin } = await shopify.unauthenticated.admin(job.shopDomain);
+  const admin = await getFreshAdminClient(job.shopDomain);
   const manifest = JSON.parse(await fs.readFile(job.manifestPath, "utf-8"));
 
   const filesByKey = new Map<string, string>();

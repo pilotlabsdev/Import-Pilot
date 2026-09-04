@@ -1,6 +1,6 @@
 import { prisma, isUrlSource } from "./db.server";
 import { enqueue, processNext } from "./queue-manager.server";
-import { reconcileStaleBulkJobs, cleanupFinishedBulkJobs, handleBulkOperationFinish } from "./bulk-import.server";
+import { reconcileStaleBulkJobs, cleanupFinishedBulkJobs, handleBulkOperationFinish, getFreshAdminClient } from "./bulk-import.server";
 import { reconcileAllShops } from "./reconciliation.server";
 import { isImportActive } from "./import-locks.server";
 import { getSubscriptionInfo, enforcePlanLimits } from "./billing.server";
@@ -142,7 +142,7 @@ async function checkBulkOperations() {
 
     for (const { shopDomain } of activeJobs) {
       try {
-        const { admin } = await shopify.unauthenticated.admin(shopDomain);
+        const admin = await getFreshAdminClient(shopDomain);
         const res = await admin.graphql(`query { currentBulkOperation { id status objectCount errorCode } }`);
         const json = await res.json();
         const op = json.data?.currentBulkOperation;
