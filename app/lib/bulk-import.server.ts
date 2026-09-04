@@ -2130,8 +2130,8 @@ export async function reconcileStaleBulkJobs(): Promise<void> {
       continue;
     }
 
-    // If mutations phase with no progress (mutationOpsDone = 0) after 20 minutes → webhook failing
-    if (job.phase === "mutations" && job.manifestPath && (job.mutationOpsDone || 0) === 0 && ageMs > 20 * 60 * 1000) {
+    // If mutations phase with no progress (mutationOpsDone = 0) after 6 hours → something is seriously wrong
+    if (job.phase === "mutations" && job.manifestPath && (job.mutationOpsDone || 0) === 0 && ageMs > 6 * 60 * 60 * 1000) {
       console.error(`[Bulk] Job ${job.id.slice(0,8)} stuck in mutations phase with 0 ops done after ${Math.round(ageMs/60000)}min → failing`);
       await failJob(job, "systemError.mutations_no_progress");
       continue;
@@ -2326,7 +2326,9 @@ async function reconcileMutationsPhase(job: any): Promise<void> {
     if (!bulk) continue;
 
     const status = (bulk.status || "").toLowerCase();
+    console.log(`[Bulk] Polling op ${op.shopifyOpId} (kind=${op.kind}, index=${op.index}): status=${status}`);
     if (["completed", "failed", "canceled"].includes(status)) {
+      console.log(`[Bulk] Op ${op.shopifyOpId} finished with status=${status}, processing results...`);
       await handleBulkOperationFinish({ admin, opId: op.shopifyOpId, status });
     }
   }
