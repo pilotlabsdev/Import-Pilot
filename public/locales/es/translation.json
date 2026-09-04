@@ -117,6 +117,7 @@
   "import.runningMessage": "Ya hay una importación activa para este proveedor. No se lanzarán nuevas importaciones hasta que termine.",
   "import.queued": "Importación encolada",
   "import.queuedMessage": "Importación encolada (posición {{position}}). Se ejecutará cuando termine la actual.",
+  "import.alreadyQueued": "Este proveedor ya tiene una importación en cola o en proceso. Solo puede haber una importación a la vez por proveedor.",
   "import.launched": "Importación lanzada",
   "import.launchedMessage": "La importación se está procesando en background. Consulta el Historial.",
   "import.error": "Error en la importación",

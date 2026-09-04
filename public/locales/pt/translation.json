@@ -117,6 +117,7 @@
   "import.runningMessage": "Já existe uma importação ativa para este fornecedor. Novas importações não serão iniciadas até que a atual termine.",
   "import.queued": "Importação enfileirada",
   "import.queuedMessage": "Importação enfileirada (posição {{position}}). Será executada quando a atual terminar.",
+  "import.alreadyQueued": "Este fornecedor já tem uma importação em execução ou na fila. Apenas uma importação por fornecedor de cada vez.",
   "import.launched": "Importação iniciada",
   "import.launchedMessage": "A importação está sendo processada em segundo plano. Consulte o Histórico.",
   "import.error": "Erro na importação",

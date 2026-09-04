@@ -32,6 +32,7 @@ export interface QueueItem {
   stockChanges?: number;
   errorCount?: number;
   errorDetails?: any[];
+  alreadyQueued?: boolean;
 }
 
 export async function enqueue(params: {
@@ -57,19 +58,19 @@ export async function enqueue(params: {
 
   if (hasRunning && existingQueued) {
     console.log(`[Queue] Skip enqueue for ${params.configId}: already 1 running + 1 queued`);
-    return existingQueued as QueueItem;
+    return { ...existingQueued, alreadyQueued: true } as QueueItem;
   }
 
   if (hasRunning && !existingQueued) {
     if (existingForConfig.length >= 2) {
       console.log(`[Queue] Skip enqueue for ${params.configId}: already running, will queue next`);
-      return existingForConfig[0] as QueueItem;
+      return { ...existingForConfig[0], alreadyQueued: true } as QueueItem;
     }
   }
 
   if (existingQueued) {
     console.log(`[Queue] Skip enqueue for ${params.configId}: already ${existingForConfig.length} queued/running`);
-    return existingQueued as QueueItem;
+    return { ...existingQueued, alreadyQueued: true } as QueueItem;
   }
 
   const maxPos = await prisma.importQueue.aggregate({

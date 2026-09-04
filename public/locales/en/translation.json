@@ -117,6 +117,7 @@
   "import.runningMessage": "There is already an active import for this supplier. No new imports will be launched until it finishes.",
   "import.queued": "Import queued",
   "import.queuedMessage": "Import queued (position {{position}}). It will run when the current one finishes.",
+  "import.alreadyQueued": "This supplier already has an import running or queued. Only one import at a time per supplier.",
   "import.launched": "Import launched",
   "import.launchedMessage": "The import is being processed in the background. Check the History tab.",
   "import.error": "Import error",

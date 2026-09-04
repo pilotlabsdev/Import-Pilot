@@ -83,9 +83,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return data({
         success: true,
         queued: true,
-        position: item.position,
-        messageKey: "import.queuedMessage",
-        messageParams: { position: String(item.position) },
+        position: item.alreadyQueued ? undefined : item.position,
+        messageKey: item.alreadyQueued ? "import.alreadyQueued" : "import.queuedMessage",
+        messageParams: item.alreadyQueued
+          ? { supplier: config.name || "" }
+          : { position: String(item.position) },
       });
     }
 
