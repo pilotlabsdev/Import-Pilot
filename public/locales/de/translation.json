@@ -706,5 +706,6 @@
   "systemError.query_bad_status": "Bulk-Query für bestehende Produkte mit Status \"{{status}}\" abgeschlossen",
   "systemError.op_bad_status": "Bulk-Operation {{kind}} #{{index}} mit Status \"{{status}}\" abgeschlossen",
   "systemError.job_too_old": "Job hat maximale Lebenszeit überschritten ({{minutes}}min).",
-  "systemError.no_session": "Keine Sitzung für {{shop}}. Installiere die App über den Admin."
+  "systemError.no_session": "Keine Sitzung für {{shop}}. Installiere die App über den Admin.",
+  "systemError.process_restarted": "Der Import wurde durch einen Serverneustart unterbrochen. Sie können ihn manuell erneut versuchen."
 }

@@ -706,5 +706,6 @@
   "systemError.query_bad_status": "Bulk query per prodotti esistenti terminata con stato \"{{status}}\"",
   "systemError.op_bad_status": "Operazione bulk {{kind}} #{{index}} terminata con stato \"{{status}}\"",
   "systemError.job_too_old": "Job ha superato il tempo massimo di vita ({{minutes}}min).",
-  "systemError.no_session": "Nessuna sessione per {{shop}}. Installa l'app dall'admin."
+  "systemError.no_session": "Nessuna sessione per {{shop}}. Installa l'app dall'admin.",
+  "systemError.process_restarted": "L'importazione è stata interrotta da un riavvio del server. Puoi riprovarla manualmente."
 }
