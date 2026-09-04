@@ -116,6 +116,7 @@
   "import.running": "Import en cours",
   "import.runningMessage": "Un import est déjà en cours pour ce fournisseur. Aucun nouvel import ne sera lancé tant que celui-ci n'est pas terminé.",
   "import.queued": "Import mis en file d'attente",
+  "import.queuedMessage": "Import mis en file d'attente (position {{position}}). Il sera exécuté une fois l'actuel terminé.",
   "import.launched": "Import lancé",
   "import.launchedMessage": "L'import est en cours de traitement en arrière-plan. Consultez l'Historique.",
   "import.error": "Erreur lors de l'import",

@@ -84,7 +84,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         success: true,
         queued: true,
         position: item.position,
-        message: `Importación encolada (posición ${item.position}). Se ejecutará cuando termine la actual.`,
+        messageKey: "import.queuedMessage",
+        messageParams: { position: String(item.position) },
       });
     }
 

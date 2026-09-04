@@ -314,7 +314,7 @@ export default function ImportTab() {
   };
 
   const runAction = fetcher.data as
-    | { success?: boolean; error?: string; bulk?: boolean; message?: string; queued?: boolean; position?: number; result?: { created: number; updated: number; unchanged: number } }
+    | { success?: boolean; error?: string; bulk?: boolean; message?: string; queued?: boolean; position?: number; messageKey?: string; messageParams?: Record<string, string>; result?: { created: number; updated: number; unchanged: number } }
     | null;
 
   const statusLabel = (status: string) => {
@@ -348,7 +348,9 @@ export default function ImportTab() {
         {runAction?.success && (
           <Layout.Section>
             <Banner tone={runAction.queued ? "warning" : "info"} title={runAction.queued ? t("import.queued") : t("import.launched")}>
-              {runAction.message || t("import.launchedMessage")}
+              {runAction.queued && runAction.messageKey
+                ? t(runAction.messageKey, runAction.messageParams || {})
+                : runAction.message || t("import.launchedMessage")}
               {runAction.queued && (
                 <div style={{ marginTop: "8px" }}>
                   <Button url="/app/queue" size="slim">{t("import.viewQueue")}</Button>

@@ -116,6 +116,7 @@
   "import.running": "Importazione in corso",
   "import.runningMessage": "C'è già un'importazione attiva per questo fornitore. Non verranno avviate nuove importazioni fino al termine.",
   "import.queued": "Importazione accodata",
+  "import.queuedMessage": "Importazione accodata (posizione {{position}}). Verrà eseguita al termine di quella corrente.",
   "import.launched": "Importazione avviata",
   "import.launchedMessage": "L'importazione si sta elaborando in background. Consulta lo Storico.",
   "import.error": "Errore nell'importazione",

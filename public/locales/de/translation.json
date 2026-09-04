@@ -116,6 +116,7 @@
   "import.running": "Import läuft",
   "import.runningMessage": "Es läuft bereits ein Import für diesen Lieferant. Neue Imports werden gestartet, sobald dieser abgeschlossen ist.",
   "import.queued": "Import in Warteschlange",
+  "import.queuedMessage": "Import in Warteschlange (Position {{position}}). Er wird ausgeführt, sobald der aktuelle abgeschlossen ist.",
   "import.launched": "Import gestartet",
   "import.launchedMessage": "Der Import wird im Hintergrund verarbeitet. Siehe Verlauf.",
   "import.error": "Importfehler",
