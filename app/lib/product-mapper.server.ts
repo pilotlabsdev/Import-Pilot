@@ -54,6 +54,10 @@ export interface ProductSetInput {
     };
   }>;
   collections?: string[];
+  productOptions?: Array<{
+    name: string;
+    values: Array<{ name: string }>;
+  }>;
 }
 
 interface ColumnMap {
@@ -417,7 +421,7 @@ export function mapCsvRowToProductSetUpdate(
   if (!opts.has("collections")) delete input.collections;
 
   const variant: any = {
-    optionValues: [],
+    optionValues: [{ optionName: "Title", name: "Default Title" }],
     sku: sku || undefined,
     barcode: ean,
     inventoryQuantities: [],
@@ -442,6 +446,8 @@ export function mapCsvRowToProductSetUpdate(
   if (opts.has("collections")) {
     input.collections = collections;
   }
+
+  input.productOptions = [{ name: "Title", values: [{ name: "Default Title" }] }];
 
   delete input.files;
 
