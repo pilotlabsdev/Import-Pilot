@@ -13,7 +13,7 @@ const IMPORT_COOLDOWN_MS = 600_000;
 let started = false;
 let refreshing = false;
 let reconcileCounter = 0;
-const RECONCILE_INTERVAL = 720;
+const RECONCILE_INTERVAL = 60;
 const configStaggerOffset = new Map<string, number>();
 const configLocks = new Set<string>();
 
