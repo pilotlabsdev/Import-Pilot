@@ -167,6 +167,7 @@ model ImportLog {
   config          ImportConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
 
   @@index([shopDomain])
+  @@index([configId, status])
 }
 
 // Mapeo SKU proveedor → Product ID Shopify
@@ -223,9 +224,8 @@ model BulkJob {
   config          ImportConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
 
   @@index([shopDomain])
+  @@index([configId, phase])
 }
-
-// Configuración global de la tienda (1 por shop)
 model ShopSettings {
   id                 String   @id @default(cuid())
   shopDomain         String   @unique
@@ -267,6 +267,8 @@ model BulkJobOp {
   startedAt   DateTime?
   createdAt   DateTime @default(now())
   job         BulkJob  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, status])
 }
 
 // Configuración de notificaciones
