@@ -1894,7 +1894,12 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
           console.log(`[Bulk] inventorySetQuantities OK: ${changes.length} cambios`);
         }
       } catch (error: any) {
-        console.error("[Bulk] Error ajustando inventario:", error);
+        const gqlErrors = error?.graphQLErrors?.map((e: any) => ({
+          message: e.message,
+          field: e.extensions?.field,
+          code: e.extensions?.code,
+        }));
+        console.error(`[Bulk] Error ajustando inventario: ${error?.message || String(error)}`, gqlErrors ? JSON.stringify(gqlErrors) : "");
       }
     }
 
