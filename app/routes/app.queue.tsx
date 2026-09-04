@@ -154,24 +154,26 @@ export default function QueuePage() {
                           <BlockStack gap="100">
                             <ProgressBar progress={pct} size="small" />
                             <InlineStack gap="300" blockAlign="center">
-                              <Text as="span" variant="bodySm">
-                                {progress.processedProducts} / {progress.totalProducts} {t("queue.products")}
-                              </Text>
                               {item.importMode === "bulk" ? (
                                 <Text as="span" variant="bodySm" tone="subdued">
                                   {progress.phase === "finalizing"
                                     ? t("queue.finalizingInventory")
                                     : progress.totalMutationOps > 0
                                       ? progress.created > 0 || progress.updated > 0 || progress.unchanged > 0
-                                        ? `${t("common.created")}: ${progress.created || 0} · ${t("common.updated")}: ${progress.updated || 0} · ${t("common.unchanged")}: ${progress.unchanged || 0}`
-                                        : `${t("queue.opsProgress", { done: progress.mutationOpsDone, total: progress.totalMutationOps })} · ${t("queue.processedOf", { done: progress.processedProducts, total: progress.totalProducts })}${progress.excluded > 0 ? ` · ${t("common.excluded")}: ${progress.excluded}` : ""}`
-                                      : `${t("queue.processedOf", { done: progress.processedProducts, total: progress.totalProducts })}${progress.excluded > 0 ? ` · ${t("common.excluded")}: ${progress.excluded}` : ""}`
+                                        ? `${progress.processedProducts} / ${progress.totalProducts} ${t("queue.products")} · ${t("common.created")}: ${progress.created || 0} · ${t("common.updated")}: ${progress.updated || 0} · ${t("common.unchanged")}: ${progress.unchanged || 0}${progress.excluded > 0 ? ` · ${t("common.excluded")}: ${progress.excluded}` : ""}`
+                                        : `${t("queue.opsProgress", { done: progress.mutationOpsDone, total: progress.totalMutationOps })} · ${progress.processedProducts} / ${progress.totalProducts} ${t("queue.products")}${progress.excluded > 0 ? ` · ${t("common.excluded")}: ${progress.excluded}` : ""}`
+                                      : `${progress.processedProducts} / ${progress.totalProducts} ${t("queue.products")}${progress.excluded > 0 ? ` · ${t("common.excluded")}: ${progress.excluded}` : ""}`
                                   }
                                 </Text>
                               ) : (
-                                <Text as="span" variant="bodySm" tone="subdued">
-                                  {t("queue.lastSku")} {progress.lastSku || "—"}
-                                </Text>
+                                <>
+                                  <Text as="span" variant="bodySm">
+                                    {progress.processedProducts} / {progress.totalProducts} {t("queue.products")}
+                                  </Text>
+                                  <Text as="span" variant="bodySm" tone="subdued">
+                                    {t("queue.lastSku")} {progress.lastSku || "—"}
+                                  </Text>
+                                </>
                               )}
                               {progress.errors > 0 && (
                                 <Badge tone="critical">{`${progress.errors} ${t("common.errors")}`}</Badge>

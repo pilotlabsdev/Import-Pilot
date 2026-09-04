@@ -614,6 +614,13 @@ export async function getQueueItemProgress(itemId: string): Promise<{
   lastSku: string;
   status: string;
   errors: number;
+  phase?: string;
+  totalMutationOps?: number;
+  mutationOpsDone?: number;
+  created?: number;
+  updated?: number;
+  unchanged?: number;
+  excluded?: number;
 } | null> {
   const item = await prisma.importQueue.findUnique({ where: { id: itemId } });
   if (!item || !item.logId) return null;
@@ -637,11 +644,37 @@ export async function getQueueItemProgress(itemId: string): Promise<{
   const processed = (log.created || 0) + (log.updated || 0) + (log.unchanged || 0) + (log.excludedCount || 0);
   const errorCount = log.errors ? (JSON.parse(log.errors) as any[]).length : 0;
 
+  // For bulk mode, also fetch BulkJob for real-time progress
+  const bulkJob = item.importMode === "bulk"
+    ? await prisma.bulkJob.findFirst({
+        where: { logId: log.status === "running" ? item.logId : "", phase: { in: ["lookup", "mutations", "finalizing"] } },
+        select: {
+          phase: true,
+          totalMutationOps: true,
+          mutationOpsDone: true,
+          totalCount: true,
+          createCount: true,
+          updateCount: true,
+          unchangedCount: true,
+          excludedCount: true,
+        },
+      }).catch(() => null)
+    : null;
+
   return {
-    totalProducts: log.totalProducts || 0,
-    processedProducts: processed,
+    totalProducts: bulkJob?.totalCount || log.totalProducts || 0,
+    processedProducts: bulkJob?.mutationOpsDone && bulkJob.totalMutationOps
+      ? Math.round((bulkJob.mutationOpsDone / bulkJob.totalMutationOps) * (bulkJob.totalCount || 0))
+      : processed,
     lastSku: log.lastSku || "",
     status: log.status,
     errors: errorCount,
+    phase: bulkJob?.phase || undefined,
+    totalMutationOps: bulkJob?.totalMutationOps || undefined,
+    mutationOpsDone: bulkJob?.mutationOpsDone || undefined,
+    created: bulkJob?.createCount ?? undefined,
+    updated: bulkJob?.updateCount ?? undefined,
+    unchanged: bulkJob?.unchangedCount ?? undefined,
+    excluded: bulkJob?.excludedCount ?? undefined,
   };
 }
