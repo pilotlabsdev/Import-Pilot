@@ -317,7 +317,7 @@ export async function cancelBulkImport(configId: string, shopDomain: string): Pr
 }
 
 // --- productSet unified mutation (replaces productCreate + productUpdate + post-processing) ---
-const PRODUCT_SET_MUTATION = `mutation call($input: ProductSetInput!) { productSet(input: $input) { product { id title variants(first: 1) { edges { node { id sku barcode price compareAtPrice inventoryItem { id } } } } } userErrors { field message } } }`;
+const PRODUCT_SET_MUTATION = `mutation call($identifier: ProductSetIdentifiers, $input: ProductSetInput!) { productSet(identifier: $identifier, input: $input) { product { id title variants(first: 1) { edges { node { id sku barcode price compareAtPrice inventoryItem { id } } } } } userErrors { field message } } }`;
 
 // Legacy mutations kept for backward compatibility during reconcile of in-flight jobs
 const LEGACY_CREATE_MUTATION = `mutation call($input: ProductInput!) { productCreate(input: $input) { product { id title variants { edges { node { id sku barcode inventoryItem { id } } } } } userErrors { field message } } }`;
@@ -965,8 +965,10 @@ async function prepareAndLaunch(
     if (createBytes >= MAX_CHUNK_BYTES) await flush("create");
   };
 
-  const pushUpdate = async (inputObj: any, meta: MetaLine) => {
-    const line = JSON.stringify({ input: inputObj });
+  const pushUpdate = async (inputObj: any, meta: MetaLine, identifier?: { id: string }) => {
+    const payload: any = { input: inputObj };
+    if (identifier) payload.identifier = identifier;
+    const line = JSON.stringify(payload);
     updateLines.push(line);
     updateMetas.push(meta);
     updateBytes += Buffer.byteLength(line);
@@ -1158,7 +1160,7 @@ async function prepareAndLaunch(
         locationId!,
         effectiveOpts
       );
-      await pushUpdate(inputObj, meta);
+      await pushUpdate(inputObj, meta, { id: match.productId });
     } else {
       const inputObj = mapCsvRowToProductSet(
         row,
