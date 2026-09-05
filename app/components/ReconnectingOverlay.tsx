@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 
 interface ReconnectingOverlayProps {
   onRetry?: () => void;
 }
 
 export function ReconnectingOverlay({ onRetry }: ReconnectingOverlayProps) {
+  const { t } = useTranslation();
   const [visible, setVisible] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [maxReached, setMaxReached] = useState(false);
@@ -110,9 +112,7 @@ export function ReconnectingOverlay({ onRetry }: ReconnectingOverlayProps) {
         }}
       />
       <span style={{ fontWeight: 500 }}>
-        {maxReached
-          ? "Reconectando..."
-          : "Reconectando..."}
+        {t("systemError.reconnecting")}
       </span>
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>

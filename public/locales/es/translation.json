@@ -709,5 +709,6 @@
   "systemError.op_bad_status": "Operación bulk {{kind}} #{{index}} terminó con estado \"{{status}}\"",
   "systemError.job_too_old": "Job excedió tiempo máximo de vida ({{minutes}}min).",
   "systemError.no_session": "No hay sesión para {{shop}}. Instala la app desde el admin.",
-  "systemError.process_restarted": "La importación se interrumpió por un reinicio del servidor. Puedes reintentarla manualmente."
+  "systemError.process_restarted": "La importación se interrumpió por un reinicio del servidor. Puedes reintentarla manualmente.",
+  "systemError.reconnecting": "Reconectando..."
 }

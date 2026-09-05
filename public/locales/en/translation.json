@@ -710,5 +710,6 @@
   "systemError.op_bad_status": "Bulk operation {{kind}} #{{index}} finished with status \"{{status}}\"",
   "systemError.job_too_old": "Job exceeded maximum lifetime ({{minutes}}min).",
   "systemError.no_session": "No session for {{shop}}. Install the app from admin.",
-  "systemError.process_restarted": "The import was interrupted by a server restart. You can retry it manually."
+  "systemError.process_restarted": "The import was interrupted by a server restart. You can retry it manually.",
+  "systemError.reconnecting": "Reconnecting..."
 }
