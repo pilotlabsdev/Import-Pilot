@@ -9,6 +9,7 @@ interface NotificationPayload {
   unchanged: number;
   priceChanges: number;
   stockChanges: number;
+  costChanges: number;
   errors: Array<{ sku: string; error: string; lineNumber?: number }>;
   duration: string;
 }
@@ -50,6 +51,7 @@ export async function sendNotification(payload: NotificationPayload): Promise<vo
             unchanged: payload.unchanged,
             priceChanges: payload.priceChanges,
             stockChanges: payload.stockChanges,
+            costChanges: payload.costChanges,
             errors: payload.errors.length,
             duration: payload.duration,
           },

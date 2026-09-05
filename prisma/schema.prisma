@@ -157,6 +157,7 @@ model ImportLog {
   unchanged       Int      @default(0)
   priceChanges    Int      @default(0)
    stockChanges    Int      @default(0)
+   costChanges     Int      @default(0)
    excludedCount   Int      @default(0)
    errors          String?
   previewData     String?
@@ -216,6 +217,7 @@ model BulkJob {
   errorCount       Int      @default(0)
   priceChanges     Int      @default(0)
    stockChanges     Int      @default(0)
+   costChanges      Int      @default(0)
    excludedCount    Int      @default(0)
    forceUpdate      Boolean  @default(false)
   createdAt        DateTime @default(now())

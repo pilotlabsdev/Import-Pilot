@@ -253,6 +253,7 @@ interface ImportResult {
   excluded: number;
   priceChanges: number;
   stockChanges: number;
+  costChanges: number;
   errors: Array<{ sku: string; error: string; lineNumber?: number }>;
   lastSku: string;
 }
@@ -339,6 +340,7 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
     excluded: 0,
     priceChanges: 0,
     stockChanges: 0,
+    costChanges: 0,
     errors: [],
     lastSku: "",
   };
@@ -572,6 +574,7 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
         unchanged: result.unchanged,
         priceChanges: result.priceChanges,
         stockChanges: result.stockChanges,
+        costChanges: result.costChanges,
         excludedCount: excludedCount + result.excluded,
         errors: cancelled
           ? JSON.stringify([{ sku: "SYSTEM", error: "systemError.cancelled_manually" }])
@@ -1393,6 +1396,10 @@ async function processProduct({
       result.unchanged++;
       return;
     }
+
+    if (priceChanged) result.priceChanges++;
+    if (stockChanged) result.stockChanges++;
+    if (costChanged) result.costChanges++;
 
 
     const productPatch: any = { id: existing.shopifyProductId };

@@ -1350,6 +1350,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
   let unchangedCount = 0;
   let priceChanges = 0;
   let stockChanges = 0;
+  let costChanges = 0;
   let opErrors = 0;
 
   // Proactive refresh before post-processing mutations
@@ -1487,6 +1488,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
         updatedCount++;
         if (meta.priceChanged) priceChanges++;
         if (meta.stockChanged) stockChanges++;
+        if (meta.costChanged) costChanges++;
       } else {
         unchangedCount++;
       }
@@ -1509,6 +1511,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       unchangedCount: { increment: op.kind === "update" ? unchangedCount : 0 },
       priceChanges: { increment: priceChanges },
       stockChanges: { increment: stockChanges },
+      costChanges: { increment: costChanges },
       errorCount: { increment: opErrors },
     },
   });
@@ -1524,6 +1527,9 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
         updated: freshJob.updateCount,
         unchanged: freshJob.unchangedCount,
         excludedCount: freshJob.excludedCount,
+        priceChanges: freshJob.priceChanges,
+        stockChanges: freshJob.stockChanges,
+        costChanges: freshJob.costChanges,
       },
     }).catch(() => {});
   }
@@ -1637,6 +1643,7 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
         unchanged: job.unchangedCount,
         priceChanges: job.priceChanges,
         stockChanges: job.stockChanges,
+        costChanges: job.costChanges,
         excludedCount: job.excludedCount,
         errors: errors.length > 0 ? JSON.stringify(errors) : null,
         completedAt: new Date(),
@@ -1674,6 +1681,7 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
       unchanged: job.unchangedCount,
       priceChanges: job.priceChanges,
       stockChanges: job.stockChanges,
+      costChanges: job.costChanges,
       errors,
       duration: `${Math.round((Date.now() - new Date(log.startedAt).getTime()) / 1000)}s`,
     });
@@ -1715,6 +1723,7 @@ async function failJob(job: any, message: string): Promise<void> {
     unchanged: 0,
     priceChanges: 0,
     stockChanges: 0,
+    costChanges: 0,
     errors: [{ sku: "SYSTEM", error: message, lineNumber: 0 }],
     duration: "0s",
   });

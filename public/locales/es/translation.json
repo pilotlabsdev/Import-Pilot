@@ -383,6 +383,7 @@
   "history.line": "línea",
   "history.priceDown": "Precio ↓",
   "history.stockDown": "Stock ↓",
+  "history.costDown": "Coste ↓",
   
   "queue.title": "Cola de importaciones",
   "queue.inProgress": "En proceso",
@@ -397,6 +398,7 @@
   "queue.starting": "Iniciando…",
   "queue.priceDown": "↓ Precio",
   "queue.stockDown": "↓ Stock",
+  "queue.costDown": "↓ Coste",
   "queue.andMore": "…y {{count}} más",
   "queue.products": "productos",
   "queue.lastSku": "Último SKU:",
