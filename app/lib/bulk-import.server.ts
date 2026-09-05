@@ -20,6 +20,7 @@ import {
 import { getLocationId } from "./location.server";
 import { ensureMetafieldDefinitions } from "./metafield-definitions";
 import { sendNotification } from "./notifications.server";
+import { setBulkActive, clearBulkActive } from "./bulk-active-cache.server";
 import shopify from "~/shopify.server";
 
 /**
@@ -504,6 +505,8 @@ export async function runBulkImport({
       forceUpdate,
     },
   });
+
+  setBulkActive(shopDomain);
 
   const lookupOp = await runLookupQuery(admin, shopDomain);
   if (!lookupOp.id) {
@@ -1676,7 +1679,9 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
     });
 
     await cleanupOldLogs(job.configId).catch(() => {});
+    clearBulkActive(job.shopDomain);
   } catch (error: any) {
+    clearBulkActive(job.shopDomain);
     await failJob(job, error?.message || "systemError.finalize_error");
   }
 }
@@ -1723,6 +1728,7 @@ async function failJob(job: any, message: string): Promise<void> {
     const { processNext } = await import("./queue-manager.server");
     await processNext(job.shopDomain);
   } catch {}
+  clearBulkActive(job.shopDomain);
 }
 
 // Limpieza de jobs stuck (sin lookupOpId o manifestPath) que no se resolverán solos

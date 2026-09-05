@@ -3,6 +3,7 @@ import { authenticate } from "~/shopify.server";
 import { prisma, ensureSingleSession } from "~/lib/db.server";
 import shopify from "~/shopify.server";
 import { handleBulkOperationFinish } from "~/lib/bulk-import.server";
+import { isBulkActive } from "~/lib/bulk-active-cache.server";
 import { enforcePlanLimits, upsertSubscription } from "~/lib/billing.server";
 import crypto from "node:crypto";
 
@@ -114,12 +115,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       break;
     }
     case "PRODUCTS_UPDATE": {
-      // Skip PRODUCTS_UPDATE during active bulk imports — bulk op already updates mappings
-      const activeBulk = await prisma.bulkJob.findFirst({
-        where: { shopDomain: shop, phase: { in: ["lookup", "mutations", "finalizing"] } },
-        select: { id: true },
-      }).catch(() => null);
-      if (activeBulk) break;
+      // Skip during active bulk imports — bulk op already updates mappings (0 DB queries)
+      if (isBulkActive(shop)) break;
 
       const productId = payload.id ? `gid://shopify/Product/${payload.id}` : null;
       if (!productId) break;
@@ -197,12 +194,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       break;
     }
     case "INVENTORY_ITEMS_UPDATE": {
-      // Skip during active bulk imports — bulk op already updates cost
-      const activeBulkInv = await prisma.bulkJob.findFirst({
-        where: { shopDomain: shop, phase: { in: ["lookup", "mutations", "finalizing"] } },
-        select: { id: true },
-      }).catch(() => null);
-      if (activeBulkInv) break;
+      // Skip during active bulk imports — bulk op already updates cost (0 DB queries)
+      if (isBulkActive(shop)) break;
 
       const inventoryItemId = payload.id ? `gid://shopify/InventoryItem/${payload.id}` : null;
       if (!inventoryItemId) break;
