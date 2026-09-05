@@ -1,5 +1,5 @@
 import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { Outlet, useLoaderData, useRouteError } from "react-router";
+import { Outlet, useLoaderData, useRouteError, isRouteErrorResponse } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { NavMenu } from "@shopify/app-bridge-react";
@@ -12,6 +12,7 @@ import { prisma } from "~/lib/db.server";
 import { TutorialProvider, stopTutorial } from "~/components/TutorialProvider";
 import { CrispChat } from "~/components/CrispChat";
 import { requireSubscription, getSubscriptionInfo } from "~/lib/billing.server";
+import { ReconnectingOverlay, triggerReconnect } from "~/components/ReconnectingOverlay";
 
 function handleNavClick(e: React.MouseEvent<HTMLAnchorElement>) {
   stopTutorial();
@@ -103,9 +104,28 @@ export default function App() {
     );
   }
 
+  // Listen for fetch failures and trigger reconnect on auth errors
+  useEffect(() => {
+    const origFetch = window.fetch;
+    window.fetch = async (...args) => {
+      try {
+        const res = await origFetch(...args);
+        if (res.status === 401 || res.status === 502) {
+          triggerReconnect();
+        }
+        return res;
+      } catch (err) {
+        triggerReconnect();
+        throw err;
+      }
+    };
+    return () => { window.fetch = origFetch; };
+  }, []);
+
   return (
     <AppProvider apiKey={apiKey}>
       <TutorialProvider>
+        <ReconnectingOverlay />
         <ClientOnly>
           <NavMenu>
             <a href="/app" rel="home" onClick={handleNavClick}>{t("nav.dashboard")}</a>
@@ -138,28 +158,10 @@ export function ErrorBoundary() {
     (error instanceof Error && /401|unauthorized/i.test(error.message));
 
   if (isAuthError) {
+    triggerReconnect();
     return (
       <AppProvider apiKey={process.env.SHOPIFY_API_KEY || ""}>
-        <div style={{ padding: "40px", textAlign: "center" }}>
-          <h2 style={{ marginBottom: "16px" }}>Sesión expirada</h2>
-          <p style={{ marginBottom: "24px", color: "#6d7175" }}>
-            La conexión con Shopify se perdió. Haz clic en el botón para reconectar.
-          </p>
-          <button
-            onClick={() => window.location.reload()}
-            style={{
-              padding: "8px 16px",
-              borderRadius: "4px",
-              border: "none",
-              background: "#006fbb",
-              color: "white",
-              cursor: "pointer",
-              fontSize: "14px",
-            }}
-          >
-            Reconectar
-          </button>
-        </div>
+        <ReconnectingOverlay />
       </AppProvider>
     );
   }

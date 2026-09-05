@@ -147,7 +147,7 @@ export function ErrorBoundary() {
           {isAuth ? (
             <>
               <h2 style={{ marginBottom: "12px" }}>Sesión expirada</h2>
-              <p style={{ color: "#6d7175", marginBottom: "20px" }}>La conexión con Shopify se perdió.</p>
+              <p style={{ color: "#6d7175", marginBottom: "20px" }}>Reconectando...</p>
             </>
           ) : (
             <>
@@ -155,12 +155,16 @@ export function ErrorBoundary() {
               <p style={{ color: "#6d7175", marginBottom: "20px" }}>Error del servidor. Intenta de nuevo.</p>
             </>
           )}
-          <button
-            onClick={() => window.location.reload()}
-            style={{ padding: "8px 20px", borderRadius: "4px", border: "none", background: "#006fbb", color: "white", cursor: "pointer", fontSize: "14px" }}
-          >
-            Reconectar
-          </button>
+          {isAuth ? (
+            <style>{`setTimeout(() => window.location.reload(), 2000)`}</style>
+          ) : (
+            <button
+              onClick={() => window.location.reload()}
+              style={{ padding: "8px 20px", borderRadius: "4px", border: "none", background: "#006fbb", color: "white", cursor: "pointer", fontSize: "14px" }}
+            >
+              Reconectar
+            </button>
+          )}
         </div>
         <Scripts />
       </body>
