@@ -1,5 +1,5 @@
 import type { LoaderFunctionArgs } from "react-router";
-import { data, Links, Meta, Outlet, Scripts, ScrollRestoration, useLoaderData } from "react-router";
+import { data, Links, Meta, Outlet, Scripts, ScrollRestoration, useLoaderData, useRouteError, isRouteErrorResponse } from "react-router";
 import { Suspense, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AppProvider as PolarisAppProvider } from "@shopify/polaris";
@@ -127,5 +127,43 @@ export default function App() {
         <Outlet />
       </Suspense>
     </PolarisAppProvider>
+  );
+}
+
+export function ErrorBoundary() {
+  const error = useRouteError();
+  const status = isRouteErrorResponse(error) ? error.status : 0;
+  const isAuth = status === 401;
+
+  return (
+    <html lang="en">
+      <head>
+        <meta charSet="utf-8" />
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <title>Import Pilot</title>
+      </head>
+      <body style={{ fontFamily: "Inter, sans-serif", display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh", margin: 0, background: "#f6f6f7" }}>
+        <div style={{ textAlign: "center", padding: "40px", background: "white", borderRadius: "8px", boxShadow: "0 1px 3px rgba(0,0,0,0.1)", maxWidth: "400px" }}>
+          {isAuth ? (
+            <>
+              <h2 style={{ marginBottom: "12px" }}>Sesión expirada</h2>
+              <p style={{ color: "#6d7175", marginBottom: "20px" }}>La conexión con Shopify se perdió.</p>
+            </>
+          ) : (
+            <>
+              <h2 style={{ marginBottom: "12px" }}>Algo salió mal</h2>
+              <p style={{ color: "#6d7175", marginBottom: "20px" }}>Error del servidor. Intenta de nuevo.</p>
+            </>
+          )}
+          <button
+            onClick={() => window.location.reload()}
+            style={{ padding: "8px 20px", borderRadius: "4px", border: "none", background: "#006fbb", color: "white", cursor: "pointer", fontSize: "14px" }}
+          >
+            Reconectar
+          </button>
+        </div>
+        <Scripts />
+      </body>
+    </html>
   );
 }

@@ -132,7 +132,39 @@ export default function App() {
 }
 
 export function ErrorBoundary() {
-  return boundary.error(useRouteError());
+  const error = useRouteError();
+  const isAuthError =
+    (error instanceof Response && error.status === 401) ||
+    (error instanceof Error && /401|unauthorized/i.test(error.message));
+
+  if (isAuthError) {
+    return (
+      <AppProvider apiKey={process.env.SHOPIFY_API_KEY || ""}>
+        <div style={{ padding: "40px", textAlign: "center" }}>
+          <h2 style={{ marginBottom: "16px" }}>Sesión expirada</h2>
+          <p style={{ marginBottom: "24px", color: "#6d7175" }}>
+            La conexión con Shopify se perdió. Haz clic en el botón para reconectar.
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            style={{
+              padding: "8px 16px",
+              borderRadius: "4px",
+              border: "none",
+              background: "#006fbb",
+              color: "white",
+              cursor: "pointer",
+              fontSize: "14px",
+            }}
+          >
+            Reconectar
+          </button>
+        </div>
+      </AppProvider>
+    );
+  }
+
+  return boundary.error(error);
 }
 
 export const headers: HeadersFunction = (headersArgs) => {
