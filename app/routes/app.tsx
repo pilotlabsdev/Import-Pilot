@@ -153,9 +153,9 @@ export default function App() {
 
 export function ErrorBoundary() {
   const error = useRouteError();
-  const isAuthError =
-    (error instanceof Response && error.status === 401) ||
-    (error instanceof Error && /401|unauthorized/i.test(error.message));
+  const isResponse = error instanceof Response;
+  const status = isResponse ? error.status : 0;
+  const isAuthError = status === 401 || status === 200 || status === 302;
 
   if (isAuthError) {
     triggerReconnect();

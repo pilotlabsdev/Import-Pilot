@@ -133,20 +133,22 @@ export default function App() {
 export function ErrorBoundary() {
   const error = useRouteError();
   const status = isRouteErrorResponse(error) ? error.status : 0;
-  const rawStatus = error instanceof Response ? error.status : 0;
-  const isAuth = status === 401 || rawStatus === 401;
+  const isResponse = error instanceof Response;
+  const rawStatus = isResponse ? error.status : 0;
+  const isAuthError = status === 401 || rawStatus === 401;
+  const isShopifyResponse = isResponse && (isAuthError || rawStatus === 200 || rawStatus === 302 || rawStatus === 500);
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (!isAuth) return;
-    timerRef.current = setTimeout(() => window.location.reload(), 2500);
+    if (!isShopifyResponse) return;
+    timerRef.current = setTimeout(() => window.location.reload(), 2000);
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [isAuth]);
+  }, [isShopifyResponse]);
 
-  if (isAuth) {
+  if (isShopifyResponse) {
     return (
       <html lang="en">
         <head>
@@ -157,7 +159,7 @@ export function ErrorBoundary() {
         <body style={{ fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif", display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh", margin: 0, background: "#f6f6f7" }}>
           <div style={{ textAlign: "center", padding: "40px", background: "white", borderRadius: "8px", boxShadow: "0 1px 3px rgba(0,0,0,0.1)", maxWidth: "400px" }}>
             <div style={{ width: 32, height: 32, border: "3px solid #006fbb", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 16px" }} />
-            <h2 style={{ fontSize: "16px", fontWeight: 600, marginBottom: 8, color: "#202223" }}>Sesion expirada</h2>
+            <h2 style={{ fontSize: "16px", fontWeight: 600, marginBottom: 8, color: "#202223" }}>{isAuthError ? "Sesion expirada" : "Reconectando..."}</h2>
             <p style={{ fontSize: "14px", color: "#6d7175", marginBottom: 0 }}>Reconectando...</p>
           </div>
           <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
