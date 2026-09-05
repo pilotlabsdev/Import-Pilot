@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { data, Links, Meta, Outlet, Scripts, ScrollRestoration, useLoaderData } from "react-router";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AppProvider as PolarisAppProvider } from "@shopify/polaris";
 import "@shopify/polaris/build/esm/styles.css";
@@ -123,7 +123,9 @@ export default function App() {
 
   return (
     <PolarisAppProvider i18n={polarisTranslations[effectiveLocale] || enPolaris}>
-      <Outlet />
+      <Suspense fallback={null}>
+        <Outlet />
+      </Suspense>
     </PolarisAppProvider>
   );
 }
