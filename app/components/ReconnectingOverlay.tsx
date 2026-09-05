@@ -82,14 +82,14 @@ export function ReconnectingOverlay({ onRetry }: ReconnectingOverlayProps) {
     <div
       style={{
         position: "fixed",
-        top: 0,
-        left: 0,
-        right: 0,
+        top: "12px",
+        left: "50%",
+        transform: "translateX(-50%)",
         zIndex: 99999,
-        background: "var(--p-color-bg-surface, #f6f6f7)",
-        borderBottom: "1px solid var(--p-color-border, #e1e3e5)",
-        padding: "10px 16px",
-        textAlign: "center",
+        background: "var(--p-color-bg-surface, #ffffff)",
+        border: "1px solid var(--p-color-border, #e1e3e5)",
+        borderRadius: "8px",
+        padding: "10px 20px",
         fontSize: "13px",
         fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
         color: "var(--p-color-text, #202223)",
@@ -97,7 +97,7 @@ export function ReconnectingOverlay({ onRetry }: ReconnectingOverlayProps) {
         alignItems: "center",
         justifyContent: "center",
         gap: "8px",
-        boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+        boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
       }}
     >
       <div
