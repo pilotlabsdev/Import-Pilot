@@ -359,7 +359,6 @@ export async function refreshSchedules() {
       where: { isActive: true, planPaused: false },
     });
 
-    console.log(`[Scheduler] refreshSchedules: ${configs.length} configs activos`);
 
     const activeIds = new Set(configs.map((c) => c.id));
 
@@ -401,7 +400,6 @@ export async function refreshSchedules() {
       if (storedFreq === config.frequency && timers.has(config.id)) continue;
 
       if (storedFreq && storedFreq !== config.frequency) {
-        console.log(`[Scheduler] Reprogramando ${config.name}: ${storedFreq} → ${config.frequency}`);
       }
 
       scheduledFrequencies.set(config.id, config.frequency);
@@ -445,12 +443,10 @@ async function runScheduledImport(configId: string) {
             data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "systemError.timeout_no_progress", lineNumber: 0 }]) },
           }).catch(() => {});
         } else {
-          console.log(`[Scheduler] ${configId.slice(0, 8)} ya tiene item en cola/running (${activeQueueItem.status}), skip`);
           scheduleNext(configId, scheduledFrequencies.get(configId) || "4h", null);
           return;
         }
       } else {
-        console.log(`[Scheduler] ${configId.slice(0, 8)} ya tiene item en cola/running (${activeQueueItem.status}), skip`);
         scheduleNext(configId, scheduledFrequencies.get(configId) || "4h", null);
         return;
       }

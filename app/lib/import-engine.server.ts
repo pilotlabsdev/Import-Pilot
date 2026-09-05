@@ -39,7 +39,6 @@ async function processImageQueue(admin: any, queue: ImageUploadTask[], concurren
           }`,
           { id: task.productId, media: task.files.map((f) => ({ originalSource: f.originalSource, alt: f.alt, mediaContentType: f.contentType })) }
         );
-        console.log(`[Import] Images OK: ${task.label} (${task.files.length} images)`);
       } catch (error: any) {
         console.error(`[Import] Images ERROR: ${task.label}:`, error?.message);
       }
@@ -190,7 +189,6 @@ async function adjustStock(admin: any, inventoryItemId: string, locationId: stri
     const delta = targetQuantity - currentQuantity;
 
     if (delta === 0) {
-      console.log(`[Import] Stock already correct for SKU ${sku}: ${currentQuantity}`);
       return;
     }
 
@@ -232,7 +230,6 @@ async function adjustStock(admin: any, inventoryItemId: string, locationId: stri
     const stale = stockErrors.find((e: any) => e.code === "CHANGE_FROM_QUANTITY_STALE");
 
     if (stale) {
-      console.log(`[Import] Stock STALE for SKU ${sku} (attempt ${attempt}/${maxRetries}), retrying...`);
       await sleep(500);
       continue;
     }
@@ -242,7 +239,6 @@ async function adjustStock(admin: any, inventoryItemId: string, locationId: stri
       return;
     }
 
-    console.log(`[Import] Stock OK for SKU ${sku}: delta=${delta} (now ${targetQuantity})`);
     return;
   }
   console.error(`[Import] Stock failed after ${maxRetries} retries for SKU ${sku}`);
@@ -393,7 +389,6 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
 
       const exclusion = isExcluded(row, columnMaps, config, getField, { sku: getField(row, columnMaps, "sku") || row["sku"] || "", ean: getField(row, columnMaps, "ean") || row["ean"] || "" });
       if (exclusion.excluded) {
-        if (excludedCount < 5) console.log(`[Import] EXCLUIDO SKU=${rowSku}: ${exclusion.reason}`);
         excludedCount++;
         continue;
       }
@@ -650,7 +645,6 @@ async function processProduct({
   const costPrice = parseFloat((getField(row, columnMaps, "price") || "0").replace(",", "."));
   const category = getField(row, columnMaps, "category");
   const newQty = Math.max(0, parseInt((getField(row, columnMaps, "quantity") || row["quantity"] || "0").replace(",", ".")));
-  console.log(`[Import] processProduct SKU=${sku}, existing=${!!existing}, qty=${newQty}, skipZero=${config.skipZeroStockCreate}, columnMaps=${JSON.stringify(columnMaps.map(m => m.shopifyField + "->" + m.csvColumn))}`);
 
   // === INTER-SUPPLIER CHECK: existing mapping may belong to another supplier ===
   const shopSettings0 = await prisma.shopSettings.findUnique({ where: { shopDomain } });
@@ -659,7 +653,6 @@ async function processProduct({
     const otherConfig = await prisma.importConfig.findUnique({ where: { id: existing.configId } });
     const otherSupplierName = otherConfig?.name || "desconocido";
     if (dupPolicy0 === "priority") {
-      console.log(`[Import] SKU ${sku}: existing mapping belongs to "${otherSupplierName}" (configId=${existing.configId}), current configId=${config.id}, reemplazando por priority`);
       // Execute full replace (same logic as priorityReplaceTarget below)
       const prices2 = await calculatePrices(shopDomain, sku, category, costPrice, config.id);
       const categoryMap2 = config.categoryMaps?.filter(
@@ -699,7 +692,6 @@ async function processProduct({
           e.message?.includes("not find") || e.message?.includes("NOT_FOUND") || e.message?.includes("was not found")
         );
         if (notFound) {
-          console.log(`[Import] Priority replace: product ${existing.shopifyProductId} not found, skipping replace`);
           return;
         }
         console.error(`[Import] Priority replace: productUpdate errors:`, JSON.stringify(updateErrors));
@@ -802,7 +794,6 @@ async function processProduct({
       return;
     } else {
       // skip_existing: skip (different supplier already owns this product)
-      console.log(`[Import] SKU ${sku}: existing mapping belongs to "${otherSupplierName}", saltando por skip_existing`);
       result.excluded++;
       return;
     }
@@ -811,18 +802,15 @@ async function processProduct({
   // === DUPLICATE CHECK: skip_existing and priority (EAN-based via checkDuplicate) ===
   {
     const rowEan = getField(row, columnMaps, "ean") || row["ean"] || "";
-    console.log(`[Import] SKU ${sku}: rowEan="${rowEan}", eanField=${getField(row, columnMaps, "ean")}, rawEan=${row["ean"]}`);
     const shopSettings = await prisma.shopSettings.findUnique({ where: { shopDomain } });
     const dupPolicy = shopSettings?.duplicatePolicy || "create_both";
     if (rowEan && (dupPolicy === "skip_existing" || dupPolicy === "priority")) {
       const dupCheck = await checkDuplicate(shopDomain, config.id, rowEan, sku);
       if (dupCheck.shouldSkip) {
-        console.log(`[Import] SKU ${sku}: EAN ${rowEan} duplicado de proveedor "${dupCheck.existingSupplierName}", saltando por ${dupPolicy}`);
         result.excluded++;
         return;
       }
       if (dupCheck.shouldReplace && dupCheck.existingMappingId && dupCheck.existingShopifyProductId) {
-        console.log(`[Import] SKU ${sku}: prioridad sobre "${dupCheck.existingSupplierName}", reemplazando producto ${dupCheck.existingShopifyProductId}`);
         const prices2 = await calculatePrices(shopDomain, sku, category, costPrice, config.id);
         const categoryMap2 = config.categoryMaps?.filter(
           (cm: any) => cm.csvCategory === category && cm.isActive
@@ -861,7 +849,6 @@ async function processProduct({
             e.message?.includes("not find") || e.message?.includes("NOT_FOUND") || e.message?.includes("was not found")
           );
           if (notFound) {
-            console.log(`[Import] Priority replace: product ${dupCheck.existingShopifyProductId} not found, skipping replace`);
             return;
           }
           console.error(`[Import] Priority replace: productUpdate errors:`, JSON.stringify(updateErrors));
@@ -879,7 +866,6 @@ async function processProduct({
         );
         const variantId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.id;
         const invItemId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.inventoryItem?.id;
-        console.log(`[Import] Priority replace: variant query result: variantId=${variantId2}, invItemId=${invItemId2}`);
         if (variantId2) {
           try {
             const variantPatch: any = {
@@ -888,7 +874,6 @@ async function processProduct({
               compareAtPrice: (prices2.compareAtPrice ?? 0) > 0 ? prices2.compareAtPrice!.toString() : null,
             };
             if (rowEan) variantPatch.barcode = rowEan;
-            console.log(`[Import] Priority replace: updating variant ${variantId2}, price=${prices2.regularPrice}, compareAt=${prices2.compareAtPrice}, barcode=${rowEan}`);
             const variantUpdateRes = await graphqlWithRetry(admin,
               `#graphql
               mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
@@ -904,12 +889,10 @@ async function processProduct({
             if (variantUpdateRes.data?.productVariantsBulkUpdate?.userErrors?.length) {
               console.error(`[Import] Priority replace: variantUpdate errors:`, JSON.stringify(variantUpdateRes.data.productVariantsBulkUpdate.userErrors));
             } else {
-              console.log(`[Import] Priority replace: variant update OK`);
             }
             if (sku) {
               try {
                 await updateVariantSku(admin, dupCheck.existingShopifyProductId, variantId2, sku);
-                console.log(`[Import] Priority replace: SKU updated to ${sku}`);
               } catch (e: any) {
                 console.error(`[Import] Priority replace: error updating SKU:`, e?.message);
               }
@@ -921,7 +904,6 @@ async function processProduct({
           console.error(`[Import] Priority replace: no variantId found for product ${dupCheck.existingShopifyProductId}`);
         }
 
-        console.log(`[Import] Priority replace: proceeding to stock/cost/weight, invItemId=${invItemId2}, locationId=${locationId ? locationId.substring(0, 20) + "..." : "NULL"}`);
 
         // Update stock at configured location
         if (invItemId2 && locationId) {
@@ -935,7 +917,6 @@ async function processProduct({
         // Update cost
         if (costPrice > 0 && invItemId2) {
           try {
-            console.log(`[Import] Priority replace: updating cost to ${costPrice} on inventory item ${invItemId2}`);
             await updateInventoryItem(admin, invItemId2, { cost: costPrice.toString() });
           } catch (error: any) {
             console.error("[Import] Priority replace: error updating cost:", error);
@@ -963,23 +944,19 @@ async function processProduct({
 
         // Update mapping: delete old (other supplier) + any existing for this SKU, then create new
         try {
-          console.log(`[Import] Priority replace: deleting old mapping ${dupCheck.existingMappingId}`);
           await prisma.productMapping.delete({ where: { id: dupCheck.existingMappingId } });
-          console.log(`[Import] Priority replace: old mapping deleted`);
         } catch (e: any) {
           console.error(`[Import] Priority replace: error deleting old mapping:`, e?.message);
         }
         // Delete any existing mapping for this SKU from current supplier (unique constraint)
         if (existing && existing.configId === config.id) {
           try {
-            console.log(`[Import] Priority replace: deleting existing mapping for same SKU ${existing.id}`);
             await prisma.productMapping.delete({ where: { id: existing.id } });
           } catch (e: any) {
             console.error(`[Import] Priority replace: error deleting existing mapping:`, e?.message);
           }
         }
         try {
-          console.log(`[Import] Priority replace: creating new mapping sku=${sku}, ean=${rowEan || null}, productId=${dupCheck.existingShopifyProductId}, configId=${config.id}`);
           const newMapping2 = await prisma.productMapping.create({
             data: {
               shopDomain,
@@ -996,7 +973,6 @@ async function processProduct({
               lastImportSource: sourceKey,
             },
           });
-          console.log(`[Import] Priority replace: new mapping created ${newMapping2.id}`);
           existing = newMapping2;
         } catch (e: any) {
           console.error(`[Import] Priority replace: error creating new mapping:`, e?.message);
@@ -1037,12 +1013,10 @@ async function processProduct({
       if (checkJson.data?.product?.id) {
         // Product exists — keep mapping
       } else if (checkJson.errors?.length) {
-        console.log(`[Import] SKU ${sku}: GraphQL error verificando producto (${existing.shopifyProductId}): ${JSON.stringify(checkJson.errors)}`);
         // Don't delete mapping on GraphQL errors
         return;
       } else {
         // Product not found by ID — try SKU search before deleting
-        console.log(`[Import] SKU ${sku}: producto ${existing.shopifyProductId} no encontrado por ID, verificando por SKU...`);
         const skuCheck = await graphqlWithRetry(admin,
           `#graphql
           query { productVariants(first: 1, query: "sku:${sku}") {
@@ -1053,7 +1027,6 @@ async function processProduct({
         const found = skuCheck.data?.productVariants?.edges?.[0]?.node;
         if (found?.product?.id) {
           // Product exists with different ID — update mapping
-          console.log(`[Import] SKU ${sku}: producto encontrado por SKU (${found.product.id}), actualizando mapping`);
           await prisma.productMapping.update({
             where: { id: existing.id },
             data: {
@@ -1064,13 +1037,11 @@ async function processProduct({
           });
           existing = await prisma.productMapping.findUnique({ where: { id: existing.id } });
         } else {
-          console.log(`[Import] SKU ${sku}: producto eliminado de Shopify, recreando`);
           await prisma.productMapping.delete({ where: { id: existing.id } });
           existing = null;
         }
       }
     } catch (error: any) {
-      console.log(`[Import] SKU ${sku}: error de red verificando producto, saltando: ${error?.message}`);
       return;
     }
   }
@@ -1113,23 +1084,18 @@ async function processProduct({
               if (dupPolicy2 === "priority") {
                 // Inter + priority: full replace (overwrite everything)
                 const suppName2 = (await prisma.importConfig.findUnique({ where: { id: foundMapping.configId } }))?.name || "desconocido";
-                console.log(`[Import] SKU ${sku}: inter-supplier combined match, SKU "${foundSku}" != "${sku}", reemplazando por priority (proveedor "${suppName2}")`);
                 priorityReplaceTarget = { mappingId: foundMapping.id, shopifyProductId: foundMapping.shopifyProductId, supplierName: suppName2, configId: foundMapping.configId };
                 // Don't set foundProductId — we'll handle replace separately
               } else if (dupPolicy2 === "create_both") {
-                console.log(`[Import] SKU ${sku}: inter-supplier combined match, SKU "${foundSku}" != "${sku}", create_both: creando nuevo producto`);
               } else {
                 // Inter + skip_existing: skip
-                console.log(`[Import] SKU ${sku}: inter-supplier combined match, SKU "${foundSku}" != "${sku}", saltando por ${dupPolicy2}`);
                 result.excluded++;
                 return;
               }
             } else if (dupPolicy2 === "create_both") {
               // Intra or external + create_both: create new
-              console.log(`[Import] SKU ${sku}: create_both, SKU "${foundSku}" != "${sku}", creando nuevo`);
             } else {
               // Intra or external + skip_existing/priority: skip
-              console.log(`[Import] SKU ${sku}: producto encontrado con SKU "${foundSku}" (diferente), saltando por ${dupPolicy2}`);
               result.excluded++;
               return;
             }
@@ -1156,19 +1122,14 @@ async function processProduct({
             if (foundMapping && foundMapping.configId !== config.id) {
               if (dupPolicy2 === "priority") {
                 const suppName2 = (await prisma.importConfig.findUnique({ where: { id: foundMapping.configId } }))?.name || "desconocido";
-                console.log(`[Import] SKU ${sku}: inter-supplier SKU match, SKU "${foundSku}" != "${sku}", reemplazando por priority (proveedor "${suppName2}")`);
                 priorityReplaceTarget = { mappingId: foundMapping.id, shopifyProductId: foundMapping.shopifyProductId, supplierName: suppName2, configId: foundMapping.configId };
               } else if (dupPolicy2 === "create_both") {
-                console.log(`[Import] SKU ${sku}: inter-supplier SKU match, SKU "${foundSku}" != "${sku}", create_both: creando nuevo producto`);
               } else {
-                console.log(`[Import] SKU ${sku}: inter-supplier SKU match, SKU "${foundSku}" != "${sku}", saltando por ${dupPolicy2}`);
                 result.excluded++;
                 return;
               }
             } else if (dupPolicy2 === "create_both") {
-              console.log(`[Import] SKU ${sku}: create_both, SKU "${foundSku}" != "${sku}", creando nuevo`);
             } else {
-              console.log(`[Import] SKU ${sku}: producto encontrado con SKU "${foundSku}" (diferente), saltando por ${dupPolicy2}`);
               result.excluded++;
               return;
             }
@@ -1189,7 +1150,6 @@ async function processProduct({
         const v = barcodeRes.data?.productVariants?.edges?.[0]?.node;
         if (v?.product?.id) {
           const foundSku = (v.sku || "").trim();
-          console.log(`[Import] SKU ${sku}: barcode ${rowEan} found in Shopify (productId=${v.product.id}, foundSku="${foundSku}")`);
           if (foundSku && foundSku !== sku) {
             const foundMapping = await prisma.productMapping.findFirst({
               where: { shopDomain, shopifyProductId: v.product.id },
@@ -1197,19 +1157,14 @@ async function processProduct({
             if (foundMapping && foundMapping.configId !== config.id) {
               if (dupPolicy2 === "priority") {
                 const suppName2 = (await prisma.importConfig.findUnique({ where: { id: foundMapping.configId } }))?.name || "desconocido";
-                console.log(`[Import] SKU ${sku}: inter-supplier barcode match, SKU "${foundSku}" != "${sku}", reemplazando por priority (proveedor "${suppName2}")`);
                 priorityReplaceTarget = { mappingId: foundMapping.id, shopifyProductId: foundMapping.shopifyProductId, supplierName: suppName2, configId: foundMapping.configId };
               } else if (dupPolicy2 === "create_both") {
-                console.log(`[Import] SKU ${sku}: inter-supplier barcode match, SKU "${foundSku}" != "${sku}", create_both: creando nuevo producto`);
               } else {
-                console.log(`[Import] SKU ${sku}: inter-supplier barcode match, SKU "${foundSku}" != "${sku}", saltando por ${dupPolicy2}`);
                 result.excluded++;
                 return;
               }
             } else if (dupPolicy2 === "create_both") {
-              console.log(`[Import] SKU ${sku}: create_both, barcode match pero SKU "${foundSku}" != "${sku}", creando nuevo`);
             } else {
-              console.log(`[Import] SKU ${sku}: producto encontrado con SKU "${foundSku}" (diferente), saltando por ${dupPolicy2}`);
               result.excluded++;
               return;
             }
@@ -1241,12 +1196,10 @@ async function processProduct({
         );
         const foundSku = (foundSkuRes.data?.productVariants?.edges?.[0]?.node?.sku || "").trim();
         if (dupPolicy2 === "skip_existing" && foundSku && foundSku !== sku) {
-          console.log(`[Import] SKU ${sku}: producto encontrado por barcode con SKU "${foundSku}" (diferente), saltando por skip_existing`);
           result.excluded++;
           return;
         }
 
-        console.log(`[Import] SKU ${rowSku}: producto existente encontrado (${foundProductId}), variantId=${foundVariantId}, inventoryItemId=${foundInventoryItemId}`);
         const mapping = await prisma.productMapping.upsert({
           where: { shopDomain_supplierSku: { shopDomain, supplierSku: sku } },
           create: {
@@ -1266,13 +1219,11 @@ async function processProduct({
         existing = mapping;
       }
     } catch (error: any) {
-      console.log(`[Import] SKU ${rowSku}: error buscando producto existente: ${error?.message}`);
     }
   }
 
   // === PRIORITY REPLACE: full overwrite for inter-supplier priority ===
   if (priorityReplaceTarget) {
-    console.log(`[Import] SKU ${sku}: executing full priority replace on product ${priorityReplaceTarget.shopifyProductId} (was from "${priorityReplaceTarget.supplierName}")`);
     const prices2 = await calculatePrices(shopDomain, sku, category, costPrice, config.id);
     const categoryMap2 = config.categoryMaps?.filter(
       (cm: any) => cm.csvCategory === category && cm.isActive
@@ -1311,7 +1262,6 @@ async function processProduct({
         e.message?.includes("not find") || e.message?.includes("NOT_FOUND") || e.message?.includes("was not found")
       );
       if (notFound) {
-        console.log(`[Import] Priority replace: product ${priorityReplaceTarget.shopifyProductId} not found, skipping replace`);
         return;
       }
       console.error(`[Import] Priority replace: productUpdate errors:`, JSON.stringify(updateErrors));
@@ -1421,7 +1371,6 @@ async function processProduct({
   if (existing) {
     const exists = await verifyProductExists(admin, existing.shopifyProductId);
     if (!exists) {
-      console.log(`[Import] SKU ${sku}: product ${existing.shopifyProductId} no longer exists, cleaning orphaned mapping and creating new`);
       await prisma.productMapping.delete({ where: { id: existing.id } });
       existing = null;
     }
@@ -1441,12 +1390,10 @@ async function processProduct({
     // Only count as "unchanged" if price/stock/cost/images didn't change
     // Data fields are always sent (idempotent) but don't count toward "updated"
     if (!priceChanged && !stockChanged && !costChanged && !imagesChanged) {
-      console.log(`[Import] SKU ${sku}: unchanged (lastPrice=${lastPrice}, csvPrice=${prices.regularPrice}, lastQty=${lastQty}, csvQty=${newQty})`);
       result.unchanged++;
       return;
     }
 
-    console.log(`[Import] SKU ${sku}: updating (priceChanged=${priceChanged}, stockChanged=${stockChanged}, costChanged=${costChanged}, imagesChanged=${imagesChanged})`);
 
     const productPatch: any = { id: existing.shopifyProductId };
     if (updateOpts.has("name")) productPatch.title = productInput.title;
@@ -1477,7 +1424,6 @@ async function processProduct({
         e.message?.includes("not find") || e.message?.includes("NOT_FOUND") || e.message?.includes("was not found")
       );
       if (notFound) {
-        console.log(`[Import] SKU ${sku}: product ${existing.shopifyProductId} not found during update, cleaning orphan and creating new`);
         await prisma.productMapping.delete({ where: { id: existing.id } });
         result.created++;
         return;
@@ -1516,9 +1462,7 @@ async function processProduct({
 
     if (stockChanged && existing.shopifyInventoryItemId) {
       if (config.skipZeroStockCreate && newQty <= 0) {
-        console.log(`[Import] Stock skip zero: SKU ${sku}, newQty=${newQty}`);
       } else if (processedInventoryItems.has(existing.shopifyInventoryItemId)) {
-        console.log(`[Import] Stock skip duplicate: ${existing.shopifyInventoryItemId} (SKU ${sku})`);
       } else {
         processedInventoryItems.add(existing.shopifyInventoryItemId);
         try {
@@ -1528,7 +1472,6 @@ async function processProduct({
         }
       }
     } else if (stockChanged) {
-      console.log(`[Import] Stock skip: no inventoryItemId (existing.shopifyInventoryItemId=${existing.shopifyInventoryItemId})`);
     }
 
     if (costChanged && existing.shopifyInventoryItemId) {
@@ -1676,7 +1619,6 @@ async function processProduct({
       ],
     };
 
-    console.log(`[Import] SKU ${sku}: productSetInput.variant.price=${productSetInput.variants[0].price}, compareAt=${productSetInput.variants[0].compareAtPrice ?? "null"}, quantity=${productSetInput.variants[0].inventoryQuantities[0].quantity}, costPrice=${costPrice}, regularPrice=${prices.regularPrice}`);
 
     const json = await graphqlWithRetry(admin,
       `#graphql
@@ -1719,7 +1661,6 @@ async function processProduct({
 
     let inventoryItemId = variant?.inventoryItem?.id ?? null;
     if (!inventoryItemId && variant?.id) {
-      console.log(`[Import] SKU ${sku}: inventoryItem no devuelto por productSet, consultando...`);
       try {
         const variantRes = await graphqlWithRetry(admin,
           `#graphql
@@ -1730,7 +1671,6 @@ async function processProduct({
         );
         inventoryItemId = variantRes.data?.productVariant?.inventoryItem?.id ?? null;
         if (inventoryItemId) {
-          console.log(`[Import] SKU ${sku}: inventoryItem recuperado = ${inventoryItemId}`);
         } else {
           console.log(`[Import] SKU ${sku}: inventoryItem NO encontrado, stock no se podrá actualizar`);
         }
@@ -1817,13 +1757,11 @@ async function processProduct({
         if (userErrors.length > 0) {
           console.error(`[Import] SKU ${sku}: publish errors:`, JSON.stringify(userErrors));
         } else {
-          console.log(`[Import] SKU ${sku}: publicado en ${allPublicationIds.length} publicación(es): ${allPublicationIds.join(", ")}`);
         }
       } catch (error: any) {
         console.error(`[Import] SKU ${sku}: error publicando: ${error?.message}`);
       }
     } else {
-      console.log(`[Import] SKU ${sku}: sin publications configuradas, saltando publicación`);
     }
 
     result.created++;

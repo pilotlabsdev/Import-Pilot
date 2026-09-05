@@ -177,7 +177,6 @@ async function processBulkImageQueue(admin: any, queue: BulkImageTask[], shopDom
           { variables: { id: task.productId, media: task.files } },
           shopDomain
         );
-        console.log(`[Bulk] Images OK: ${task.label} (${task.files.length} images)`);
         // Mark product as complete after images uploaded
         if (shopDomain) {
           const skuMatch = task.label.match(/SKU=(.+)/);
@@ -347,7 +346,6 @@ async function setVariantSkuViaRest(shopDomain: string, productId: string, varia
     const body = await resp.text();
     throw new Error(`REST ${resp.status}: ${body}`);
   }
-  console.log(`[Bulk] SKU ${sku}: set via REST PUT`);
 }
 const LOOKUP_QUERY = `{
   products {
@@ -592,9 +590,7 @@ async function handleLookupFinished(job: any, admin: any, status: string): Promi
 
   const maps = await buildLookupMaps(lookupPath);
   const sampleSkus = [...maps.bySku.entries()].slice(0, 3);
-  console.log(`[Bulk DEBUG] Lookup maps: byBarcode=${maps.byBarcode.size}, bySku=${maps.bySku.size}`);
   for (const [sku, m] of sampleSkus) {
-    console.log(`[Bulk DEBUG]   SKU=${sku} → productId=${m.productId}, variantId=${m.variantId}, inventoryItemId=${m.inventoryItemId}`);
   }
 
   const allMappings = await prisma.productMapping.findMany({
@@ -611,7 +607,6 @@ async function handleLookupFinished(job: any, admin: any, status: string): Promi
           orphanSkus.push(m.supplierSku);
           console.log(`[Bulk] SKU ${m.supplierSku}: mapping huérfano (status=${m.postProcessStatus || "pending"}, producto ${m.shopifyProductId} no existe en Shopify), se recreará`);
         } else {
-          console.log(`[Bulk] SKU ${m.supplierSku}: mapping incompleto (status=${m.postProcessStatus}), NO se borra — se reintentará post-processing`);
         }
       }
     } else {
@@ -696,7 +691,6 @@ async function retryPostProcess(
   // Check retry limit
   if (mapping.postProcessRetries >= MAX_POST_PROCESS_RETRIES) {
     if (mapping.postProcessStatus !== "error_permanent") {
-      console.log(`[Bulk] SKU ${sku}: ${mapping.postProcessRetries} retries exhausted, marking error_permanent`);
       await prisma.productMapping.update({
         where: { id: mapping.id },
         data: { postProcessStatus: "error_permanent" },
@@ -726,7 +720,6 @@ async function retryPostProcess(
 
     const product = lookup.data?.product;
     if (!product?.id) {
-      console.log(`[Bulk] SKU ${sku}: product ${mapping.shopifyProductId} no longer exists, marking error_permanent`);
       await prisma.productMapping.update({
         where: { id: mapping.id },
         data: { postProcessStatus: "error_permanent", postProcessError: "Product deleted from Shopify" },
@@ -787,7 +780,6 @@ async function retryPostProcess(
           { variables: { inventoryItemId, inventoryItemUpdates: [{ locationId, activate: true }] } }
         ), `retry-inv-activate-${sku}`);
 
-        console.log(`[Bulk] SKU ${sku}: retryPostProcess - inventory tracking + activation OK`);
         await prisma.productMapping.update({
           where: { id: mapping.id },
           data: { postProcessStatus: "inventory", postProcessError: null, postProcessRetries: { increment: 1 } },
@@ -831,7 +823,6 @@ async function retryPostProcess(
           { variables: { id: mapping.shopifyProductId, input } }
         ), `retry-channels-${sku}`);
 
-        console.log(`[Bulk] SKU ${sku}: retryPostProcess - channels OK`);
         await prisma.productMapping.update({
           where: { id: mapping.id },
           data: { postProcessStatus: "channels", postProcessError: null },
@@ -1008,7 +999,6 @@ async function prepareAndLaunch(
       const catMatch = catSet?.has(category.toLowerCase()) ?? false;
       if (!skuMatch && !catMatch) {
         if (filteredOutCount < 3) {
-          console.log(`[Bulk DEBUG] SKU=${sku} FILTRADO: skuMatch=${skuMatch} catMatch=${catMatch} skuLower="${skuLower}" category="${category.toLowerCase()}"`);
         }
         filteredOutCount++;
         continue;
@@ -1155,7 +1145,6 @@ async function prepareAndLaunch(
 
       const excludedFields = getExcludedFields(sku, fieldRules);
       if (excludedFields) {
-        console.log(`[Bulk] SKU=${sku} field exclusion: skip=[${excludedFields.join(",")}]`);
       }
       const effectiveOpts = excludedFields
         ? new Set([...updateOpts].filter((o) => !excludedFields.includes(o)))
@@ -1370,14 +1359,10 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
     if (!meta) continue;
 
     if (i === 0) {
-      console.log(`[Bulk] First result: SKU=${meta.sku}, inventoryItemId=${meta.inventoryItemId}, costPrice=${meta.costPrice}`);
-      console.log(`[Bulk] First result line keys: ${JSON.stringify(Object.keys(line))}`);
-      console.log(`[Bulk] First result line: ${JSON.stringify(line).substring(0, 500)}`);
     }
 
     const userErrors = extractUserErrors(line);
     if (userErrors.length > 0 || line.errors) {
-      if (i === 0) console.log(`[Bulk] First result HAS ERRORS: ${JSON.stringify(userErrors)}`);
       opErrors++;
       errorWrites.push(
         JSON.stringify({ sku: meta.sku, error: userErrors.join("; ") || "systemError.variable_error", lineNumber: 0 })
@@ -1485,7 +1470,6 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
             { variables: { id: product.id, input: pubInput } },
             job.shopDomain
           );
-          console.log(`[Bulk] SKU ${meta.sku}: publicado en ${allPubIds.length} publicacion(es)`);
         } catch (error: any) {
           console.error(`[Bulk] SKU ${meta.sku}: error publicando: ${error?.message}`);
         }
@@ -1628,7 +1612,6 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
         for (const rep of replacements) {
           try {
             await prisma.productMapping.delete({ where: { id: rep.mappingId } }).catch(() => {});
-            console.log(`[Bulk] Priority replacement: SKU ${rep.newSku} replaced old mapping ${rep.mappingId}`);
           } catch (error: any) {
             console.error(`[Bulk] Priority replacement error for SKU ${rep.newSku}:`, error?.message);
           }
