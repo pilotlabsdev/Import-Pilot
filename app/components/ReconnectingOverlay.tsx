@@ -84,31 +84,36 @@ export function ReconnectingOverlay({ onRetry }: ReconnectingOverlayProps) {
         left: 0,
         right: 0,
         zIndex: 99999,
-        background: "#006fbb",
-        color: "white",
-        padding: "8px 16px",
+        background: "var(--p-color-bg-surface, #f6f6f7)",
+        borderBottom: "1px solid var(--p-color-border, #e1e3e5)",
+        padding: "10px 16px",
         textAlign: "center",
         fontSize: "13px",
-        fontFamily: "Inter, sans-serif",
+        fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
+        color: "var(--p-color-text, #202223)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         gap: "8px",
+        boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
       }}
     >
       <div
         style={{
-          width: "14px",
-          height: "14px",
-          border: "2px solid rgba(255,255,255,0.3)",
-          borderTopColor: "white",
+          width: "16px",
+          height: "16px",
+          border: "2px solid var(--p-color-border-highlight, #006fbb)",
+          borderTopColor: "transparent",
           borderRadius: "50%",
           animation: "spin 0.8s linear infinite",
+          flexShrink: 0,
         }}
       />
-      {maxReached
-        ? "Reconectando..."
-        : `Reconectando... (intento ${attempt}/3)`}
+      <span style={{ fontWeight: 500 }}>
+        {maxReached
+          ? "Reconectando..."
+          : "Reconectando..."}
+      </span>
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
