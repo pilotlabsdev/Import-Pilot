@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { data, Links, Meta, Outlet, Scripts, ScrollRestoration, useLoaderData, useRouteError, isRouteErrorResponse } from "react-router";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AppProvider as PolarisAppProvider } from "@shopify/polaris";
 import "@shopify/polaris/build/esm/styles.css";
@@ -133,7 +133,39 @@ export default function App() {
 export function ErrorBoundary() {
   const error = useRouteError();
   const status = isRouteErrorResponse(error) ? error.status : 0;
-  const isAuth = status === 401;
+  const rawStatus = error instanceof Response ? error.status : 0;
+  const isAuth = status === 401 || rawStatus === 401;
+
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!isAuth) return;
+    timerRef.current = setTimeout(() => window.location.reload(), 2500);
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [isAuth]);
+
+  if (isAuth) {
+    return (
+      <html lang="en">
+        <head>
+          <meta charSet="utf-8" />
+          <meta name="viewport" content="width=device-width,initial-scale=1" />
+          <title>Import Pilot</title>
+        </head>
+        <body style={{ fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif", display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh", margin: 0, background: "#f6f6f7" }}>
+          <div style={{ textAlign: "center", padding: "40px", background: "white", borderRadius: "8px", boxShadow: "0 1px 3px rgba(0,0,0,0.1)", maxWidth: "400px" }}>
+            <div style={{ width: 32, height: 32, border: "3px solid #006fbb", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 16px" }} />
+            <h2 style={{ fontSize: "16px", fontWeight: 600, marginBottom: 8, color: "#202223" }}>Sesion expirada</h2>
+            <p style={{ fontSize: "14px", color: "#6d7175", marginBottom: 0 }}>Reconectando...</p>
+          </div>
+          <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+          <Scripts />
+        </body>
+      </html>
+    );
+  }
 
   return (
     <html lang="en">
@@ -142,29 +174,16 @@ export function ErrorBoundary() {
         <meta name="viewport" content="width=device-width,initial-scale=1" />
         <title>Import Pilot</title>
       </head>
-      <body style={{ fontFamily: "Inter, sans-serif", display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh", margin: 0, background: "#f6f6f7" }}>
+      <body style={{ fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif", display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh", margin: 0, background: "#f6f6f7" }}>
         <div style={{ textAlign: "center", padding: "40px", background: "white", borderRadius: "8px", boxShadow: "0 1px 3px rgba(0,0,0,0.1)", maxWidth: "400px" }}>
-          {isAuth ? (
-            <>
-              <h2 style={{ marginBottom: "12px" }}>Sesión expirada</h2>
-              <p style={{ color: "#6d7175", marginBottom: "20px" }}>Reconectando...</p>
-            </>
-          ) : (
-            <>
-              <h2 style={{ marginBottom: "12px" }}>Algo salió mal</h2>
-              <p style={{ color: "#6d7175", marginBottom: "20px" }}>Error del servidor. Intenta de nuevo.</p>
-            </>
-          )}
-          {isAuth ? (
-            <style>{`setTimeout(() => window.location.reload(), 2000)`}</style>
-          ) : (
-            <button
-              onClick={() => window.location.reload()}
-              style={{ padding: "8px 20px", borderRadius: "4px", border: "none", background: "#006fbb", color: "white", cursor: "pointer", fontSize: "14px" }}
-            >
-              Reconectar
-            </button>
-          )}
+          <h2 style={{ fontSize: "16px", fontWeight: 600, marginBottom: 8, color: "#202223" }}>Algo salio mal</h2>
+          <p style={{ fontSize: "14px", color: "#6d7175", marginBottom: 20 }}>Error del servidor. Intenta de nuevo.</p>
+          <button
+            onClick={() => window.location.reload()}
+            style={{ padding: "8px 20px", borderRadius: "4px", border: "none", background: "#006fbb", color: "white", cursor: "pointer", fontSize: "14px", fontWeight: 500 }}
+          >
+            Reconectar
+          </button>
         </div>
         <Scripts />
       </body>
