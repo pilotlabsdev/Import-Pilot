@@ -114,6 +114,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       break;
     }
     case "PRODUCTS_UPDATE": {
+      // Skip PRODUCTS_UPDATE during active bulk imports — bulk op already updates mappings
+      const activeBulk = await prisma.bulkJob.findFirst({
+        where: { shopDomain: shop, phase: { in: ["lookup", "mutations", "finalizing"] } },
+        select: { id: true },
+      }).catch(() => null);
+      if (activeBulk) break;
+
       const productId = payload.id ? `gid://shopify/Product/${payload.id}` : null;
       if (!productId) break;
 
@@ -190,6 +197,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       break;
     }
     case "INVENTORY_ITEMS_UPDATE": {
+      // Skip during active bulk imports — bulk op already updates cost
+      const activeBulkInv = await prisma.bulkJob.findFirst({
+        where: { shopDomain: shop, phase: { in: ["lookup", "mutations", "finalizing"] } },
+        select: { id: true },
+      }).catch(() => null);
+      if (activeBulkInv) break;
+
       const inventoryItemId = payload.id ? `gid://shopify/InventoryItem/${payload.id}` : null;
       if (!inventoryItemId) break;
 
