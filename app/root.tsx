@@ -132,23 +132,26 @@ export default function App() {
 
 export function ErrorBoundary() {
   const error = useRouteError();
-  const status = isRouteErrorResponse(error) ? error.status : 0;
-  const isResponse = error instanceof Response;
-  const rawStatus = isResponse ? error.status : 0;
-  const isAuthError = status === 401 || rawStatus === 401;
-  const isShopifyResponse = isResponse && (isAuthError || rawStatus === 200 || rawStatus === 302 || rawStatus === 500);
+
+  // React Router v7 wraps thrown Response in RouteErrorResponse — check both
+  const rrStatus = isRouteErrorResponse(error) ? error.status : 0;
+  const rawStatus = error instanceof Response ? error.status : 0;
+  const status = rrStatus || rawStatus;
+
+  // Shopify auth errors: 200 (App Bridge bootstrap / missing params), 302 (redirect to bounce), 401 (session expired)
+  const isShopifyAuthError = status === 200 || status === 302 || status === 401;
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (!isShopifyResponse) return;
+    if (!isShopifyAuthError) return;
     timerRef.current = setTimeout(() => window.location.reload(), 2000);
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [isShopifyResponse]);
+  }, [isShopifyAuthError]);
 
-  if (isShopifyResponse) {
+  if (isShopifyAuthError) {
     return (
       <html lang="en">
         <head>
@@ -159,8 +162,8 @@ export function ErrorBoundary() {
         <body style={{ fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif", display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh", margin: 0, background: "#f6f6f7" }}>
           <div style={{ textAlign: "center", padding: "40px", background: "white", borderRadius: "8px", boxShadow: "0 1px 3px rgba(0,0,0,0.1)", maxWidth: "400px" }}>
             <div style={{ width: 32, height: 32, border: "3px solid #006fbb", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 16px" }} />
-            <h2 style={{ fontSize: "16px", fontWeight: 600, marginBottom: 8, color: "#202223" }}>{isAuthError ? "Sesion expirada" : "Reconectando..."}</h2>
-            <p style={{ fontSize: "14px", color: "#6d7175", marginBottom: 0 }}>Reconectando...</p>
+            <h2 style={{ fontSize: "16px", fontWeight: 600, marginBottom: 8, color: "#202223" }}>Reconectando...</h2>
+            <p style={{ fontSize: "14px", color: "#6d7175", marginBottom: 0 }}>Sesion renovada automaticamente</p>
           </div>
           <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
           <Scripts />

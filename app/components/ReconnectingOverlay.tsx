@@ -8,54 +8,25 @@ interface ReconnectingOverlayProps {
 export function ReconnectingOverlay({ onRetry }: ReconnectingOverlayProps) {
   const { t } = useTranslation();
   const [visible, setVisible] = useState(false);
-  const [attempt, setAttempt] = useState(0);
-  const [maxReached, setMaxReached] = useState(false);
 
-  const doReconnect = useCallback(() => {
-    setVisible(true);
-    setAttempt(1);
-
-    let retries = 0;
-    const maxRetries = 3;
-    const baseDelay = 1500;
-
-    const tryReconnect = () => {
-      retries++;
-      setAttempt(retries);
-
-      if (retries >= maxRetries) {
-        setMaxReached(true);
-        setTimeout(() => {
-          window.location.reload();
-        }, 2000);
-        return;
+  // Auth expiry: show overlay, reload after 1s (App Bridge handles re-auth)
+  useEffect(() => {
+    const handler = (e: MessageEvent) => {
+      if (e.data === "shopify:app:auth:expired" || e.data?.type === "shopify:app:auth:expired") {
+        setVisible(true);
+        setTimeout(() => window.location.reload(), 1000);
       }
-
-      const delay = baseDelay * Math.pow(2, retries - 1);
-      setTimeout(() => {
-        fetch("/app", { method: "HEAD", cache: "no-store" })
-          .then((res) => {
-            if (res.ok) {
-              window.location.reload();
-            } else {
-              tryReconnect();
-            }
-          })
-          .catch(() => {
-            tryReconnect();
-          });
-      }, delay);
     };
-
-    tryReconnect();
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
   }, []);
 
+  // Offline: show overlay. Online: reload.
   useEffect(() => {
     const handleOffline = () => setVisible(true);
     const handleOnline = () => {
       setVisible(true);
-      setAttempt(1);
-      setTimeout(() => window.location.reload(), 1000);
+      setTimeout(() => window.location.reload(), 500);
     };
 
     window.addEventListener("offline", handleOffline);
@@ -65,16 +36,6 @@ export function ReconnectingOverlay({ onRetry }: ReconnectingOverlayProps) {
       window.removeEventListener("online", handleOnline);
     };
   }, []);
-
-  useEffect(() => {
-    const handler = (e: MessageEvent) => {
-      if (e.data === "shopify:app:auth:expired" || e.data?.type === "shopify:app:auth:expired") {
-        doReconnect();
-      }
-    };
-    window.addEventListener("message", handler);
-    return () => window.removeEventListener("message", handler);
-  }, [doReconnect]);
 
   if (!visible) return null;
 

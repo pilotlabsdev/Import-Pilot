@@ -153,17 +153,24 @@ export default function App() {
 
 export function ErrorBoundary() {
   const error = useRouteError();
-  const isResponse = error instanceof Response;
-  const status = isResponse ? error.status : 0;
-  const isAuthError = status === 401 || status === 200 || status === 302;
+
+  // React Router v7 wraps thrown Response in RouteErrorResponse — check both
+  const rrStatus = isRouteErrorResponse(error) ? error.status : 0;
+  const rawStatus = error instanceof Response ? error.status : 0;
+  const status = rrStatus || rawStatus;
+
+  // Auth errors: 200 (App Bridge bootstrap), 302 (redirect to bounce), 401 (session expired)
+  const isAuthError = status === 200 || status === 302 || status === 401;
+
+  useEffect(() => {
+    if (!isAuthError) return;
+    // Silent auto-reload — App Bridge handles re-authentication
+    const timer = setTimeout(() => window.location.reload(), 1500);
+    return () => clearTimeout(timer);
+  }, [isAuthError]);
 
   if (isAuthError) {
-    triggerReconnect();
-    return (
-      <AppProvider apiKey={process.env.SHOPIFY_API_KEY || ""}>
-        <ReconnectingOverlay />
-      </AppProvider>
-    );
+    return null;
   }
 
   return boundary.error(error);
