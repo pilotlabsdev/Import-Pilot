@@ -1349,6 +1349,7 @@ async function prepareAndLaunch(
   // queryProductsTargeted already tried barcode:'...' and failed; we try query:'...' (broader search).
   let batchExternalDetected = 0;
   const externalCsvSkus = new Set<string>(); // CSV SKUs detected as external — remove from create files
+  const missedSameSkuCsvSkus = new Set<string>(); // CSV SKUs that exist in Shopify with same SKU — remove from create files (should be UPDATE, not CREATE)
   const allSkusSet = new Set(allSkus.map((s) => s.toLowerCase()));
   if (unmatchedEans.length > 0 && duplicatePolicy !== "create_both") {
     const uniqueUnmatched = [...new Map(unmatchedEans.map((u) => [u.ean, u])).values()];
@@ -1381,6 +1382,7 @@ async function prepareAndLaunch(
             // If the found product's SKU matches a CSV SKU, it's a same-supplier product
             // that queryProductsTargeted missed (query failure). NOT an external duplicate.
             if (shopifySku && allSkusSet.has(shopifySku.toLowerCase())) {
+              missedSameSkuCsvSkus.add(csvSku.toLowerCase());
               console.log(`[Bulk] Post-loop found same-SKU product: CSV=${csvSku} Shopify=${shopifySku} EAN=${ean} → ${shopifyProductId} (not external, queryProductsTargeted missed it)`);
               continue;
             }
@@ -1409,8 +1411,9 @@ async function prepareAndLaunch(
     }
   }
 
-  // Rewrite create files to exclude products detected as external duplicates
-  if (externalCsvSkus.size > 0) {
+  // Rewrite create files to exclude products detected as external duplicates OR same-SKU (should be updates)
+  const skusToRemoveFromCreates = new Set<string>([...externalCsvSkus, ...missedSameSkuCsvSkus]);
+  if (skusToRemoveFromCreates.size > 0) {
     let removedFromCreates = 0;
     const newCreateFiles: string[] = [];
     for (const filePath of createFiles) {
@@ -1421,7 +1424,7 @@ async function prepareAndLaunch(
       const keptMeta: string[] = [];
       for (let j = 0; j < inputLines.length; j++) {
         const meta = metaLinesArr[j] ? JSON.parse(metaLinesArr[j]) : null;
-        if (meta?.sku && externalCsvSkus.has(meta.sku.toLowerCase())) {
+        if (meta?.sku && skusToRemoveFromCreates.has(meta.sku.toLowerCase())) {
           removedFromCreates++;
           continue;
         }
@@ -1438,7 +1441,7 @@ async function prepareAndLaunch(
     createFiles.push(...newCreateFiles);
     newCreateCount -= removedFromCreates;
     if (removedFromCreates > 0) {
-      console.log(`[Bulk] Removed ${removedFromCreates} external products from create files (${externalCsvSkus.size} EANs detected)`);
+      console.log(`[Bulk] Removed ${removedFromCreates} products from create files (${externalCsvSkus.size} external + ${missedSameSkuCsvSkus.size} same-SKU)`);
     }
   }
 
