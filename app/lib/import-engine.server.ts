@@ -33,7 +33,8 @@ async function buildBarcodeMap(admin: any, shopDomain?: string): Promise<Map<str
   while (hasNextPage && pageCount < 50) {
     pageCount++;
     const afterClause: string = cursor ? `, after: "${cursor}"` : "";
-    const query: string = `{
+    const query: string = `#graphql
+    {
       products(first: 250${afterClause}) {
         edges {
           cursor
@@ -56,8 +57,7 @@ async function buildBarcodeMap(admin: any, shopDomain?: string): Promise<Map<str
     }`;
 
     try {
-      const r: any = await admin.graphql(query);
-      const json: any = await r.json();
+      const json: any = await graphqlWithRetry(admin, query, {});
       const products: any = json.data?.products;
       if (!products) break;
 
@@ -398,6 +398,10 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
 
   // Pre-load all Shopify products by barcode for external product detection
   const barcodeMap = await buildBarcodeMap(admin, shopDomain);
+  console.log(`[Import] barcodeMap loaded: ${barcodeMap.size} entries`);
+  if (barcodeMap.size === 0) {
+    console.warn(`[Import] WARNING: barcodeMap is empty! External product detection will not work.`);
+  }
 
   const log = await prisma.importLog.create({
     data: {
@@ -1266,6 +1270,7 @@ async function processProduct({
     if (!foundBarcode && sku) foundBarcode = barcodeMap.get(sku) || null;
 
     if (foundBarcode) {
+      console.log(`[Import] External product detected via barcodeMap: EAN=${rowEan} SKU=${sku} → found SKU=${foundBarcode.sku} product=${foundBarcode.productId}`);
       const foundSku = (foundBarcode.sku || "").trim();
 
       if (foundSku && foundSku !== sku) {
