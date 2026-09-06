@@ -205,7 +205,7 @@ export default function Settings() {
           </div>
         </Layout.Section>
 
-        {policy !== "skip_existing" && (
+        {policy === "priority" && (
           <Layout.Section>
             <Card>
               <BlockStack gap="400">

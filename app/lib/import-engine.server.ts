@@ -895,7 +895,6 @@ async function processProduct({
     const rowEan = getField(row, columnMaps, "ean") || row["ean"] || "";
     const shopSettings = await prisma.shopSettings.findUnique({ where: { shopDomain } });
     const dupPolicy = shopSettings?.duplicatePolicy || "create_both";
-    const matchMode = (shopSettings as any)?.matchMode || "overwrite";
     if (rowEan && (dupPolicy === "skip_existing" || dupPolicy === "priority")) {
       const dupCheck = await checkDuplicate(shopDomain, config.id, rowEan, sku);
       if (dupCheck.shouldSkip) {
@@ -1259,7 +1258,6 @@ async function processProduct({
     const rowEan = getField(row, columnMaps, "ean") || row["ean"] || "";
     const shopSettings = await prisma.shopSettings.findUnique({ where: { shopDomain } });
     const dupPolicy2 = shopSettings?.duplicatePolicy || "create_both";
-    const matchMode = (shopSettings as any)?.matchMode || "overwrite";
 
     // Fast lookup from pre-loaded barcode map
     let foundBarcode: BarcodeMatch | null = null;
@@ -1286,95 +1284,7 @@ async function processProduct({
             return;
           }
         } else if (dupPolicy2 === "create_both") {
-          // External or intra + create_both: overwrite mode → fall through to create new
-          // update mode → update existing product with updateOptions filters
-          if (matchMode === "update") {
-            // Update existing product (same as priority replace on the external product)
-            const prices2 = await calculatePrices(shopDomain, sku, category, costPrice, config.id);
-            const categoryMap2 = config.categoryMaps?.filter(
-              (cm: any) => cm.csvCategory === category && cm.isActive
-            ) || [];
-            const collectionIds2 = categoryMap2.map((cm: any) => cm.collectionId);
-            const categoryTags2 = categoryMap2.map((cm: any) => cm.tags).filter(Boolean).join(",");
-            const shopifyProductType2 = categoryMap2.find((cm: any) => cm.shopifyProductType)?.shopifyProductType || null;
-            const productInput2 = mapCsvRowToProductSet(
-              row, columnMaps, prices2, collectionIds2, locationId,
-              config.defaultTags || undefined,
-              categoryTags2 || undefined
-            );
-            if (shopifyProductType2) productInput2.productType = shopifyProductType2;
-
-            // Update with updateOpts filters only (no title/description changes)
-            const updatePatch: any = { id: foundBarcode.productId };
-            if (updateOpts.has("name")) updatePatch.title = productInput2.title;
-            if (updateOpts.has("description")) updatePatch.descriptionHtml = productInput2.descriptionHtml;
-            if (updateOpts.has("productType") && productInput2.productType) updatePatch.productType = productInput2.productType;
-            if (updateOpts.has("vendor")) updatePatch.vendor = productInput2.vendor;
-            if (updateOpts.has("tags")) updatePatch.tags = productInput2.tags;
-            if (updateOpts.has("metafields")) updatePatch.metafields = productInput2.metafields;
-            if (updateOpts.has("description")) updatePatch.seo = productInput2.seo;
-
-            const hasUpdateFields = updatePatch.title || updatePatch.descriptionHtml || updatePatch.productType || updatePatch.vendor || updatePatch.tags || updatePatch.metafields;
-            if (hasUpdateFields) {
-              const updateRes = await graphqlWithRetry(admin,
-                `#graphql mutation productUpdate($product: ProductUpdateInput!) { productUpdate(product: $product) { product { id } userErrors { field message } } }`,
-                { product: updatePatch }
-              );
-              if (updateRes.data?.productUpdate?.userErrors?.length) {
-                console.error(`[Import] create_both+update: productUpdate errors:`, JSON.stringify(updateRes.data.productUpdate.userErrors));
-              }
-            }
-
-            // Update variant price/barcode
-            const variantRes2 = await graphqlWithRetry(admin,
-              `#graphql query { product(id: "${foundBarcode.productId}") { variants(first: 1) { edges { node { id inventoryItem { id } } } } } }`,
-              {}
-            );
-            const variantId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.id;
-            const invItemId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.inventoryItem?.id;
-            if (variantId2) {
-              if (updateOpts.has("price")) {
-                const variantPatch: any = {
-                  id: variantId2,
-                  price: prices2.regularPrice.toString(),
-                  compareAtPrice: (prices2.compareAtPrice ?? 0) > 0 ? prices2.compareAtPrice!.toString() : null,
-                };
-                if (rowEan) variantPatch.barcode = rowEan;
-                await graphqlWithRetry(admin,
-                  `#graphql mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) { productVariantsBulkUpdate(productId: $productId, variants: $variants) { productVariants { id } userErrors { field message } } }`,
-                  { productId: foundBarcode.productId, variants: [variantPatch] }
-                );
-              }
-              if (sku) {
-                try { await updateVariantSku(admin, foundBarcode.productId, variantId2, sku); } catch (e: any) { console.error(`[Import] create_both+update: SKU error:`, e?.message); }
-              }
-            }
-
-            // Update stock
-            if (updateOpts.has("stock") && invItemId2 && locationId) {
-              try { await setInventoryQuantity(admin, invItemId2, locationId, newQty); } catch (e: any) { console.error(`[Import] create_both+update: stock error:`, e?.message); }
-            }
-
-            // Adopt: upsert mapping
-            const adopted = await prisma.productMapping.upsert({
-              where: { shopDomain_supplierSku: { shopDomain, supplierSku: sku } },
-              create: {
-                shopDomain, configId: config.id, supplierSku: sku, ean: rowEan || null,
-                shopifyProductId: foundBarcode.productId, shopifyVariantId: foundBarcode.variantId, shopifyInventoryItemId: invItemId2 || null,
-                lastPrice: prices2.regularPrice, lastComparePrice: prices2.compareAtPrice,
-                lastQuantity: newQty, lastCost: costPrice > 0 ? costPrice : null, lastImportSource: sourceKey,
-              },
-              update: {
-                shopifyProductId: foundBarcode.productId, shopifyVariantId: foundBarcode.variantId, shopifyInventoryItemId: invItemId2 || null,
-                lastImportSource: sourceKey,
-              },
-            });
-            existing = adopted;
-            result.updated++;
-            console.log(`[Import] create_both+update: adopted external product ${foundBarcode.productId} (same EAN, different SKU)`);
-            return;
-          }
-          // overwrite mode: fall through to create new product
+          // create_both → always create new product (fall through)
         } else {
           // skip_existing + different SKU: skip
           result.excluded++;
