@@ -1348,6 +1348,7 @@ async function prepareAndLaunch(
   // These are products that exist in Shopify but don't have barcode set on any variant.
   // queryProductsTargeted already tried barcode:'...' and failed; we try query:'...' (broader search).
   let batchExternalDetected = 0;
+  const externalCsvSkus = new Set<string>(); // CSV SKUs detected as external — remove from create files
   const allSkusSet = new Set(allSkus.map((s) => s.toLowerCase()));
   if (unmatchedEans.length > 0 && duplicatePolicy !== "create_both") {
     const uniqueUnmatched = [...new Map(unmatchedEans.map((u) => [u.ean, u])).values()];
@@ -1394,6 +1395,7 @@ async function prepareAndLaunch(
               await logExternalDuplicate(job.shopDomain, ean, shopifyProductId, csvSku, config.id, config.name || "Proveedor", shopifySku);
               duplicateSkippedCount++;
               batchExternalDetected++;
+              externalCsvSkus.add(csvSku.toLowerCase());
               console.log(`[Bulk] External duplicate detected via broader search: SKU=${shopifySku || csvSku} EAN=${ean} → ${shopifyProductId}`);
             }
           }
@@ -1404,6 +1406,39 @@ async function prepareAndLaunch(
     }
     if (batchExternalDetected > 0) {
       console.log(`[Bulk] Post-loop external detection: ${batchExternalDetected} external products detected`);
+    }
+  }
+
+  // Rewrite create files to exclude products detected as external duplicates
+  if (externalCsvSkus.size > 0) {
+    let removedFromCreates = 0;
+    const newCreateFiles: string[] = [];
+    for (const filePath of createFiles) {
+      const metaPath = filePath.replace("-input-", "-meta-");
+      const inputLines = (await fs.readFile(filePath, "utf-8")).split("\n").filter(Boolean);
+      const metaLinesArr = (await fs.readFile(metaPath, "utf-8")).split("\n").filter(Boolean);
+      const keptInput: string[] = [];
+      const keptMeta: string[] = [];
+      for (let j = 0; j < inputLines.length; j++) {
+        const meta = metaLinesArr[j] ? JSON.parse(metaLinesArr[j]) : null;
+        if (meta?.sku && externalCsvSkus.has(meta.sku.toLowerCase())) {
+          removedFromCreates++;
+          continue;
+        }
+        keptInput.push(inputLines[j]);
+        if (metaLinesArr[j]) keptMeta.push(metaLinesArr[j]);
+      }
+      if (keptInput.length > 0) {
+        await fs.writeFile(filePath, keptInput.join("\n") + "\n");
+        await fs.writeFile(metaPath, keptMeta.join("\n") + "\n");
+        newCreateFiles.push(filePath);
+      }
+    }
+    createFiles.length = 0;
+    createFiles.push(...newCreateFiles);
+    newCreateCount -= removedFromCreates;
+    if (removedFromCreates > 0) {
+      console.log(`[Bulk] Removed ${removedFromCreates} external products from create files (${externalCsvSkus.size} EANs detected)`);
     }
   }
 
@@ -2792,61 +2827,79 @@ async function queryProductsTargeted(
     }
   `;
 
-  // Query by SKUs in batches of 15
+  // Query by SKUs in batches of 15 with retry
   const uniqueSkus = [...new Set(skus)].filter(Boolean);
+  let skuQueryFailed = 0;
   for (let i = 0; i < uniqueSkus.length; i += 15) {
     const batch = uniqueSkus.slice(i, i + 15);
     const query = batch.map((s) => `sku:'${String(s).replace(/'/g, "")}'`).join(" OR ");
-    try {
-      const json = await gql(admin, TARGETED_QUERY, { variables: { q: query } }, shopDomain);
-      for (const edge of json.data?.products?.edges || []) {
-        const productId = edge.node.id;
-        for (const vEdge of edge.node.variants?.edges || []) {
-          const v = vEdge.node;
-          const match: LookupMatch = {
-            productId,
-            variantId: v.id,
-            inventoryItemId: v.inventoryItem?.id || "",
-            shopifyCost: parseFloat(v.inventoryItem?.unitCost?.amount ?? "0") || 0,
-            sku: v.sku || "",
-          };
-          if (v.sku) bySku.set(String(v.sku), match);
-          if (v.barcode) byBarcode.set(String(v.barcode), match);
+    let succeeded = false;
+    for (let attempt = 0; attempt < 3 && !succeeded; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 1000 * attempt));
+      try {
+        const json = await gql(admin, TARGETED_QUERY, { variables: { q: query } }, shopDomain);
+        for (const edge of json.data?.products?.edges || []) {
+          const productId = edge.node.id;
+          for (const vEdge of edge.node.variants?.edges || []) {
+            const v = vEdge.node;
+            const match: LookupMatch = {
+              productId,
+              variantId: v.id,
+              inventoryItemId: v.inventoryItem?.id || "",
+              shopifyCost: parseFloat(v.inventoryItem?.unitCost?.amount ?? "0") || 0,
+              sku: v.sku || "",
+            };
+            if (v.sku) bySku.set(String(v.sku), match);
+            if (v.barcode) byBarcode.set(String(v.barcode), match);
+          }
+        }
+        succeeded = true;
+      } catch (e: any) {
+        if (attempt === 2) {
+          console.error(`[Bulk] Targeted SKU query batch failed (3 attempts): ${batch.join(",")} → ${e?.message}`);
+          skuQueryFailed += batch.length;
         }
       }
-    } catch (e: any) {
-      console.error(`[Bulk] Targeted SKU query batch failed: ${e?.message}`);
     }
   }
 
-  // Query by EANs/barcodes (only those NOT already found by SKU query)
+  // Query by EANs/barcodes (only those NOT already found by SKU query) with retry
   const uniqueEans = [...new Set(eans)].filter((e) => e && !byBarcode.has(e));
+  let eanQueryFailed = 0;
   for (let i = 0; i < uniqueEans.length; i += 15) {
     const batch = uniqueEans.slice(i, i + 15);
     const query = batch.map((e) => `barcode:'${String(e).replace(/'/g, "")}'`).join(" OR ");
-    try {
-      const json = await gql(admin, TARGETED_QUERY, { variables: { q: query } }, shopDomain);
-      for (const edge of json.data?.products?.edges || []) {
-        const productId = edge.node.id;
-        for (const vEdge of edge.node.variants?.edges || []) {
-          const v = vEdge.node;
-          const match: LookupMatch = {
-            productId,
-            variantId: v.id,
-            inventoryItemId: v.inventoryItem?.id || "",
-            shopifyCost: parseFloat(v.inventoryItem?.unitCost?.amount ?? "0") || 0,
-            sku: v.sku || "",
-          };
-          if (v.sku && !bySku.has(v.sku)) bySku.set(String(v.sku), match);
-          if (v.barcode) byBarcode.set(String(v.barcode), match);
+    let succeeded = false;
+    for (let attempt = 0; attempt < 3 && !succeeded; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 1000 * attempt));
+      try {
+        const json = await gql(admin, TARGETED_QUERY, { variables: { q: query } }, shopDomain);
+        for (const edge of json.data?.products?.edges || []) {
+          const productId = edge.node.id;
+          for (const vEdge of edge.node.variants?.edges || []) {
+            const v = vEdge.node;
+            const match: LookupMatch = {
+              productId,
+              variantId: v.id,
+              inventoryItemId: v.inventoryItem?.id || "",
+              shopifyCost: parseFloat(v.inventoryItem?.unitCost?.amount ?? "0") || 0,
+              sku: v.sku || "",
+            };
+            if (v.sku && !bySku.has(v.sku)) bySku.set(String(v.sku), match);
+            if (v.barcode) byBarcode.set(String(v.barcode), match);
+          }
+        }
+        succeeded = true;
+      } catch (e: any) {
+        if (attempt === 2) {
+          console.error(`[Bulk] Targeted barcode query batch failed (3 attempts): ${batch.join(",")} → ${e?.message}`);
+          eanQueryFailed += batch.length;
         }
       }
-    } catch (e: any) {
-      console.error(`[Bulk] Targeted barcode query batch failed: ${e?.message}`);
     }
   }
 
-  console.log(`[Bulk] Targeted lookup: bySku.size=${bySku.size}, byBarcode.size=${byBarcode.size}`);
+  console.log(`[Bulk] Targeted lookup: bySku.size=${bySku.size}, byBarcode.size=${byBarcode.size}, skuQueryFailed=${skuQueryFailed}, eanQueryFailed=${eanQueryFailed}`);
   return { bySku, byBarcode };
 }
 
