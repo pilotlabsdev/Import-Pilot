@@ -430,10 +430,10 @@ export async function runBulkImport({
   if (!config) throw new Error("No hay configuración de importación para esta tienda");
 
   const activeJob = await prisma.bulkJob.findFirst({
-    where: { shopDomain, phase: { in: ["lookup", "mutations", "finalizing"] } },
+    where: { configId: config.id, phase: { in: ["lookup", "mutations", "finalizing"] } },
   });
   if (activeJob) {
-    throw new Error("Ya hay una importación en curso para esta tienda");
+    throw new Error(`Ya hay una importación en curso para el proveedor "${config.name || config.id}"`);
   }
 
   // CRITICAL: Deduplicate sessions before getting admin client.

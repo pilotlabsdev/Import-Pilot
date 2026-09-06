@@ -592,6 +592,50 @@ export async function getQueueStatus(shopDomain: string): Promise<{
     };
   });
 
+  // Include recently failed queue items that have no ImportLog (error before log creation)
+  const failedQueueItems = await prisma.importQueue.findMany({
+    where: { shopDomain, status: "failed", finishedAt: { gte: new Date(Date.now() - 30 * 60 * 1000) } },
+    orderBy: { finishedAt: "desc" },
+    take: 5,
+  }).catch(() => []);
+
+  const failedConfigIds = failedQueueItems.filter((q) => !allRecent.some((r) => r.configId === q.configId && r.logId == null)).map((q) => q.configId);
+  const failedConfigs = failedConfigIds.length > 0
+    ? await prisma.importConfig.findMany({
+        where: { id: { in: failedConfigIds } },
+        select: { id: true, name: true, csvUrl: true, dataSource: true, localFilePath: true, importMode: true },
+      })
+    : [];
+  const failedConfigMap = new Map(failedConfigs.map((c) => [c.id, c]));
+
+  for (const qi of failedQueueItems) {
+    if (allRecent.some((r) => r.configId === qi.configId && r.logId == null)) continue;
+    const cfg = failedConfigMap.get(qi.configId);
+    const sourceLabel = cfg?.dataSource === "file"
+      ? cfg.localFilePath?.split(/[/\\]/).pop() || "Archivo local"
+      : cfg?.csvUrl || "URL";
+    allRecent.push({
+      id: qi.id,
+      shopDomain,
+      configId: qi.configId,
+      supplierName: qi.supplierName || cfg?.name || null,
+      sourceLabel,
+      triggerType: qi.triggerType,
+      importMode: cfg?.importMode || "chunks",
+      filterType: null, filterSkus: null, filterCategories: null,
+      forceUpdate: false, position: 0,
+      status: "failed", logId: null,
+      startedAt: qi.startedAt, finishedAt: qi.finishedAt,
+      createdAt: qi.createdAt,
+      totalProducts: 0, created: 0, updated: 0, unchanged: 0,
+      excludedCount: 0, priceChanges: 0, stockChanges: 0, costChanges: 0,
+      errorCount: 1,
+      errorDetails: [{ sku: "SYSTEM", error: "systemError.queue_failed_without_log" }],
+    });
+  }
+
+  allRecent.sort((a, b) => ((b.finishedAt || b.createdAt)?.getTime?.() || 0) - ((a.finishedAt || a.createdAt)?.getTime?.() || 0));
+
   return {
     active: active as QueueItem[],
     queued: queued as QueueItem[],
