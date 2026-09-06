@@ -1538,6 +1538,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
   let stockChanges = 0;
   let costChanges = 0;
   let opErrors = 0;
+  const transientRetries: Array<{ meta: MetaLine; error: string }> = [];
 
   // Proactive refresh before post-processing mutations
   await ensureFreshTokenForBulk(job.shopDomain);
@@ -1553,10 +1554,17 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
 
     const userErrors = extractUserErrors(line);
     if (userErrors.length > 0 || line.errors) {
-      opErrors++;
-      errorWrites.push(
-        JSON.stringify({ sku: meta.sku, error: userErrors.join("; ") || "systemError.variable_error", lineNumber: 0 })
-      );
+      const errMsg = userErrors.join("; ") || "systemError.variable_error";
+      const isTransient = errMsg.includes("currently being modified") || errMsg.includes("try again later");
+      if (isTransient) {
+        transientRetries.push({ meta, error: errMsg });
+        console.log(`[Bulk] SKU=${meta.sku}: transient error, will retry individually: ${errMsg}`);
+      } else {
+        opErrors++;
+        errorWrites.push(
+          JSON.stringify({ sku: meta.sku, error: errMsg, lineNumber: 0 })
+        );
+      }
       continue;
     }
 
@@ -1682,6 +1690,88 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
   }
 
   await fs.appendFile(errorsPath, errorWrites.length ? errorWrites.join("\n") + "\n" : "");
+
+  // Retry transient errors ("currently being modified") via individual productSet mutations.
+  // These happen when two concurrent imports modify the same product.
+  let transientRetriedCount = 0;
+  let transientFailedCount = 0;
+  if (transientRetries.length > 0) {
+    console.log(`[Bulk] Retrying ${transientRetries.length} transient errors individually...`);
+    const RETRY_DELAYS = [3000, 7000, 15000];
+    for (let attempt = 0; attempt <= RETRY_DELAYS.length && transientRetries.length > 0; attempt++) {
+      if (attempt > 0) {
+        console.log(`[Bulk] Transient retry attempt ${attempt}/${RETRY_DELAYS.length}, waiting ${RETRY_DELAYS[attempt - 1]}ms...`);
+        await new Promise((r) => setTimeout(r, RETRY_DELAYS[attempt - 1]));
+      }
+      const stillPending: typeof transientRetries = [];
+      for (const { meta: rm } of transientRetries) {
+        try {
+          const identifier = rm.productId ? { id: rm.productId } : { sku: rm.sku };
+          const input: any = { title: rm.sku };
+          if (rm.regularPrice > 0) input.price = String(rm.regularPrice);
+          if (rm.compareAtPrice && rm.compareAtPrice > 0) input.compareAtPrice = String(rm.compareAtPrice);
+          if (rm.ean) input.barcode = rm.ean;
+          if (rm.collectionIds?.length) input.collectionIds = rm.collectionIds;
+
+          const res = await withRetry(
+            () => gql(admin, PRODUCT_SET_MUTATION, { variables: { identifier, input } }, job.shopDomain),
+            `transient-retry-${rm.sku}`
+          );
+          const errs = extractUserErrors(res);
+          if (errs.length > 0) {
+            const stillTransient = errs.some((e: string) => e.includes("currently being modified"));
+            if (stillTransient && attempt < RETRY_DELAYS.length) {
+              stillPending.push({ meta: rm, error: errs.join("; ") });
+            } else {
+              transientFailedCount++;
+              errorWrites.push(JSON.stringify({ sku: rm.sku, error: `retry_failed: ${errs.join("; ")}`, lineNumber: 0 }));
+              console.error(`[Bulk] SKU=${rm.sku}: transient retry failed: ${errs.join("; ")}`);
+            }
+          } else {
+            const product = res.data?.productSet?.product;
+            if (product?.id) {
+              transientRetriedCount++;
+              console.log(`[Bulk] SKU=${rm.sku}: transient retry succeeded → ${product.id}`);
+              const variant = product.variants?.edges?.[0]?.node;
+              await prisma.productMapping.upsert({
+                where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: rm.sku } },
+                create: {
+                  shopDomain: job.shopDomain, configId: job.configId, supplierSku: rm.sku,
+                  ean: rm.ean || null, shopifyProductId: product.id,
+                  shopifyVariantId: variant?.id ?? null, shopifyInventoryItemId: variant?.inventoryItem?.id ?? null,
+                  lastPrice: rm.regularPrice, lastComparePrice: rm.compareAtPrice, lastQuantity: rm.stockQty,
+                  lastCost: rm.costPrice > 0 ? rm.costPrice : null, lastImportSource: sourceKey || null,
+                  postProcessStatus: op.kind === "create" ? "pending" : "complete",
+                },
+                update: {
+                  shopifyProductId: product.id, shopifyVariantId: variant?.id ?? null,
+                  shopifyInventoryItemId: variant?.inventoryItem?.id ?? null,
+                  lastPrice: rm.regularPrice, lastComparePrice: rm.compareAtPrice, lastQuantity: rm.stockQty,
+                  lastCost: rm.costPrice > 0 ? rm.costPrice : null, lastImportSource: sourceKey || undefined,
+                  postProcessStatus: op.kind === "create" ? "pending" : "complete", postProcessError: null, postProcessRetries: 0,
+                },
+              }).catch(() => {});
+              if (op.kind === "create") createdCount++;
+              else updatedCount++;
+            } else {
+              transientFailedCount++;
+              errorWrites.push(JSON.stringify({ sku: rm.sku, error: "retry_no_product_id", lineNumber: 0 }));
+            }
+          }
+        } catch (e: any) {
+          stillPending.push({ meta: rm, error: e?.message || "retry_exception" });
+        }
+      }
+      transientRetries.length = 0;
+      transientRetries.push(...stillPending);
+    }
+    // Any remaining transient retries are permanent failures
+    for (const { meta: rm, error: rErr } of transientRetries) {
+      transientFailedCount++;
+      errorWrites.push(JSON.stringify({ sku: rm.sku, error: `retry_exhausted: ${rErr}`, lineNumber: 0 }));
+    }
+    console.log(`[Bulk] Transient retries done: ${transientRetriedCount} succeeded, ${transientFailedCount} failed`);
+  }
 
   await prisma.bulkJobOp.update({
     where: { id: op.id },
