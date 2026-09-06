@@ -35,6 +35,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // Extract numeric IDs from GIDs for Shopify query
     const numericIds = productIds.map((gid) => gid.replace("gid://shopify/Product/", ""));
     const existingIds = new Set<string>();
+    let queryFailed = false;
     // Batch check (max 10 per query)
     for (let i = 0; i < numericIds.length; i += 10) {
       const batch = numericIds.slice(i, i + 10);
@@ -54,13 +55,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           existingIds.add(edge.node.id); // Full GID like gid://shopify/Product/xxx
         }
       } catch (e) {
+        queryFailed = true;
         console.error("[Duplicates] Error checking EXTERNAL products:", e);
       }
     }
-    // Delete logs for products that no longer exist
-    const orphanIds = externalLogs
-      .filter((d) => !existingIds.has(d.supplierA_title))
-      .map((d) => d.id);
+    // Delete logs for products that no longer exist (skip if any query failed — avoid false orphans)
+    const orphanIds = queryFailed
+      ? []
+      : externalLogs
+          .filter((d) => !existingIds.has(d.supplierA_title))
+          .map((d) => d.id);
     if (orphanIds.length > 0) {
       await prisma.duplicateLog.deleteMany({ where: { id: { in: orphanIds } } });
       console.log(`[Duplicates] Cleaned ${orphanIds.length} orphaned EXTERNAL duplicate logs`);

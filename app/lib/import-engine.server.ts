@@ -867,12 +867,24 @@ async function processProduct({
           label: `SKU=${sku} (priority replace inter-supplier)`,
         });
       }
-      await prisma.productMapping.delete({ where: { id: existing.id } });
-      const newMapping2 = await prisma.productMapping.create({
-        data: {
+      const newMapping2 = await prisma.productMapping.upsert({
+        where: { shopDomain_supplierSku: { shopDomain, supplierSku: sku } },
+        create: {
           shopDomain,
           configId: config.id,
           supplierSku: sku,
+          ean: rowEanForReplace || null,
+          shopifyProductId: existing.shopifyProductId,
+          shopifyVariantId: variantId2 || null,
+          shopifyInventoryItemId: invItemId2 || null,
+          lastPrice: prices2.regularPrice,
+          lastComparePrice: prices2.compareAtPrice,
+          lastQuantity: newQty,
+          lastCost: costPrice > 0 ? costPrice : null,
+          lastImportSource: sourceKey,
+        },
+        update: {
+          configId: config.id,
           ean: rowEanForReplace || null,
           shopifyProductId: existing.shopifyProductId,
           shopifyVariantId: variantId2 || null,
@@ -1052,8 +1064,9 @@ async function processProduct({
           }
         }
         try {
-          const newMapping2 = await prisma.productMapping.create({
-            data: {
+          const newMapping2 = await prisma.productMapping.upsert({
+            where: { shopDomain_supplierSku: { shopDomain, supplierSku: sku } },
+            create: {
               shopDomain,
               configId: config.id,
               supplierSku: sku,
@@ -1067,10 +1080,22 @@ async function processProduct({
               lastCost: costPrice > 0 ? costPrice : null,
               lastImportSource: sourceKey,
             },
+            update: {
+              configId: config.id,
+              ean: rowEan || null,
+              shopifyProductId: dupCheck.existingShopifyProductId,
+              shopifyVariantId: variantId2 || null,
+              shopifyInventoryItemId: invItemId2 || null,
+              lastPrice: prices2.regularPrice,
+              lastComparePrice: prices2.compareAtPrice,
+              lastQuantity: newQty,
+              lastCost: costPrice > 0 ? costPrice : null,
+              lastImportSource: sourceKey,
+            },
           });
           existing = newMapping2;
         } catch (e: any) {
-          console.error(`[Import] Priority replace: error creating new mapping:`, e?.message);
+          console.error(`[Import] Priority replace: error upserting new mapping:`, e?.message);
         }
         result.updated++;
         return;
@@ -1438,13 +1463,26 @@ async function processProduct({
       });
     }
 
-    // Delete old mapping, create new one
-    await prisma.productMapping.delete({ where: { id: priorityReplaceTarget.mappingId } });
-    const newMapping2 = await prisma.productMapping.create({
-      data: {
+    // Delete old mapping, upsert new one
+    try { await prisma.productMapping.delete({ where: { id: priorityReplaceTarget.mappingId } }); } catch {}
+    const newMapping2 = await prisma.productMapping.upsert({
+      where: { shopDomain_supplierSku: { shopDomain, supplierSku: sku } },
+      create: {
         shopDomain,
         configId: config.id,
         supplierSku: sku,
+        ean: rowEanForReplace || null,
+        shopifyProductId: priorityReplaceTarget.shopifyProductId,
+        shopifyVariantId: variantId2 || null,
+        shopifyInventoryItemId: invItemId2 || null,
+        lastPrice: prices2.regularPrice,
+        lastComparePrice: prices2.compareAtPrice,
+        lastQuantity: newQty,
+        lastCost: costPrice > 0 ? costPrice : null,
+        lastImportSource: sourceKey,
+      },
+      update: {
+        configId: config.id,
         ean: rowEanForReplace || null,
         shopifyProductId: priorityReplaceTarget.shopifyProductId,
         shopifyVariantId: variantId2 || null,
@@ -1812,11 +1850,24 @@ async function processProduct({
     }
 
     try {
-      await prisma.productMapping.create({
-        data: {
+      await prisma.productMapping.upsert({
+        where: { shopDomain_supplierSku: { shopDomain, supplierSku: sku } },
+        create: {
           shopDomain,
           configId: config.id,
           supplierSku: sku,
+          ean: rowEan || null,
+          shopifyProductId: productId,
+          shopifyVariantId: variant?.id ?? null,
+          shopifyInventoryItemId: inventoryItemId,
+          lastPrice: prices.regularPrice,
+          lastComparePrice: prices.compareAtPrice,
+          lastQuantity: newQty,
+          lastCost: costPrice > 0 ? costPrice : null,
+          lastImportSource: sourceKey,
+        },
+        update: {
+          configId: config.id,
           ean: rowEan || null,
           shopifyProductId: productId,
           shopifyVariantId: variant?.id ?? null,

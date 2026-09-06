@@ -966,6 +966,7 @@ async function prepareAndLaunch(
   const errors: Array<{ sku: string; error: string; lineNumber?: number }> = [];
   let duplicateSkippedCount = 0;
   const priorityReplacements: Array<{ mappingId: string; oldConfigId: string; newSku: string; newEan: string }> = [];
+  const unmatchedEans: Array<{ ean: string; sku: string }> = [];
 
   // Pre-load existing EAN mappings from OTHER suppliers for duplicate detection
   const existingEanMappings = new Map<string, { supplierSku: string; configName: string; mappingId: string; configId: string }>();
@@ -1125,10 +1126,33 @@ async function prepareAndLaunch(
         const existingSkuOnProduct = matchInfo.sku || "";
         const isSameSku = existingSkuOnProduct && existingSkuOnProduct.toLowerCase() === sku.toLowerCase();
 
-        const anyMapping = await prisma.productMapping.findFirst({
+        // Search by shopifyProductId OR supplierSku (unique constraint is on supplierSku)
+        let anyMapping = await prisma.productMapping.findFirst({
           where: { shopDomain: job.shopDomain, shopifyProductId: matchInfo.productId },
-          select: { id: true, configId: true },
+          select: { id: true, configId: true, shopifyProductId: true, supplierSku: true },
         }).catch(() => null);
+        // Also check by supplierSku in case product was recreated with new ID
+        const bySkuMapping_ = await prisma.productMapping.findFirst({
+          where: { shopDomain: job.shopDomain, supplierSku: sku },
+          select: { id: true, configId: true, shopifyProductId: true, supplierSku: true },
+        }).catch(() => null);
+        // Prefer the mapping that matches the current productId, or fall back to by-sku
+        if (!anyMapping && bySkuMapping_) {
+          anyMapping = bySkuMapping_;
+          // Product exists in Shopify with different ID → update the mapping
+          if (bySkuMapping_.shopifyProductId !== matchInfo.productId) {
+            console.log(`[Bulk] SKU ${sku}: updating mapping from ${bySkuMapping_.shopifyProductId} → ${matchInfo.productId}`);
+            await prisma.productMapping.update({
+              where: { id: bySkuMapping_.id },
+              data: {
+                shopifyProductId: matchInfo.productId,
+                shopifyVariantId: matchInfo.variantId,
+                shopifyInventoryItemId: matchInfo.inventoryItemId,
+                ean: ean || null,
+              },
+            }).catch(() => {});
+          }
+        }
 
         if (isSameSku) {
           // === SUB-CASE: Same EAN + Same SKU ===
@@ -1148,7 +1172,10 @@ async function prepareAndLaunch(
                 lastQuantity: null,
                 postProcessStatus: "pending",
               },
-            }).catch(() => null);
+            }).catch((e: any) => {
+              console.error(`[Bulk] SKU ${sku}: adopt create failed: ${e?.message}`);
+              return null;
+            });
             if (adopted) {
               selfEanMappings.add(ean);
               const adoptPubIds: string[] = [];
@@ -1195,9 +1222,9 @@ async function prepareAndLaunch(
             // create_both → always create new product (flow through)
           }
         }
-      } else if (ean && !existingDup) {
-        // EAN not in existingEanMappings AND not in byBarcode → external product not detected
-        console.log(`[Bulk] SKU=${sku}: EAN ${ean} NOT found in existingEanMappings or byBarcode`);
+      } else if (ean && !existingDup && !inByBarcode) {
+        // EAN not in existingEanMappings AND not in byBarcode → collect for post-loop batch detection
+        unmatchedEans.push({ ean, sku });
       }
     }
 
@@ -1317,7 +1344,60 @@ async function prepareAndLaunch(
   await flush("create");
   await flush("update");
 
-  console.log(`[Bulk] PREPARE SUMMARY: total=${totalCount}, filtered=${filteredOutCount}, deduped=${dedupedCount}, excluded=${excludedCount}, duplicates=${duplicateSkippedCount}, zeroStockSkip=${zeroStockSkippedCount}, matchedUpdate=${matchedUpdateCount}, matchedUnchanged=${matchedUnchangedCount}, newCreates=${newCreateCount}, unchangedTotal=${unchangedCount}, createFiles=${createFiles.length}, updateFiles=${updateFiles.length}`);
+  // Post-loop batch: detect external duplicates for EANs NOT found in byBarcode
+  // These are products that exist in Shopify but don't have barcode set on any variant.
+  // queryProductsTargeted already tried barcode:'...' and failed; we try query:'...' (broader search).
+  let batchExternalDetected = 0;
+  if (unmatchedEans.length > 0 && duplicatePolicy !== "create_both") {
+    const uniqueUnmatched = [...new Map(unmatchedEans.map((u) => [u.ean, u])).values()];
+    console.log(`[Bulk] Post-loop external detection: ${uniqueUnmatched.length} EANs not found in byBarcode, trying broader search`);
+    const TARGETED_QUERY = `#graphql
+      query ($q: String!) {
+        products(first: 5, query: $q) {
+          edges {
+            node {
+              id title
+              variants(first: 1) {
+                edges { node { id sku barcode } }
+              }
+            }
+          }
+        }
+      }
+    `;
+    for (let i = 0; i < uniqueUnmatched.length; i += 10) {
+      const batch = uniqueUnmatched.slice(i, i + 10);
+      for (const { ean, sku: csvSku } of batch) {
+        try {
+          const json = await gql(admin, TARGETED_QUERY, { variables: { q: `"${ean}"` } }, job.shopDomain);
+          const edges = json.data?.products?.edges || [];
+          if (edges.length > 0) {
+            const product = edges[0].node;
+            const shopifyProductId = product.id;
+            // Check if this product is already tracked by ANY supplier
+            const existingMapping = await prisma.productMapping.findFirst({
+              where: { shopDomain: job.shopDomain, shopifyProductId },
+              select: { id: true, configId: true },
+            }).catch(() => null);
+            if (!existingMapping) {
+              // External product found via broader search — log duplicate
+              await logExternalDuplicate(job.shopDomain, ean, shopifyProductId, csvSku, config.id, config.name || "Proveedor");
+              duplicateSkippedCount++;
+              batchExternalDetected++;
+              console.log(`[Bulk] External duplicate detected via broader search: SKU=${csvSku} EAN=${ean} → ${shopifyProductId}`);
+            }
+          }
+        } catch (e: any) {
+          console.error(`[Bulk] Post-loop search failed for EAN ${ean}: ${e?.message}`);
+        }
+      }
+    }
+    if (batchExternalDetected > 0) {
+      console.log(`[Bulk] Post-loop external detection: ${batchExternalDetected} external products detected`);
+    }
+  }
+
+  console.log(`[Bulk] PREPARE SUMMARY: total=${totalCount}, filtered=${filteredOutCount}, deduped=${dedupedCount}, excluded=${excludedCount}, duplicates=${duplicateSkippedCount}, zeroStockSkip=${zeroStockSkippedCount}, matchedUpdate=${matchedUpdateCount}, matchedUnchanged=${matchedUnchangedCount}, newCreates=${newCreateCount}, unchangedTotal=${unchangedCount}, batchExternal=${batchExternalDetected}, createFiles=${createFiles.length}, updateFiles=${updateFiles.length}`);
 
   const allSkusPath = path.join(workDir, "all-skus.jsonl");
   await fs.writeFile(allSkusPath, allSkus.map((s) => JSON.stringify(s)).join("\n") + "\n");
