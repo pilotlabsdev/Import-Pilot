@@ -1349,7 +1349,7 @@ async function prepareAndLaunch(
   // queryProductsTargeted already tried barcode:'...' and failed; we try query:'...' (broader search).
   let batchExternalDetected = 0;
   const externalCsvSkus = new Set<string>(); // CSV SKUs detected as external — remove from create files
-  const missedSameSkuCsvSkus = new Set<string>(); // CSV SKUs that exist in Shopify with same SKU — remove from create files (should be UPDATE, not CREATE)
+  const missedSameSkuProducts = new Map<string, string>(); // CSV SKU → Shopify productId (same-SKU products missed by queryProductsTargeted)
   const allSkusSet = new Set(allSkus.map((s) => s.toLowerCase()));
   if (unmatchedEans.length > 0 && duplicatePolicy !== "create_both") {
     const uniqueUnmatched = [...new Map(unmatchedEans.map((u) => [u.ean, u])).values()];
@@ -1382,7 +1382,7 @@ async function prepareAndLaunch(
             // If the found product's SKU matches a CSV SKU, it's a same-supplier product
             // that queryProductsTargeted missed (query failure). NOT an external duplicate.
             if (shopifySku && allSkusSet.has(shopifySku.toLowerCase())) {
-              missedSameSkuCsvSkus.add(csvSku.toLowerCase());
+              missedSameSkuProducts.set(csvSku.toLowerCase(), shopifyProductId);
               console.log(`[Bulk] Post-loop found same-SKU product: CSV=${csvSku} Shopify=${shopifySku} EAN=${ean} → ${shopifyProductId} (not external, queryProductsTargeted missed it)`);
               continue;
             }
@@ -1411,10 +1411,8 @@ async function prepareAndLaunch(
     }
   }
 
-  // Rewrite create files: remove external products, convert same-SKU to updates (add identifier)
-  const externalCsvSkusArr = [...externalCsvSkus];
-  const missedSameSkuCsvSkusArr = [...missedSameSkuCsvSkus];
-  if (externalCsvSkus.size > 0 || missedSameSkuCsvSkus.size > 0) {
+  // Rewrite create files: remove external products, convert same-SKU to updates (add identifier with product ID)
+  if (externalCsvSkus.size > 0 || missedSameSkuProducts.size > 0) {
     let removedExternal = 0;
     let convertedToUpdates = 0;
     const newCreateFiles: string[] = [];
@@ -1436,10 +1434,11 @@ async function prepareAndLaunch(
           removedExternal++;
           continue;
         }
-        if (missedSameSkuCsvSkus.has(skuLower)) {
-          // Convert create → update by adding identifier with SKU
+        if (missedSameSkuProducts.has(skuLower)) {
+          // Convert create → update by adding identifier with product ID
           const parsed = JSON.parse(inputLines[j]);
-          parsed.identifier = { sku: meta.sku };
+          const shopifyProductId = missedSameSkuProducts.get(skuLower)!;
+          parsed.identifier = { id: shopifyProductId };
           keptInput.push(JSON.stringify(parsed));
           if (metaLinesArr[j]) keptMeta.push(metaLinesArr[j]);
           convertedToUpdates++;
