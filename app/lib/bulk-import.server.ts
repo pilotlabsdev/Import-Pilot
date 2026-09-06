@@ -1435,10 +1435,21 @@ async function prepareAndLaunch(
           continue;
         }
         if (missedSameSkuProducts.has(skuLower)) {
-          // Convert create → update by adding identifier with product ID
+          // Convert create → update: add identifier + filter input by updateOptions
           const parsed = JSON.parse(inputLines[j]);
           const shopifyProductId = missedSameSkuProducts.get(skuLower)!;
           parsed.identifier = { id: shopifyProductId };
+          // Strip fields not in updateOptions (same logic as mapCsvRowToProductSetUpdate)
+          const inp = parsed.input;
+          if (inp) {
+            if (!updateOpts.has("name")) delete inp.title;
+            if (!updateOpts.has("description")) delete inp.descriptionHtml;
+            if (!updateOpts.has("price")) { delete inp.price; delete inp.compareAtPrice; }
+            if (!updateOpts.has("vendor")) delete inp.vendor;
+            if (!updateOpts.has("productType")) delete inp.productType;
+            if (!updateOpts.has("tags")) delete inp.tags;
+            if (!updateOpts.has("images")) delete inp.images;
+          }
           keptInput.push(JSON.stringify(parsed));
           if (metaLinesArr[j]) keptMeta.push(metaLinesArr[j]);
           convertedToUpdates++;
