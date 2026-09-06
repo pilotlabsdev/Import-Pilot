@@ -177,7 +177,9 @@ export default function ImportTab() {
 
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data) {
-      revalidate();
+      // Delay revalidation to avoid overwhelming server when import just started
+      const timer = setTimeout(() => revalidate(), 2000);
+      return () => clearTimeout(timer);
     }
   }, [fetcher.state, fetcher.data, revalidate]);
 

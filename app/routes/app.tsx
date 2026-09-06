@@ -84,10 +84,11 @@ export default function App() {
   const { t } = useTranslation();
   const { revalidate } = useRevalidator();
 
-  // Auto-refresh queue count every 15s and when tab becomes visible
+  // Auto-refresh queue count every 20s and when tab becomes visible
+  // Use longer interval to avoid overwhelming server during imports
   useEffect(() => {
     if (!hasPlan) return;
-    const interval = setInterval(revalidate, 5000);
+    const interval = setInterval(revalidate, 20000);
     const onVisible = () => { if (document.visibilityState === "visible") revalidate(); };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
@@ -115,7 +116,11 @@ export default function App() {
         }
         return res;
       } catch (err) {
-        triggerReconnect();
+        // Only trigger reconnect for .data fetches (React Router), not for API polls
+        const url = typeof args[0] === "string" ? args[0] : args[0]?.url || "";
+        if (url.includes(".data")) {
+          triggerReconnect();
+        }
         throw err;
       }
     };
@@ -170,7 +175,15 @@ export function ErrorBoundary() {
   }, [isAuthError]);
 
   if (isAuthError) {
-    return null;
+    return (
+      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "60vh" }}>
+        <div style={{ textAlign: "center", color: "#6d7175" }}>
+          <div style={{ width: "24px", height: "24px", border: "3px solid #ddd", borderTopColor: "#006fbb", borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 12px" }} />
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+          <p>Conectando...</p>
+        </div>
+      </div>
+    );
   }
 
   return boundary.error(error);
