@@ -9,7 +9,7 @@ import {
   Button,
   Badge,
 } from "@shopify/polaris";
-import { authenticate } from "~/shopify.server";
+import { safeAuthenticate } from "~/shopify.server";
 import { data, type LoaderFunctionArgs } from "react-router";
 import { TUTORIAL_PAGES } from "~/lib/tutorial-steps";
 import {
@@ -22,7 +22,7 @@ import {
 import { useTranslation } from "react-i18next";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
+  await safeAuthenticate(request);
   return data({});
 };
 

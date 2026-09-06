@@ -1,5 +1,5 @@
 import type { LoaderFunctionArgs } from "react-router";
-import { authenticate } from "~/shopify.server";
+import { safeAuthenticate } from "~/shopify.server";
 import { prisma } from "~/lib/db.server";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -8,7 +8,7 @@ import os from "node:os";
 const UPLOAD_DIR = path.join(os.tmpdir(), "importador-uploads");
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session } = await safeAuthenticate(request);
   const shopDomain = session.shop;
   const url = new URL(request.url);
   const configId = url.searchParams.get("configId");

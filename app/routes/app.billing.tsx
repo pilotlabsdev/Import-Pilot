@@ -14,7 +14,7 @@ import {
 } from "@shopify/polaris";
 import { useTranslation } from "react-i18next";
 
-import { authenticate } from "~/shopify.server";
+import { authenticate, safeAuthenticate } from "~/shopify.server";
 import { PLAN_HANDLES, PLAN_LIMITS, PLAN_INFO } from "~/lib/plans";
 import {
   getSubscriptionInfo,
@@ -39,7 +39,7 @@ const FEATURES = [
 ];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { billing, session } = await authenticate.admin(request);
+  const { billing, session } = await safeAuthenticate(request);
   const shopDomain = session.shop;
 
   const url = new URL(request.url);
@@ -93,7 +93,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   console.log("[Billing Action] Called");
-  const { billing, session } = await authenticate.admin(request);
+  const { billing, session } = await safeAuthenticate(request);
   console.log("[Billing Action] Session:", session.shop);
   const formData = await request.formData();
   const intent = formData.get("intent") as string;

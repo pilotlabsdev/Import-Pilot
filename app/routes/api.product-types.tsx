@@ -1,9 +1,9 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { data } from "react-router";
-import { authenticate } from "~/shopify.server";
+import { safeAuthenticate } from "~/shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session, admin } = await authenticate.admin(request);
+  const { session, admin } = await safeAuthenticate(request);
 
   try {
     const res = await admin.graphql(

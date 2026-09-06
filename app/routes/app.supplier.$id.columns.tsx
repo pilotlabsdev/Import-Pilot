@@ -15,13 +15,13 @@ import {
   TextField,
 } from "@shopify/polaris";
 import { prisma, getConfigById, getEffectiveUrl, getSourceKey } from "~/lib/db.server";
-import { authenticate } from "~/shopify.server";
+import { safeAuthenticate } from "~/shopify.server";
 import { fetchCSVHeaders } from "~/lib/csv-parser.server";
 import { getCachedHeaders } from "~/lib/csv-cache.server";
 import { useTranslation } from "react-i18next";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session } = await safeAuthenticate(request);
   const shopDomain = session.shop;
   const configId = params.id as string;
 
@@ -66,7 +66,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session } = await safeAuthenticate(request);
   const shopDomain = session.shop;
   const configId = params.id as string;
 

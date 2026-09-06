@@ -197,3 +197,23 @@ export const authenticate = shopify.authenticate;
 export const unauthenticated = shopify.unauthenticated;
 export const login = shopify.login;
 export const addDocumentResponseHeaders = shopify.addDocumentResponseHeaders;
+
+/**
+ * Safe wrapper around authenticate.admin() that handles session expiry gracefully.
+ * When the session is expired, the library throws a raw Response(401).
+ * This wrapper catches it and redirects to "/" which triggers App Bridge session refresh.
+ */
+export async function safeAuthenticate(request: Request) {
+  try {
+    return await authenticate.admin(request);
+  } catch (res: any) {
+    if (res instanceof Response && res.status === 401) {
+      console.log(`[Auth] Session expired for ${request.url}, redirecting to refresh`);
+      throw new Response(null, {
+        status: 302,
+        headers: { Location: "/" },
+      });
+    }
+    throw res;
+  }
+}

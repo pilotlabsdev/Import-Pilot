@@ -13,11 +13,11 @@ import {
   ProgressBar,
   Text,
 } from "@shopify/polaris";
-import { authenticate } from "~/shopify.server";
+import { safeAuthenticate } from "~/shopify.server";
 import { useTranslation } from "react-i18next";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
+  await safeAuthenticate(request);
   return data({});
 };
 

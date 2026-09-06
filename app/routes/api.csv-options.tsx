@@ -4,10 +4,10 @@ import { prisma, getOrCreateConfig, getEffectiveUrl, getSourceKey } from "~/lib/
 import { resolveFileUrl } from "~/lib/storage.server";
 import { fetchCSVSkus, fetchCSVCategories, fetchCSVBrands, fetchCSVHeaders } from "~/lib/csv-parser.server";
 import { getCachedCategories, getCachedBrands, getCachedSkus, getCachedHeaders } from "~/lib/csv-cache.server";
-import { authenticate } from "~/shopify.server";
+import { safeAuthenticate } from "~/shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
+  await safeAuthenticate(request);
   const url = new URL(request.url);
   const shopDomain = url.searchParams.get("shop") || "";
   const configIdParam = url.searchParams.get("configId") || "";

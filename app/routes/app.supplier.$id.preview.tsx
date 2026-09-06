@@ -15,14 +15,14 @@ import {
   Spinner,
   Text,
 } from "@shopify/polaris";
-import { authenticate } from "~/shopify.server";
+import { safeAuthenticate } from "~/shopify.server";
 import { SearchableMultiSelect } from "~/components/SearchableMultiSelect";
 import { useTranslation } from "react-i18next";
 
 const CHUNK_SIZE = 5000;
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session } = await safeAuthenticate(request);
   const shopDomain = session.shop;
   const configId = params.id as string;
   return data({ shopDomain, configId });

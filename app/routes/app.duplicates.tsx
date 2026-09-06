@@ -14,11 +14,11 @@ import {
 } from "@shopify/polaris";
 import { useTranslation } from "react-i18next";
 
-import { authenticate } from "~/shopify.server";
+import { safeAuthenticate } from "~/shopify.server";
 import { prisma } from "~/lib/db.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session, admin } = await authenticate.admin(request);
+  const { session, admin } = await safeAuthenticate(request);
   const shopDomain = session.shop;
 
   let duplicates = await prisma.duplicateLog.findMany({
@@ -185,7 +185,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session } = await safeAuthenticate(request);
   const form = await request.formData();
   const intent = form.get("intent");
 

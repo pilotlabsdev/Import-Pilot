@@ -24,7 +24,7 @@ import {
 import { NoteIcon } from "@shopify/polaris-icons";
 import { prisma, getConfigById } from "~/lib/db.server";
 import { isBucketKey, fileExistsInStorage } from "~/lib/storage.server";
-import { authenticate, unauthenticated } from "~/shopify.server";
+import { authenticate, safeAuthenticate, unauthenticated } from "~/shopify.server";
 import { refreshSchedules } from "~/lib/scheduler.server";
 import { getChannels, getMarkets } from "~/lib/channels.server";
 import { invalidateCache } from "~/lib/csv-cache.server";
@@ -55,7 +55,7 @@ function parseUpdateOptions(raw?: string | null): string[] {
 }
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session } = await safeAuthenticate(request);
   const shopDomain = session.shop;
   const configId = params.id as string;
 
@@ -87,7 +87,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session } = await safeAuthenticate(request);
   const shopDomain = session.shop;
   const configId = params.id as string;
 

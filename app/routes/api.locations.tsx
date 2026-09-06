@@ -1,7 +1,7 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
 import { data } from "react-router";
 import { prisma, getOrCreateConfig } from "~/lib/db.server";
-import { authenticate } from "~/shopify.server";
+import { safeAuthenticate } from "~/shopify.server";
 
 async function discoverLocations(admin: any) {
   const locationMap = new Map<string, { id: string; name: string; isActive: boolean }>();
@@ -88,7 +88,7 @@ async function discoverLocations(admin: any) {
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin } = await safeAuthenticate(request);
   const url = new URL(request.url);
   const shopDomain = url.searchParams.get("shop") || "";
 
@@ -107,7 +107,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  await authenticate.admin(request);
+  await safeAuthenticate(request);
   const formData = await request.formData();
   const shopDomain = formData.get("shop") as string;
   const configId = formData.get("configId") as string || "";

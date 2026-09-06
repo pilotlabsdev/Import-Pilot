@@ -14,13 +14,13 @@ import {
   InlineStack,
   Button,
 } from "@shopify/polaris";
-import { authenticate } from "~/shopify.server";
+import { safeAuthenticate } from "~/shopify.server";
 import { useTranslation } from "react-i18next";
 
 const MOCK_CONFIG_BASE = { id: "tutorial-mock", shopDomain: "tutorial" };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
+  await safeAuthenticate(request);
   return data({ config: MOCK_CONFIG_BASE });
 };
 

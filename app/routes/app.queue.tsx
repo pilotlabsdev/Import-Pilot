@@ -13,7 +13,7 @@ import {
   ProgressBar,
   Text,
 } from "@shopify/polaris";
-import { authenticate } from "~/shopify.server";
+import { safeAuthenticate } from "~/shopify.server";
 import { useTranslation } from "react-i18next";
 import { parseSystemError } from "~/lib/system-errors";
 
@@ -28,7 +28,7 @@ const STATUS_TONE: Record<string, "success" | "critical" | "attention" | "info" 
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
-    const { session } = await authenticate.admin(request);
+    const { session } = await safeAuthenticate(request);
     console.log(`[Queue Page] Loader OK, shop=${session.shop}`);
     return data({ shopDomain: session.shop });
   } catch (error: any) {

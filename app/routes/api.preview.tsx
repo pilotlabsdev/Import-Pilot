@@ -6,7 +6,7 @@ import { isExcluded, parseExcludeFieldRules, getExcludedFields } from "~/lib/csv
 import { getCachedCsvRows } from "~/lib/csv-cache.server";
 import { calculatePriceSync, getActivePriceRules } from "~/lib/price-rules.server";
 import { getLocationId } from "~/lib/location.server";
-import { authenticate } from "~/shopify.server";
+import { safeAuthenticate } from "~/shopify.server";
 
 type ShopifySkuData = { productId: string; variantId: string; inventoryItemId: string | null; stock: number; price: number; compareAtPrice: number; totalStock: number };
 
@@ -228,7 +228,7 @@ async function fetchFullProductScan(
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
-    const { session, admin } = await authenticate.admin(request);
+    const { session, admin } = await safeAuthenticate(request);
     const shopDomain = session.shop;
     const url = new URL(request.url);
     const page = Math.max(parseInt(url.searchParams.get("page") || "1"), 1);

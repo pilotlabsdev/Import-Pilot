@@ -1,12 +1,12 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { data } from "react-router";
-import { authenticate } from "~/shopify.server";
+import { safeAuthenticate } from "~/shopify.server";
 import { prisma } from "~/lib/db.server";
 import { sendTelegramMessage } from "~/lib/telegram.server";
 
 // GET: obtener mensajes + estado del dev
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session } = await safeAuthenticate(request);
   const shopDomain = session.shop;
 
   const url = new URL(request.url);
@@ -35,7 +35,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 // POST: enviar mensaje del merchant
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session } = await safeAuthenticate(request);
   const shopDomain = session.shop;
 
   const form = await request.formData();

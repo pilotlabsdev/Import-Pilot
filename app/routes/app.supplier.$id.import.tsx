@@ -16,7 +16,7 @@ import {
   Layout,
   Text,
 } from "@shopify/polaris";
-import { authenticate, unauthenticated } from "~/shopify.server";
+import { authenticate, safeAuthenticate, unauthenticated } from "~/shopify.server";
 import { prisma, getConfigById } from "~/lib/db.server";
 import { SearchableMultiSelect } from "~/components/SearchableMultiSelect";
 import { refreshSchedules } from "~/lib/scheduler.server";
@@ -43,7 +43,7 @@ const FREQUENCY_KEYS: Record<string, string> = {
 };
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session } = await safeAuthenticate(request);
   const shopDomain = session.shop;
   const configId = params.id as string;
 
@@ -101,7 +101,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session } = await safeAuthenticate(request);
   const shopDomain = session.shop;
   const configId = params.id as string;
   const form = await request.formData();

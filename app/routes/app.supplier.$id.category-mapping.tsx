@@ -24,13 +24,13 @@ import {
   TextField,
 } from "@shopify/polaris";
 import { prisma, getConfigById } from "~/lib/db.server";
-import { authenticate, unauthenticated } from "~/shopify.server";
+import { authenticate, safeAuthenticate, unauthenticated } from "~/shopify.server";
 import { getCollections } from "~/lib/collections.server";
 import { ViewIcon } from "@shopify/polaris-icons";
 import { useTranslation } from "react-i18next";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session } = await safeAuthenticate(request);
   const shopDomain = session.shop;
   const configId = params.id as string;
 
@@ -58,7 +58,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session } = await safeAuthenticate(request);
   const shopDomain = session.shop;
   const configIdParam = params.id as string;
   const formData = await request.formData();

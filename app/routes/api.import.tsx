@@ -2,7 +2,7 @@ import type { ActionFunctionArgs } from "react-router";
 import { data } from "react-router";
 
 import { prisma, getOrCreateConfig, getConfigById, getEffectiveUrl } from "~/lib/db.server";
-import { authenticate, unauthenticated } from "~/shopify.server";
+import { authenticate, safeAuthenticate, unauthenticated } from "~/shopify.server";
 import { enqueue, processNext } from "~/lib/queue-manager.server";
 import { isImportActive } from "~/lib/import-locks.server";
 
@@ -21,7 +21,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   let admin: any;
   try {
-    const ctx = await authenticate.admin(request);
+    const ctx = await safeAuthenticate(request);
     admin = ctx.admin;
   } catch {
     const ctx = await unauthenticated.admin(shopDomain);

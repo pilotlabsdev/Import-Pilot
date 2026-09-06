@@ -12,11 +12,11 @@ import {
 import { useTranslation } from "react-i18next";
 
 import { prisma } from "~/lib/db.server";
-import { authenticate } from "~/shopify.server";
+import { safeAuthenticate } from "~/shopify.server";
 import { parseSystemError } from "~/lib/system-errors";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session } = await safeAuthenticate(request);
   const shopDomain = session.shop;
   const configId = params.id as string;
 

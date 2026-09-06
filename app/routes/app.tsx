@@ -7,7 +7,7 @@ import { useTranslation } from "react-i18next";
 import { useState, useEffect } from "react";
 import { useRevalidator } from "react-router";
 
-import { authenticate } from "~/shopify.server";
+import { safeAuthenticate } from "~/shopify.server";
 import { prisma } from "~/lib/db.server";
 import { TutorialProvider, stopTutorial } from "~/components/TutorialProvider";
 import { CrispChat } from "~/components/CrispChat";
@@ -26,7 +26,7 @@ function ClientOnly({ children }: { children: React.ReactNode }) {
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session } = await safeAuthenticate(request);
   const shopDomain = session.shop;
 
   const url = new URL(request.url);

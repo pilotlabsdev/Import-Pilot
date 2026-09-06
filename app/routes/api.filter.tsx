@@ -1,11 +1,11 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
 import { data } from "react-router";
 import { prisma, getOrCreateConfig } from "~/lib/db.server";
-import { authenticate } from "~/shopify.server";
+import { safeAuthenticate } from "~/shopify.server";
 import { refreshSchedules } from "~/lib/scheduler.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
+  await safeAuthenticate(request);
   const url = new URL(request.url);
   const shopDomain = url.searchParams.get("shop") || "";
   const configIdParam = url.searchParams.get("configId") || "";
@@ -33,7 +33,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  await authenticate.admin(request);
+  await safeAuthenticate(request);
   const formData = await request.formData();
   const shopDomain = formData.get("shop") as string;
   const configIdParam = formData.get("configId") as string || "";

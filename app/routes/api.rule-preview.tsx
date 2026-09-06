@@ -4,10 +4,10 @@ import { prisma, getConfigById, getEffectiveUrl, getSourceKey } from "~/lib/db.s
 import { resolveFileUrl } from "~/lib/storage.server";
 import { streamFile } from "~/lib/csv-parser.server";
 import { calculatePrices } from "~/lib/price-rules.server";
-import { authenticate } from "~/shopify.server";
+import { safeAuthenticate } from "~/shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session } = await safeAuthenticate(request);
   const shopDomain = session.shop;
   const url = new URL(request.url);
   const configIdParam = url.searchParams.get("configId") || "";
