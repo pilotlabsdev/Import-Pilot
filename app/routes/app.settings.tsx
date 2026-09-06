@@ -57,6 +57,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return data({ success: true });
   }
 
+  if (intent === "updateMatchMode") {
+    const matchMode = form.get("matchMode") as string;
+    await prisma.shopSettings.upsert({
+      where: { shopDomain },
+      create: { shopDomain, matchMode },
+      update: { matchMode },
+    });
+    return data({ success: true });
+  }
+
   if (intent === "updatePriority") {
     const priorityJson = form.get("supplierPriority") as string;
     await prisma.shopSettings.upsert({
@@ -76,6 +86,7 @@ export default function Settings() {
   const navigate = useNavigate();
   const { t } = useTranslation();
   const [policy, setPolicy] = useState(settings.duplicatePolicy);
+  const [matchMode, setMatchMode] = useState(settings.matchMode || "overwrite");
   const [priority, setPriority] = useState<string[]>(() => {
     try {
       return settings.supplierPriority ? JSON.parse(settings.supplierPriority) : [];
@@ -113,6 +124,14 @@ export default function Settings() {
     setPolicy(value);
     fetcher.submit(
       { intent: "updatePolicy", duplicatePolicy: value },
+      { method: "POST" }
+    );
+  }
+
+  function handleMatchModeChange(value: string) {
+    setMatchMode(value);
+    fetcher.submit(
+      { intent: "updateMatchMode", matchMode: value },
       { method: "POST" }
     );
   }
@@ -185,6 +204,40 @@ export default function Settings() {
           </Card>
           </div>
         </Layout.Section>
+
+        {policy !== "skip_existing" && (
+          <Layout.Section>
+            <Card>
+              <BlockStack gap="400">
+                <Text variant="headingMd" as="h2">
+                  {t("settings.matchMode")}
+                </Text>
+                <Text variant="bodySm" as="p" tone="subdued">
+                  {t("settings.matchModeHelp")}
+                </Text>
+                <Select
+                  label={t("settings.whenDifferentSku")}
+                  options={[
+                    { label: t("settings.overwriteFull"), value: "overwrite" },
+                    { label: t("settings.updateFiltersOnly"), value: "update" },
+                  ]}
+                  value={matchMode}
+                  onChange={handleMatchModeChange}
+                />
+                {matchMode === "update" && (
+                  <Banner tone="info">
+                    <p>{t("settings.matchModeUpdateDetail")}</p>
+                  </Banner>
+                )}
+                {matchMode === "overwrite" && (
+                  <Banner tone="warning">
+                    <p>{t("settings.matchModeOverwriteDetail")}</p>
+                  </Banner>
+                )}
+              </BlockStack>
+            </Card>
+          </Layout.Section>
+        )}
 
         {policy === "priority" && (
           <Layout.Section>

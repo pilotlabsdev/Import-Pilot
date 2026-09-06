@@ -452,6 +452,13 @@
   "settings.addSuppliers": "Add suppliers to the priority list to define the order.",
   "settings.unassignedSuppliers": "Unassigned suppliers:",
   "settings.invalidAttempt": "Invalid action",
+  "settings.matchMode": "Match mode",
+  "settings.matchModeHelp": "When a product has the same EAN but different SKU (different supplier or external product), defines whether to overwrite or update.",
+  "settings.whenDifferentSku": "When EAN matches but SKU is different",
+  "settings.overwriteFull": "Overwrite everything (full new product)",
+  "settings.updateFiltersOnly": "Update with filters only (keep title and description)",
+  "settings.matchModeUpdateDetail": "Only the fields selected in each supplier's update filters will be updated (price, stock, images, etc.). Title, description and SKU are preserved.",
+  "settings.matchModeOverwriteDetail": "A new product will be created with all CSV data, replacing the existing product.",
   
   "tutorial.title": "App Tutorial",
   "tutorial.subtitle": "Learn how to use the Product Importer",

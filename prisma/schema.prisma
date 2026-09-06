@@ -232,6 +232,7 @@ model ShopSettings {
   id                 String   @id @default(cuid())
   shopDomain         String   @unique
   duplicatePolicy    String   @default("create_both") // create_both | priority | skip_existing
+  matchMode          String   @default("overwrite")   // overwrite | update (how to handle same EAN + different SKU)
   supplierPriority   String?  // JSON array de IDs de proveedor en orden de prioridad
   maxSuppliers       Int      @default(5)
   active             Boolean  @default(true)

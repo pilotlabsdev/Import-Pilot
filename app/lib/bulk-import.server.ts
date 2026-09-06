@@ -374,6 +374,7 @@ interface LookupMatch {
   variantId: string;
   inventoryItemId: string;
   shopifyCost: number;
+  sku: string;
 }
 
 interface MetaLine {
@@ -907,6 +908,7 @@ async function prepareAndLaunch(
   const selfEanMappings = new Set<string>();
   const shopSettings = await prisma.shopSettings.findUnique({ where: { shopDomain: job.shopDomain } });
   const duplicatePolicy = shopSettings?.duplicatePolicy || "create_both";
+  const matchMode = shopSettings?.matchMode || "overwrite";
 
   {
     const allEanMappings = await prisma.productMapping.findMany({
@@ -1023,22 +1025,28 @@ async function prepareAndLaunch(
     // Duplicate detection: check if same EAN exists from another supplier OR already in Shopify
     let priorityReplaceMappingId: string | undefined;
     let priorityReplaceConfigId: string | undefined;
-    if (ean && duplicatePolicy !== "create_both") {
+    if (ean) {
       const existingDup = existingEanMappings.get(ean);
+
       if (existingDup) {
+        // === CASE: Same EAN from another app-tracked supplier ===
         if (duplicatePolicy === "priority") {
           const priorityList = shopSettings?.supplierPriority ? JSON.parse(shopSettings.supplierPriority) : [];
           const currentIndex = priorityList.indexOf(config.id);
           const existingIndex = priorityList.indexOf(existingDup.configId);
           if (currentIndex === -1 || (existingIndex !== -1 && existingIndex <= currentIndex)) {
-            // Current supplier has LOWER or equal priority → skip
             await logDuplicate(job.shopDomain, ean, { supplierSku: existingDup.supplierSku, configId: existingDup.configId, config: { name: existingDup.configName }, shopifyProductId: "" }, config.id, sku);
             duplicateSkippedCount++;
             continue;
           }
-          // Current supplier has HIGHER priority → mark for replacement
-          priorityReplaceMappingId = existingDup.mappingId;
-          priorityReplaceConfigId = existingDup.configId;
+          // Current supplier has HIGHER priority
+          if (matchMode === "overwrite") {
+            // Overwrite: create new product + delete old (full replacement)
+            priorityReplaceMappingId = existingDup.mappingId;
+            priorityReplaceConfigId = existingDup.configId;
+          }
+          // matchMode === "update": don't set priorityReplaceMappingId
+          // Product will be matched by EAN at maps.byBarcode → update with filters only
         } else {
           // skip_existing
           await logDuplicate(job.shopDomain, ean, { supplierSku: existingDup.supplierSku, configId: existingDup.configId, config: { name: existingDup.configName }, shopifyProductId: "" }, config.id, sku);
@@ -1046,50 +1054,145 @@ async function prepareAndLaunch(
           continue;
         }
       } else if (maps.byBarcode.has(ean) && !selfEanMappings.has(ean)) {
-        const matchInfo = maps.byBarcode.get(ean);
+        // === CASE: Same EAN found in Shopify but not from current supplier ===
+        const matchInfo = maps.byBarcode.get(ean)!;
+        const existingSkuOnProduct = matchInfo.sku || "";
+        const isSameSku = existingSkuOnProduct && existingSkuOnProduct.toLowerCase() === sku.toLowerCase();
+
         const anyMapping = await prisma.productMapping.findFirst({
-          where: { shopDomain: job.shopDomain, shopifyProductId: matchInfo?.productId || "" },
+          where: { shopDomain: job.shopDomain, shopifyProductId: matchInfo.productId },
           select: { id: true, configId: true },
         }).catch(() => null);
-        if (anyMapping && anyMapping.configId !== config.id && (duplicatePolicy === "skip_existing" || duplicatePolicy === "priority")) {
-          await logExternalDuplicate(job.shopDomain, ean, matchInfo?.productId || "", sku, config.id, config.name || "Proveedor");
-          duplicateSkippedCount++;
-          continue;
-        }
-        if (!anyMapping) {
-          const adopted = await prisma.productMapping.create({
-            data: {
-              shopDomain: job.shopDomain,
-              configId: config.id,
-              supplierSku: sku,
-              shopifyProductId: matchInfo?.productId || "",
-              shopifyVariantId: matchInfo?.variantId || "",
-              shopifyInventoryItemId: matchInfo?.inventoryItemId || "",
-              ean: ean || null,
-              lastPrice: null,
-              lastQuantity: null,
-              postProcessStatus: "pending",
-            },
-          }).catch(() => null);
-          if (adopted) {
-            selfEanMappings.add(ean);
-            const adoptPubIds: string[] = [];
-            if (config?.publicationIds) { try { adoptPubIds.push(...JSON.parse(config.publicationIds)); } catch {} }
-            if (adoptPubIds.length === 0 && config?.marketIds) { try { adoptPubIds.push(...JSON.parse(config.marketIds)); } catch {} }
-            if (adoptPubIds.length > 0 && matchInfo?.productId) {
-              try {
-                await gql(admin,
-                  `mutation PublishablePublish($id: ID!, $input: [PublicationInput!]!) { publishablePublish(id: $id, input: $input) { userErrors { field message } } }`,
-                  { variables: { id: matchInfo.productId, input: adoptPubIds.map((pid: string) => ({ publicationId: pid })) } },
-                  job.shopDomain
-                );
+
+        if (isSameSku) {
+          // === SUB-CASE: Same EAN + Same SKU ===
+          // Same supplier product (regardless of app-tracked or external)
+          // Adopt if not tracked, then let it flow to normal update path at line ~1130
+          if (!anyMapping) {
+            const adopted = await prisma.productMapping.create({
+              data: {
+                shopDomain: job.shopDomain,
+                configId: config.id,
+                supplierSku: sku,
+                shopifyProductId: matchInfo.productId,
+                shopifyVariantId: matchInfo.variantId,
+                shopifyInventoryItemId: matchInfo.inventoryItemId,
+                ean: ean || null,
+                lastPrice: null,
+                lastQuantity: null,
+                postProcessStatus: "pending",
+              },
+            }).catch(() => null);
+            if (adopted) {
+              selfEanMappings.add(ean);
+              const adoptPubIds: string[] = [];
+              if (config?.publicationIds) { try { adoptPubIds.push(...JSON.parse(config.publicationIds)); } catch {} }
+              if (adoptPubIds.length === 0 && config?.marketIds) { try { adoptPubIds.push(...JSON.parse(config.marketIds)); } catch {} }
+              if (adoptPubIds.length > 0 && matchInfo.productId) {
+                try {
+                  await gql(admin,
+                    `mutation PublishablePublish($id: ID!, $input: [PublicationInput!]!) { publishablePublish(id: $id, input: $input) { userErrors { field message } } }`,
+                    { variables: { id: matchInfo.productId, input: adoptPubIds.map((pid: string) => ({ publicationId: pid })) } },
+                    job.shopDomain
+                  );
+                  await prisma.productMapping.update({ where: { id: adopted.id }, data: { postProcessStatus: "complete" } }).catch(() => {});
+                } catch (e: any) {
+                  console.error(`[Bulk] SKU ${sku}: adopt channels failed: ${e?.message}`);
+                  await prisma.productMapping.update({ where: { id: adopted.id }, data: { postProcessStatus: "complete" } }).catch(() => {});
+                }
+              } else {
                 await prisma.productMapping.update({ where: { id: adopted.id }, data: { postProcessStatus: "complete" } }).catch(() => {});
-              } catch (e: any) {
-                console.error(`[Bulk] SKU ${sku}: orphan adopt channels failed: ${e?.message}`);
               }
-            } else {
-              await prisma.productMapping.update({ where: { id: adopted.id }, data: { postProcessStatus: "complete" } }).catch(() => {});
             }
+            // Add to selfEanMappings so the normal update path picks it up
+            selfEanMappings.add(ean);
+          }
+          // Product will be matched at maps.bySku.get(sku) below → normal update with filters
+        } else {
+          // === SUB-CASE: Same EAN + Different SKU ===
+          // Different supplier or external product
+          if (anyMapping && anyMapping.configId !== config.id) {
+            // Product is tracked by another supplier → apply policy
+            if (duplicatePolicy === "skip_existing" || duplicatePolicy === "priority") {
+              await logExternalDuplicate(job.shopDomain, ean, matchInfo.productId, sku, config.id, config.name || "Proveedor");
+              duplicateSkippedCount++;
+              continue;
+            }
+            // create_both → apply matchMode
+            if (matchMode === "update") {
+              // Update existing product with filters instead of creating new
+              // Adopt the product under current supplier
+              if (!selfEanMappings.has(ean)) {
+                const adopted = await prisma.productMapping.create({
+                  data: {
+                    shopDomain: job.shopDomain,
+                    configId: config.id,
+                    supplierSku: sku,
+                    shopifyProductId: matchInfo.productId,
+                    shopifyVariantId: matchInfo.variantId,
+                    shopifyInventoryItemId: matchInfo.inventoryItemId,
+                    ean: ean || null,
+                    lastPrice: null,
+                    lastQuantity: null,
+                    postProcessStatus: "pending",
+                  },
+                }).catch(() => null);
+                if (adopted) {
+                  selfEanMappings.add(ean);
+                  await prisma.productMapping.update({ where: { id: adopted.id }, data: { postProcessStatus: "complete" } }).catch(() => {});
+                }
+              }
+              // Will be matched at maps.byBarcode.get(ean) below → update with filters
+            }
+            // matchMode === "overwrite" → create new product (flow through to create path)
+          } else if (!anyMapping) {
+            // External product (no ProductMapping at all)
+            if (duplicatePolicy === "skip_existing" || duplicatePolicy === "priority") {
+              await logExternalDuplicate(job.shopDomain, ean, matchInfo.productId, sku, config.id, config.name || "Proveedor");
+              duplicateSkippedCount++;
+              continue;
+            }
+            // create_both → apply matchMode
+            if (matchMode === "update") {
+              // Adopt + update with filters
+              const adopted = await prisma.productMapping.create({
+                data: {
+                  shopDomain: job.shopDomain,
+                  configId: config.id,
+                  supplierSku: sku,
+                  shopifyProductId: matchInfo.productId,
+                  shopifyVariantId: matchInfo.variantId,
+                  shopifyInventoryItemId: matchInfo.inventoryItemId,
+                  ean: ean || null,
+                  lastPrice: null,
+                  lastQuantity: null,
+                  postProcessStatus: "pending",
+                },
+              }).catch(() => null);
+              if (adopted) {
+                selfEanMappings.add(ean);
+                const adoptPubIds: string[] = [];
+                if (config?.publicationIds) { try { adoptPubIds.push(...JSON.parse(config.publicationIds)); } catch {} }
+                if (adoptPubIds.length === 0 && config?.marketIds) { try { adoptPubIds.push(...JSON.parse(config.marketIds)); } catch {} }
+                if (adoptPubIds.length > 0 && matchInfo.productId) {
+                  try {
+                    await gql(admin,
+                      `mutation PublishablePublish($id: ID!, $input: [PublicationInput!]!) { publishablePublish(id: $id, input: $input) { userErrors { field message } } }`,
+                      { variables: { id: matchInfo.productId, input: adoptPubIds.map((pid: string) => ({ publicationId: pid })) } },
+                      job.shopDomain
+                    );
+                    await prisma.productMapping.update({ where: { id: adopted.id }, data: { postProcessStatus: "complete" } }).catch(() => {});
+                  } catch (e: any) {
+                    console.error(`[Bulk] SKU ${sku}: adopt channels failed: ${e?.message}`);
+                    await prisma.productMapping.update({ where: { id: adopted.id }, data: { postProcessStatus: "complete" } }).catch(() => {});
+                  }
+                } else {
+                  await prisma.productMapping.update({ where: { id: adopted.id }, data: { postProcessStatus: "complete" } }).catch(() => {});
+                }
+              }
+              // Will be matched at maps.byBarcode.get(ean) below → update with filters
+            }
+            // matchMode === "overwrite" → create new product (flow through to create path)
           }
         }
       }
@@ -2337,6 +2440,7 @@ async function lookupSkusSync(admin: any, skus: string[], shopDomain?: string): 
           variantId: variant.id,
           inventoryItemId: variant.inventoryItem?.id || "",
           shopifyCost: 0,
+          sku: variant.sku || "",
         };
         if (variant.sku) result.set(String(variant.sku), match);
         if (variant.barcode) result.set(String(variant.barcode), match);
@@ -2547,6 +2651,7 @@ async function buildLookupMaps(lookupPath: string): Promise<{
       variantId: id,
       inventoryItemId: line.inventoryItem?.id || "",
       shopifyCost: parseFloat(line.inventoryItem?.unitCost?.amount ?? "0") || 0,
+      sku: skuStr,
     };
 
     variantIds.set(id, match);

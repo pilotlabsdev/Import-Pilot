@@ -452,6 +452,13 @@
   "settings.addSuppliers": "Aggiungi fornitori alla lista di priorità per definire l'ordine.",
   "settings.unassignedSuppliers": "Fornitori non assegnati:",
   "settings.invalidAttempt": "Azione non valida",
+  "settings.matchMode": "Modalità di corrispondenza",
+  "settings.matchModeHelp": "Quando un prodotto ha lo stesso EAN ma SKU diverso (fornitore diverso o prodotto esterno), definisce se sovrascrivere o aggiornare.",
+  "settings.whenDifferentSku": "Quando l'EAN corrisponde ma l'SKU è diverso",
+  "settings.overwriteFull": "Sovrascrivi tutto (nuovo prodotto completo)",
+  "settings.updateFiltersOnly": "Aggiorna solo con filtri (mantieni titolo e descrizione)",
+  "settings.matchModeUpdateDetail": "Solo i campi selezionati nei filtri di aggiornamento di ogni fornitore saranno aggiornati (prezzo, stock, immagini, ecc.). Titolo, descrizione e SKU vengono preservati.",
+  "settings.matchModeOverwriteDetail": "Verrà creato un nuovo prodotto con tutti i dati CSV, sostituendo il prodotto esistente.",
   
   "tutorial.title": "Tutorial dell'App",
   "tutorial.subtitle": "Impara a usare l'Importatore di Prodotti",
