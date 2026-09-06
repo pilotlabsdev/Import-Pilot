@@ -458,7 +458,7 @@
   "settings.overwriteFull": "Sovrascrivi tutto (nuovo prodotto completo)",
   "settings.updateFiltersOnly": "Aggiorna solo con filtri (mantieni titolo e descrizione)",
   "settings.matchModeUpdateDetail": "Solo i campi selezionati nei filtri di aggiornamento di ogni fornitore saranno aggiornati (prezzo, stock, immagini, ecc.). Titolo, descrizione e SKU vengono preservati.",
-  "settings.matchModeOverwriteDetail": "Verrà creato un nuovo prodotto con tutti i dati CSV, sostituendo il prodotto esistente.",
+  "settings.matchModeOverwriteDetail": "Verrà creato un nuovo prodotto con tutti i dati del file, sostituendo il prodotto esistente.",
   
   "tutorial.title": "Tutorial dell'App",
   "tutorial.subtitle": "Impara a usare l'Importatore di Prodotti",

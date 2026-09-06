@@ -458,7 +458,7 @@
   "settings.overwriteFull": "Overwrite everything (full new product)",
   "settings.updateFiltersOnly": "Update with filters only (keep title and description)",
   "settings.matchModeUpdateDetail": "Only the fields selected in each supplier's update filters will be updated (price, stock, images, etc.). Title, description and SKU are preserved.",
-  "settings.matchModeOverwriteDetail": "A new product will be created with all CSV data, replacing the existing product.",
+  "settings.matchModeOverwriteDetail": "A new product will be created with all file data, replacing the existing product.",
   
   "tutorial.title": "App Tutorial",
   "tutorial.subtitle": "Learn how to use the Product Importer",
