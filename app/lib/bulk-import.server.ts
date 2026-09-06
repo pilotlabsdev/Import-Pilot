@@ -1442,6 +1442,7 @@ async function prepareAndLaunch(
           // Strip fields not in updateOptions (same logic as mapCsvRowToProductSetUpdate)
           const inp = parsed.input;
           if (inp) {
+            delete inp.status; // status only applies to CREATE, not UPDATE
             if (!updateOpts.has("name")) delete inp.title;
             if (!updateOpts.has("description")) delete inp.descriptionHtml;
             if (!updateOpts.has("price")) { delete inp.price; delete inp.compareAtPrice; }
