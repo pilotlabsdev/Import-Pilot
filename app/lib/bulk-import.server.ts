@@ -1411,10 +1411,12 @@ async function prepareAndLaunch(
     }
   }
 
-  // Rewrite create files to exclude products detected as external duplicates OR same-SKU (should be updates)
-  const skusToRemoveFromCreates = new Set<string>([...externalCsvSkus, ...missedSameSkuCsvSkus]);
-  if (skusToRemoveFromCreates.size > 0) {
-    let removedFromCreates = 0;
+  // Rewrite create files: remove external products, convert same-SKU to updates (add identifier)
+  const externalCsvSkusArr = [...externalCsvSkus];
+  const missedSameSkuCsvSkusArr = [...missedSameSkuCsvSkus];
+  if (externalCsvSkus.size > 0 || missedSameSkuCsvSkus.size > 0) {
+    let removedExternal = 0;
+    let convertedToUpdates = 0;
     const newCreateFiles: string[] = [];
     for (const filePath of createFiles) {
       const metaPath = filePath.replace("-input-", "-meta-");
@@ -1424,8 +1426,23 @@ async function prepareAndLaunch(
       const keptMeta: string[] = [];
       for (let j = 0; j < inputLines.length; j++) {
         const meta = metaLinesArr[j] ? JSON.parse(metaLinesArr[j]) : null;
-        if (meta?.sku && skusToRemoveFromCreates.has(meta.sku.toLowerCase())) {
-          removedFromCreates++;
+        const skuLower = meta?.sku?.toLowerCase();
+        if (!skuLower) {
+          keptInput.push(inputLines[j]);
+          if (metaLinesArr[j]) keptMeta.push(metaLinesArr[j]);
+          continue;
+        }
+        if (externalCsvSkus.has(skuLower)) {
+          removedExternal++;
+          continue;
+        }
+        if (missedSameSkuCsvSkus.has(skuLower)) {
+          // Convert create → update by adding identifier with SKU
+          const parsed = JSON.parse(inputLines[j]);
+          parsed.identifier = { sku: meta.sku };
+          keptInput.push(JSON.stringify(parsed));
+          if (metaLinesArr[j]) keptMeta.push(metaLinesArr[j]);
+          convertedToUpdates++;
           continue;
         }
         keptInput.push(inputLines[j]);
@@ -1439,9 +1456,10 @@ async function prepareAndLaunch(
     }
     createFiles.length = 0;
     createFiles.push(...newCreateFiles);
-    newCreateCount -= removedFromCreates;
-    if (removedFromCreates > 0) {
-      console.log(`[Bulk] Removed ${removedFromCreates} products from create files (${externalCsvSkus.size} external + ${missedSameSkuCsvSkus.size} same-SKU)`);
+    newCreateCount -= (removedExternal + convertedToUpdates);
+    matchedUpdateCount += convertedToUpdates;
+    if (removedExternal > 0 || convertedToUpdates > 0) {
+      console.log(`[Bulk] Rewrote create files: ${removedExternal} external removed, ${convertedToUpdates} same-SKU converted to updates`);
     }
   }
 
