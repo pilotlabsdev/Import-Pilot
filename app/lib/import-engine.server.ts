@@ -4,7 +4,7 @@ import { streamFile, isExcluded, parseExcludeFieldRules, getExcludedFields } fro
 import { calculatePrices } from "./price-rules.server";
 import { mapCsvRowToProductSet, parseUpdateOptions, getField } from "./product-mapper.server";
 import { getLocationId } from "./location.server";
-import { checkDuplicate } from "./duplicate-detection.server";
+import { checkDuplicate, logExternalDuplicate } from "./duplicate-detection.server";
 import { rateLimitedGraphql } from "./import-locks.server";
 import { ensureMetafieldDefinitions } from "./metafield-definitions";
 import shopify from "~/shopify.server";
@@ -1084,6 +1084,7 @@ async function processProduct({
           if (foundSku && foundSku !== sku) {
             // External product with different SKU
             if (dupPolicy === "skip_existing") {
+              await logExternalDuplicate(shopDomain, rowEan, foundBarcode.productId, sku, config.id, config.name || "Proveedor");
               result.excluded++;
               return;
             }
@@ -1280,13 +1281,14 @@ async function processProduct({
           } else if (dupPolicy2 === "create_both") {
             // Inter + create_both: create new (fall through to create)
           } else {
+            // Inter + skip_existing: skip
+            await logExternalDuplicate(shopDomain, rowEan, foundBarcode.productId, sku, config.id, config.name || "Proveedor");
             result.excluded++;
             return;
           }
-        } else if (dupPolicy2 === "create_both") {
-          // create_both → always create new product (fall through)
         } else {
           // skip_existing + different SKU: skip
+          await logExternalDuplicate(shopDomain, rowEan, foundBarcode.productId, sku, config.id, config.name || "Proveedor");
           result.excluded++;
           return;
         }
