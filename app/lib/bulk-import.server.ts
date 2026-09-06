@@ -595,6 +595,7 @@ async function handleLookupFinished(job: any, admin: any, status: string): Promi
   const maps = await buildLookupMaps(lookupPath);
   const sampleSkus = [...maps.bySku.entries()].slice(0, 3);
   for (const [sku, m] of sampleSkus) {
+    console.log(`[Bulk] Lookup sample SKU=${sku} productId=${m.productId} variantId=${m.variantId}`);
   }
 
   const allMappings = await prisma.productMapping.findMany({
@@ -2561,9 +2562,18 @@ async function buildLookupMaps(lookupPath: string): Promise<{
   let currentProductId = "";
   const allLines = await readJsonLines(lookupPath);
 
+  let productLines = 0;
+  let variantLines = 0;
+  let invItemLines = 0;
+  let skippedNoSkuBarcode = 0;
+  let variantsWithBarcode = 0;
+  let variantsWithoutBarcode = 0;
+  let sampleVariant: any = null;
+
   for (const line of allLines) {
     if (!line.__parentId) {
       currentProductId = line.id || "";
+      productLines++;
       continue;
     }
 
@@ -2576,10 +2586,22 @@ async function buildLookupMaps(lookupPath: string): Promise<{
       if (!existing.inventoryItemId) {
         existing.inventoryItemId = line.id || "";
       }
+      invItemLines++;
       continue;
     }
 
-    if (!line.sku && !line.barcode) continue;
+    variantLines++;
+    if (!sampleVariant && line.sku) {
+      sampleVariant = { id, parentId, sku: line.sku, barcode: line.barcode, hasInventoryItem: !!line.inventoryItem };
+    }
+
+    if (line.barcode) variantsWithBarcode++;
+    else variantsWithoutBarcode++;
+
+    if (!line.sku && !line.barcode) {
+      skippedNoSkuBarcode++;
+      continue;
+    }
 
     const skuStr = String(line.sku || "").trim();
     if (skuStr && /^\d+[\.,]\d+\s*€?$/.test(skuStr)) continue;
@@ -2595,6 +2617,20 @@ async function buildLookupMaps(lookupPath: string): Promise<{
     variantIds.set(id, match);
     if (line.barcode) byBarcode.set(String(line.barcode), match);
     if (line.sku) bySku.set(String(line.sku), match);
+  }
+
+  console.log(`[Bulk] buildLookupMaps: totalLines=${allLines.length} products=${productLines} variants=${variantLines} invItems=${invItemLines} skippedNoSkuBarcode=${skippedNoSkuBarcode}`);
+  console.log(`[Bulk] buildLookupMaps: variantsWithBarcode=${variantsWithBarcode} variantsWithoutBarcode=${variantsWithoutBarcode} byBarcode.size=${byBarcode.size} bySku.size=${bySku.size}`);
+  if (sampleVariant) {
+    console.log(`[Bulk] buildLookupMaps: sampleVariant=${JSON.stringify(sampleVariant)}`);
+  }
+  // Dump first 3 variant lines (raw keys) for debugging JSONL structure
+  let variantCount = 0;
+  for (const line of allLines) {
+    if (line.__parentId && variantCount < 3) {
+      variantCount++;
+      console.log(`[Bulk] buildLookupMaps: rawLine${variantCount} keys=${Object.keys(line).join(",")} sku=${line.sku ?? "null"} barcode=${line.barcode ?? "null"} invItem=${JSON.stringify(line.inventoryItem ?? "null")}`);
+    }
   }
 
   return { byBarcode, bySku };
