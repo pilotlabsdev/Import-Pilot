@@ -1027,6 +1027,7 @@ async function prepareAndLaunch(
     let priorityReplaceConfigId: string | undefined;
     if (ean) {
       const existingDup = existingEanMappings.get(ean);
+      const inByBarcode = maps.byBarcode.has(ean);
 
       if (existingDup) {
         // === CASE: Same EAN from another app-tracked supplier ===
@@ -1129,6 +1130,9 @@ async function prepareAndLaunch(
             // create_both → always create new product (flow through)
           }
         }
+      } else if (ean && !existingDup) {
+        // EAN not in existingEanMappings AND not in byBarcode → external product not detected
+        console.log(`[Bulk] SKU=${sku}: EAN ${ean} NOT found in existingEanMappings or byBarcode`);
       }
     }
 
