@@ -1113,7 +1113,7 @@ async function processProduct({
           if (foundSku && foundSku !== sku) {
             // External product with different SKU
             if (dupPolicy === "skip_existing") {
-              await logExternalDuplicate(shopDomain, rowEan, foundBarcode.productId, sku, config.id, config.name || "Proveedor");
+              await logExternalDuplicate(shopDomain, rowEan, foundBarcode.productId, sku, config.id, config.name || "Proveedor", foundBarcode.sku);
               result.excluded++;
               return;
             }

@@ -1207,7 +1207,7 @@ async function prepareAndLaunch(
           if (anyMapping && anyMapping.configId !== config.id) {
             // Product is tracked by another supplier → apply policy
             if (duplicatePolicy === "skip_existing" || duplicatePolicy === "priority") {
-              await logExternalDuplicate(job.shopDomain, ean, matchInfo.productId, sku, config.id, config.name || "Proveedor");
+              await logExternalDuplicate(job.shopDomain, ean, matchInfo.productId, sku, config.id, config.name || "Proveedor", matchInfo.sku);
               duplicateSkippedCount++;
               continue;
             }
@@ -1215,7 +1215,7 @@ async function prepareAndLaunch(
           } else if (!anyMapping) {
             // External product (no ProductMapping at all)
             if (duplicatePolicy === "skip_existing" || duplicatePolicy === "priority") {
-              await logExternalDuplicate(job.shopDomain, ean, matchInfo.productId, sku, config.id, config.name || "Proveedor");
+              await logExternalDuplicate(job.shopDomain, ean, matchInfo.productId, sku, config.id, config.name || "Proveedor", matchInfo.sku);
               duplicateSkippedCount++;
               continue;
             }
@@ -1348,6 +1348,7 @@ async function prepareAndLaunch(
   // These are products that exist in Shopify but don't have barcode set on any variant.
   // queryProductsTargeted already tried barcode:'...' and failed; we try query:'...' (broader search).
   let batchExternalDetected = 0;
+  const allSkusSet = new Set(allSkus.map((s) => s.toLowerCase()));
   if (unmatchedEans.length > 0 && duplicatePolicy !== "create_both") {
     const uniqueUnmatched = [...new Map(unmatchedEans.map((u) => [u.ean, u])).values()];
     console.log(`[Bulk] Post-loop external detection: ${uniqueUnmatched.length} EANs not found in byBarcode, trying broader search`);
@@ -1374,17 +1375,26 @@ async function prepareAndLaunch(
           if (edges.length > 0) {
             const product = edges[0].node;
             const shopifyProductId = product.id;
+            const shopifySku = product.variants?.edges?.[0]?.node?.sku || "";
+
+            // If the found product's SKU matches a CSV SKU, it's a same-supplier product
+            // that queryProductsTargeted missed (query failure). NOT an external duplicate.
+            if (shopifySku && allSkusSet.has(shopifySku.toLowerCase())) {
+              console.log(`[Bulk] Post-loop found same-SKU product: CSV=${csvSku} Shopify=${shopifySku} EAN=${ean} → ${shopifyProductId} (not external, queryProductsTargeted missed it)`);
+              continue;
+            }
+
             // Check if this product is already tracked by ANY supplier
             const existingMapping = await prisma.productMapping.findFirst({
               where: { shopDomain: job.shopDomain, shopifyProductId },
               select: { id: true, configId: true },
             }).catch(() => null);
             if (!existingMapping) {
-              // External product found via broader search — log duplicate
-              await logExternalDuplicate(job.shopDomain, ean, shopifyProductId, csvSku, config.id, config.name || "Proveedor");
+              // External product found via broader search — log duplicate with Shopify SKU
+              await logExternalDuplicate(job.shopDomain, ean, shopifyProductId, csvSku, config.id, config.name || "Proveedor", shopifySku);
               duplicateSkippedCount++;
               batchExternalDetected++;
-              console.log(`[Bulk] External duplicate detected via broader search: SKU=${csvSku} EAN=${ean} → ${shopifyProductId}`);
+              console.log(`[Bulk] External duplicate detected via broader search: SKU=${shopifySku || csvSku} EAN=${ean} → ${shopifyProductId}`);
             }
           }
         } catch (e: any) {
@@ -1908,6 +1918,7 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
             variables: {
               input: {
                 name: "available",
+                reason: "correction",
                 quantities: batch.map((u) => ({
                   inventoryItemId: u.inventoryItemId,
                   locationId,

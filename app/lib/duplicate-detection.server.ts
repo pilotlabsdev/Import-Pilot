@@ -207,7 +207,8 @@ export async function logExternalDuplicate(
   shopifyProductId: string,
   supplierSku: string,
   configId: string,
-  configName: string
+  configName: string,
+  shopifySku?: string
 ) {
   const existing = await prisma.duplicateLog.findFirst({
     where: {
@@ -226,13 +227,13 @@ export async function logExternalDuplicate(
       ean,
       supplierA_id: "EXTERNAL",
       supplierA_name: "Ya creado en Shopify",
-      supplierA_sku: "",
+      supplierA_sku: shopifySku || "",
       supplierA_title: shopifyProductId,
       supplierB_id: configId,
       supplierB_name: configName,
       supplierB_sku: supplierSku,
       supplierB_title: "Importación actual",
-      resolved: false, // Show as pending so merchant knows product already exists in Shopify
+      resolved: false,
     },
   });
 }
