@@ -509,20 +509,84 @@ export async function runBulkImport({
 
   setBulkActive(shopDomain);
 
-  const lookupOp = await runLookupQuery(admin, shopDomain);
-  if (!lookupOp.id) {
-    throw new Error("No se pudo crear la bulk query de productos existentes");
+  // --- Targeted lookup: pre-scan CSV → query only SKUs+EANs from the file ---
+  const sourceKey = getSourceKey(config);
+  const fullConfig = await prisma.importConfig.findUnique({
+    where: { id: config.id },
+    include: { categoryMaps: true },
+  });
+  if (!fullConfig) throw new Error("Configuración no encontrada");
+
+  const columnMaps = (await prisma.columnMapping.findMany({
+    where: { configId: fullConfig.id, sourceKey },
+  })).map((cm) => ({
+    shopifyField: cm.shopifyField,
+    csvColumn: cm.csvColumn,
+    defaultValue: cm.defaultValue,
+  }));
+
+  const { skus: preScanSkus, eans: preScanEans } = await preScanCsv(fullConfig, columnMaps, filterSkus, filterCategories);
+
+  const targetedMaps = await queryProductsTargeted(admin, shopDomain, preScanSkus, preScanEans);
+
+  // Build bySkuMapping from existing ProductMapping records
+  const allMappings = await prisma.productMapping.findMany({
+    where: { shopDomain },
+  });
+  const bySkuMapping = new Map<string, { lastPrice: number | null; lastQuantity: number | null; lastCost: number | null }>();
+  for (const m of allMappings) {
+    if (targetedMaps.bySku.has(m.supplierSku)) {
+      const existing = targetedMaps.bySku.get(m.supplierSku)!;
+      if (!existing.inventoryItemId && m.shopifyInventoryItemId) existing.inventoryItemId = m.shopifyInventoryItemId;
+      if (!existing.variantId && m.shopifyVariantId) existing.variantId = m.shopifyVariantId;
+    } else if (m.shopifyProductId) {
+      if (m.postProcessStatus === "complete" || m.postProcessStatus === "pending" || !m.postProcessStatus || m.postProcessStatus === "error_permanent") {
+        await prisma.productMapping.delete({ where: { id: m.id } }).catch(() => {});
+        console.log(`[Bulk] SKU ${m.supplierSku}: mapping huérfano eliminado (producto no existe en Shopify)`);
+        continue;
+      }
+    }
+    bySkuMapping.set(m.supplierSku, {
+      lastPrice: m.lastPrice,
+      lastQuantity: m.lastQuantity,
+      lastCost: m.lastCost ?? null,
+    });
   }
 
-  await prisma.bulkJobOp.create({
-    data: { jobId: job.id, shopifyOpId: lookupOp.id, kind: "lookup", index: 0, status: "launched" },
+  // Retry incomplete post-processing
+  const incompleteMappings = await prisma.productMapping.findMany({
+    where: {
+      shopDomain,
+      configId: fullConfig.id,
+      postProcessStatus: { notIn: ["complete", "error_permanent"] },
+    },
   });
-  await prisma.bulkJob.update({
-    where: { id: job.id },
-    data: { lookupOpId: lookupOp.id },
+  const locationId = await getLocationId(admin, shopDomain, fullConfig.id);
+  if (incompleteMappings.length > 0) {
+    console.log(`[Bulk] Found ${incompleteMappings.length} incomplete products, attempting repair...`);
+    for (const mapping of incompleteMappings) {
+      await retryPostProcess(admin, mapping, job, fullConfig, locationId).catch((e: any) => {
+        console.error(`[Bulk] retryPostProcess failed for SKU ${mapping.supplierSku}: ${e?.message}`);
+      });
+    }
+    console.log(`[Bulk] Repair pass complete`);
+  }
+
+  const rules = await getActivePriceRules(job.shopDomain, job.configId);
+
+  // Mark lookup as done, prepareAndLaunch will set phase to mutations
+  await prisma.bulkJobOp.create({
+    data: { jobId: job.id, kind: "lookup", index: 0, status: "processed" },
   });
 
-  console.log(`[Bulk] Job ${job.id} creado para ${shopDomain}, lookup op ${lookupOp.id}`);
+  await prepareAndLaunch(job, fullConfig, admin, columnMaps, rules, targetedMaps, bySkuMapping, filterType, filterSkus, filterCategories, locationId, sourceKey);
+
+  await prisma.bulkJobOp.updateMany({
+    where: { jobId: job.id, kind: "lookup" },
+    data: { status: "processed" },
+  });
+
+  console.log(`[Bulk] Job ${job.id} creado para ${shopDomain}, targeted lookup + mutations launched`);
   return { bulk: true, jobId: job.id, logId: log.id };
 }
 
@@ -1607,15 +1671,98 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
   const sourceKey = config ? getSourceKey(config) : null;
   const locationId = await getLocationId(admin, job.shopDomain, job.configId);
 
-    // productSet already sets inventory quantities directly, so the old inventorySetQuantities batch is no longer needed.
-    // We still zero stock for SKUs absent from the CSV.
-
     await ensureFreshTokenForBulk(job.shopDomain);
 
     const allSkus = new Set(await readJsonLines(manifest.allSkusPath));
     const existingMappings = await prisma.productMapping.findMany({
       where: { shopDomain: job.shopDomain, configId: job.configId, ...(sourceKey ? { lastImportSource: sourceKey } : {}) },
     });
+
+    // productSet does NOT reliably set inventoryQuantities for UPDATES (only for creates).
+    // We must set stock explicitly using inventorySetQuantities with absolute values from the CSV.
+    const skuStockMap = new Map<string, number>();
+    for (const metaPath of manifest.updateFiles || []) {
+      try {
+        const metaFile = metaPath.replace("-input-", "-meta-");
+        const metaLines = await readJsonLines(metaFile);
+        for (const ml of metaLines) {
+          const meta = ml as MetaLine;
+          if (meta.sku && meta.stockQty !== undefined) {
+            skuStockMap.set(meta.sku, meta.stockQty);
+          }
+        }
+      } catch {}
+    }
+    for (const metaPath of manifest.createFiles || []) {
+      try {
+        const metaFile = metaPath.replace("-input-", "-meta-");
+        const metaLines = await readJsonLines(metaFile);
+        for (const ml of metaLines) {
+          const meta = ml as MetaLine;
+          if (meta.sku && meta.stockQty !== undefined) {
+            skuStockMap.set(meta.sku, meta.stockQty);
+          }
+        }
+      } catch {}
+    }
+
+    if (skuStockMap.size > 0) {
+      console.log(`[Bulk] inventorySetQuantities: ${skuStockMap.size} products to set stock`);
+      const inventoryUpdates: Array<{ inventoryItemId: string; quantity: number; sku: string }> = [];
+      for (const mapping of existingMappings) {
+        if (!skuStockMap.has(mapping.supplierSku)) continue;
+        if (!mapping.shopifyInventoryItemId) continue;
+        const targetQty = skuStockMap.get(mapping.supplierSku)!;
+        inventoryUpdates.push({
+          inventoryItemId: mapping.shopifyInventoryItemId,
+          quantity: targetQty,
+          sku: mapping.supplierSku,
+        });
+      }
+
+      const INVENTORY_SET_MUTATION = `#graphql
+        mutation inventorySetQuantities($input: InventorySetQuantitiesInput!, $idempotencyKey: String!) {
+          inventorySetQuantities(input: $input) @idempotent(key: $idempotencyKey) {
+            userErrors { field message }
+          }
+        }
+      `;
+
+      let stockSetCount = 0;
+      let stockSetErrors = 0;
+      const batchSize = 100;
+      for (let i = 0; i < inventoryUpdates.length; i += batchSize) {
+        const batch = inventoryUpdates.slice(i, i + batchSize);
+        try {
+          const res = await gql(admin, INVENTORY_SET_MUTATION, {
+            variables: {
+              input: {
+                name: "available",
+                quantities: batch.map((u) => ({
+                  inventoryItemId: u.inventoryItemId,
+                  locationId,
+                  quantity: u.quantity,
+                })),
+              },
+              idempotencyKey: `bulk-inv-set-${job.id}-${i}-${Date.now()}`,
+            },
+          }, job.shopDomain);
+          const userErrors = res.data?.inventorySetQuantities?.userErrors || [];
+          if (userErrors.length > 0) {
+            console.error(`[Bulk] inventorySetQuantities errors:`, userErrors.map((e: any) => e.message).join("; "));
+            stockSetErrors += batch.length;
+          } else {
+            stockSetCount += batch.length;
+          }
+        } catch (e: any) {
+          console.error(`[Bulk] inventorySetQuantities batch ${i} failed: ${e?.message}`);
+          stockSetErrors += batch.length;
+        }
+      }
+      console.log(`[Bulk] inventorySetQuantities: ${stockSetCount} set, ${stockSetErrors} errors`);
+    }
+
+    // Zero stock for SKUs absent from the CSV.
 
     for (const mapping of existingMappings) {
       if (!allSkus.has(mapping.supplierSku) && (mapping.lastQuantity || 0) > 0) {
@@ -2359,7 +2506,7 @@ async function lookupSkusSync(admin: any, skus: string[], shopDomain?: string): 
               id
               variants(first: 5) {
                 edges {
-                  node { id sku barcode inventoryItem { id } }
+                  node { id sku barcode inventoryItem { id unitCost { amount } } }
                 }
               }
             }
@@ -2378,7 +2525,7 @@ async function lookupSkusSync(admin: any, skus: string[], shopDomain?: string): 
           productId,
           variantId: variant.id,
           inventoryItemId: variant.inventoryItem?.id || "",
-          shopifyCost: 0,
+          shopifyCost: parseFloat(variant.inventoryItem?.unitCost?.amount ?? "0") || 0,
           sku: variant.sku || "",
         };
         if (variant.sku) result.set(String(variant.sku), match);
@@ -2388,6 +2535,138 @@ async function lookupSkusSync(admin: any, skus: string[], shopDomain?: string): 
   }
 
   return result;
+}
+
+// --- Targeted lookup: only query SKUs and EANs from the CSV ---
+
+async function preScanCsv(
+  config: any,
+  columnMaps: Array<{ shopifyField: string; csvColumn: string | null; defaultValue: string | null }>,
+  filterSkus?: string,
+  filterCategories?: string
+): Promise<{ skus: string[]; eans: string[] }> {
+  const skuSet = new Set<string>();
+  const eanSet = new Set<string>();
+  const seenSkus = new Set<string>();
+
+  const skuFilter = filterSkus ? new Set(filterSkus.split(",").map((s) => s.trim().toLowerCase())) : null;
+  const catFilter = filterCategories ? new Set(filterCategories.split(",").map((s) => s.trim().toLowerCase())) : null;
+
+  for await (const item of streamFile(await resolveFileUrl(getEffectiveUrl(config)), config.csvDelimiter)) {
+    const { row } = item;
+    const sku = (getField(row, columnMaps, "sku") || row["sku"] || "").trim();
+    if (!sku) continue;
+    if (seenSkus.has(sku.toLowerCase())) continue;
+    seenSkus.add(sku.toLowerCase());
+
+    if (skuFilter || catFilter) {
+      const category = (() => {
+        const m = columnMaps.find((c) => c.shopifyField === "category");
+        if (!m || !m.csvColumn) return m?.defaultValue || "";
+        return row[m.csvColumn] || m.defaultValue || "";
+      })();
+      if (skuFilter && !skuFilter.has(sku.toLowerCase())) continue;
+      if (catFilter && !catFilter.has(category.toLowerCase())) continue;
+    }
+
+    skuSet.add(sku);
+
+    const ean = (() => {
+      const mapped = getField(row, columnMaps, "ean");
+      if (mapped) return mapped;
+      const m = columnMaps.find((c) => c.shopifyField === "ean");
+      if (!m || !m.csvColumn) return row["ean"] || row["EAN"] || "";
+      return row[m.csvColumn] || row["ean"] || row["EAN"] || "";
+    })();
+    if (ean) eanSet.add(ean);
+  }
+
+  console.log(`[Bulk] Pre-scan: ${skuSet.size} unique SKUs, ${eanSet.size} unique EANs`);
+  return { skus: [...skuSet], eans: [...eanSet] };
+}
+
+async function queryProductsTargeted(
+  admin: any,
+  shopDomain: string,
+  skus: string[],
+  eans: string[]
+): Promise<{ bySku: Map<string, LookupMatch>; byBarcode: Map<string, LookupMatch> }> {
+  const bySku = new Map<string, LookupMatch>();
+  const byBarcode = new Map<string, LookupMatch>();
+
+  const TARGETED_QUERY = `#graphql
+    query ($q: String!) {
+      products(first: 100, query: $q) {
+        edges {
+          node {
+            id
+            variants(first: 5) {
+              edges {
+                node { id sku barcode inventoryItem { id unitCost { amount } } }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  // Query by SKUs in batches of 15
+  const uniqueSkus = [...new Set(skus)].filter(Boolean);
+  for (let i = 0; i < uniqueSkus.length; i += 15) {
+    const batch = uniqueSkus.slice(i, i + 15);
+    const query = batch.map((s) => `sku:'${String(s).replace(/'/g, "")}'`).join(" OR ");
+    try {
+      const json = await gql(admin, TARGETED_QUERY, { variables: { q: query } }, shopDomain);
+      for (const edge of json.data?.products?.edges || []) {
+        const productId = edge.node.id;
+        for (const vEdge of edge.node.variants?.edges || []) {
+          const v = vEdge.node;
+          const match: LookupMatch = {
+            productId,
+            variantId: v.id,
+            inventoryItemId: v.inventoryItem?.id || "",
+            shopifyCost: parseFloat(v.inventoryItem?.unitCost?.amount ?? "0") || 0,
+            sku: v.sku || "",
+          };
+          if (v.sku) bySku.set(String(v.sku), match);
+          if (v.barcode) byBarcode.set(String(v.barcode), match);
+        }
+      }
+    } catch (e: any) {
+      console.error(`[Bulk] Targeted SKU query batch failed: ${e?.message}`);
+    }
+  }
+
+  // Query by EANs/barcodes (only those NOT already found by SKU query)
+  const uniqueEans = [...new Set(eans)].filter((e) => e && !byBarcode.has(e));
+  for (let i = 0; i < uniqueEans.length; i += 15) {
+    const batch = uniqueEans.slice(i, i + 15);
+    const query = batch.map((e) => `barcode:'${String(e).replace(/'/g, "")}'`).join(" OR ");
+    try {
+      const json = await gql(admin, TARGETED_QUERY, { variables: { q: query } }, shopDomain);
+      for (const edge of json.data?.products?.edges || []) {
+        const productId = edge.node.id;
+        for (const vEdge of edge.node.variants?.edges || []) {
+          const v = vEdge.node;
+          const match: LookupMatch = {
+            productId,
+            variantId: v.id,
+            inventoryItemId: v.inventoryItem?.id || "",
+            shopifyCost: parseFloat(v.inventoryItem?.unitCost?.amount ?? "0") || 0,
+            sku: v.sku || "",
+          };
+          if (v.sku && !bySku.has(v.sku)) bySku.set(String(v.sku), match);
+          if (v.barcode) byBarcode.set(String(v.barcode), match);
+        }
+      }
+    } catch (e: any) {
+      console.error(`[Bulk] Targeted barcode query batch failed: ${e?.message}`);
+    }
+  }
+
+  console.log(`[Bulk] Targeted lookup: bySku.size=${bySku.size}, byBarcode.size=${byBarcode.size}`);
+  return { bySku, byBarcode };
 }
 
 // --- Helpers de Shopify ---
