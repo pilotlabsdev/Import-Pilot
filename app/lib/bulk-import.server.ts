@@ -952,6 +952,9 @@ async function prepareAndLaunch(
   locationId?: string,
   sourceKey?: string
 ): Promise<void> {
+  // Transition phase early to prevent reconcile from re-running prepareAndLaunch
+  // (the heavy CSV streaming can take minutes; reconcile fires every 60s)
+  await prisma.bulkJob.update({ where: { id: job.id }, data: { phase: "mutations" } }).catch(() => {});
   const workDir = job.workDir;
   const updateOpts = parseUpdateOptions(config.updateOptions);
   const createFiles: string[] = [];
@@ -2457,6 +2460,12 @@ async function reconcileLookupPhase(job: any): Promise<void> {
     // Targeted approach: lookup completed inline (no shopifyOpId) but prepareAndLaunch didn't finish.
     // Re-run the entire import from scratch (idempotent).
     if (lookupRow && lookupRow.status === "processed") {
+      // Guard: if prepareAndLaunch already created mutation ops, don't re-run it
+      const existingMutationOps = job.ops.filter((o: any) => (o.kind === "create" || o.kind === "update") && (o.status === "launched" || o.status === "processing" || o.status === "processed"));
+      if (existingMutationOps.length > 0) {
+        console.log(`[Bulk] Reconcile lookup: targeted lookup processed but mutation ops already exist (${existingMutationOps.length} ops), skipping re-run`);
+        return;
+      }
       console.log(`[Bulk] Reconcile lookup: targeted lookup already processed, re-running prepareAndLaunch`);
       try {
         const config = await prisma.importConfig.findUnique({
@@ -2525,7 +2534,9 @@ async function reconcileLookupPhase(job: any): Promise<void> {
 
 async function reconcileMutationsPhase(job: any): Promise<void> {
   if (!job.manifestPath) {
-    await failJob(job, "systemError.resume_no_manifest");
+    // Phase was set to "mutations" early (before prepareAndLaunch finishes streaming).
+    // The manifest doesn't exist yet — wait for prepareAndLaunch to complete.
+    console.log(`[Bulk] Reconcile mutations: job ${job.id.slice(0,8)} has no manifest yet, prepareAndLaunch likely still running`);
     return;
   }
 
