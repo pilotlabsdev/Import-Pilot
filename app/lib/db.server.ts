@@ -261,7 +261,7 @@ export async function refreshAccessToken(shop: string): Promise<string | null> {
  * - Refresh token expired → return null (merchant must reinstall)
  * - No refresh token → return null
  */
-export async function ensureFreshToken(shop: string): Promise<string | null> {
+export async function ensureFreshToken(shop: string, forceRefresh = false): Promise<string | null> {
   // Always use offline token for background jobs (bulk imports, webhooks, etc.)
   const session = await prisma.session.findFirst({
     where: { shop, isOnline: false },
@@ -278,16 +278,16 @@ export async function ensureFreshToken(shop: string): Promise<string | null> {
   const expiresAt = session.expires ? new Date(session.expires).getTime() : Infinity;
   const msUntilExpiry = expiresAt - now;
 
-  // Token still valid and not about to expire
-  if (msUntilExpiry > TOKEN_EXPIRY_WARNING_MS) {
+  // Token still valid and not about to expire (and no force refresh requested)
+  if (!forceRefresh && msUntilExpiry > TOKEN_EXPIRY_WARNING_MS) {
     return session.accessToken;
   }
 
-  // Token expired or expiring soon → refresh
-  if (msUntilExpiry <= TOKEN_EXPIRY_WARNING_MS) {
+  // Token expired, expiring soon, or force-refreshed → refresh
+  if (forceRefresh) {
+    console.log(`[Token] Force-refreshing token for ${shop} (API returned 401)...`);
+  } else {
     console.log(`[Token] Token for ${shop} expiring in ${Math.round(msUntilExpiry / 1000)}s, refreshing...`);
-    return refreshAccessToken(shop);
   }
-
-  return session.accessToken;
+  return refreshAccessToken(shop);
 }

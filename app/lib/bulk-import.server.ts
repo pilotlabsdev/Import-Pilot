@@ -28,6 +28,10 @@ import shopify from "~/shopify.server";
  * Returns a Response-like object compatible with Shopify's admin.graphql() interface.
  */
 export async function getFreshAdminClient(shopDomain: string) {
+  // Always ensure we have the freshest token (Shopify retires old expiring
+  // offline tokens when a new token exchange happens, e.g. user opens app)
+  await ensureFreshToken(shopDomain);
+
   const session = await prisma.session.findFirst({
     where: { shop: shopDomain, isOnline: false },
     select: { accessToken: true },
@@ -39,19 +43,37 @@ export async function getFreshAdminClient(shopDomain: string) {
   }
 
   const endpoint = `https://${shopDomain}/admin/api/2026-01/graphql.json`;
-  const token = session.accessToken;
+  let token = session.accessToken;
+
+  async function doFetch(query: string, vars: any, accessToken: string) {
+    return fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "X-Shopify-Access-Token": accessToken,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ query, variables: vars }),
+    });
+  }
 
   return {
     graphql: async (query: string, options?: { variables?: any }) => {
       const vars = options?.variables || {};
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "X-Shopify-Access-Token": token,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ query, variables: vars }),
-      });
+      const res = await doFetch(query, vars, token);
+
+      if (res.status === 401) {
+        console.log(`[Bulk] Got 401 for ${shopDomain}, refreshing token and retrying...`);
+        const newToken = await ensureFreshToken(shopDomain, true);
+        if (newToken && newToken !== token) {
+          token = newToken;
+          const retryRes = await doFetch(query, vars, token);
+          if (!retryRes.ok) {
+            const text = await retryRes.text();
+            throw new Error(`GraphQL request failed after refresh: ${retryRes.status} ${text}`);
+          }
+          return retryRes;
+        }
+      }
 
       if (!res.ok) {
         const text = await res.text();
