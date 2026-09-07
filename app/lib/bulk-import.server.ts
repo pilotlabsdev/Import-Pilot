@@ -541,9 +541,16 @@ export async function runBulkImport({
       if (!existing.variantId && m.shopifyVariantId) existing.variantId = m.shopifyVariantId;
     } else if (m.shopifyProductId) {
       if (m.postProcessStatus === "complete" || m.postProcessStatus === "pending" || !m.postProcessStatus || m.postProcessStatus === "error_permanent") {
-        await prisma.productMapping.delete({ where: { id: m.id } }).catch(() => {});
-        console.log(`[Bulk] SKU ${m.supplierSku}: mapping huérfano eliminado (producto no existe en Shopify)`);
-        continue;
+        try {
+          const check = await gql(admin, `query ($id: ID!) { product(id: $id) { id } }`, { variables: { id: m.shopifyProductId } }, job.shopDomain);
+          if (!check.data?.product) {
+            await prisma.productMapping.delete({ where: { id: m.id } }).catch(() => {});
+            console.log(`[Bulk] SKU ${m.supplierSku}: mapping huérfano eliminado (producto no existe en Shopify)`);
+            continue;
+          }
+        } catch {
+          // Si no podemos verificar, conservar el mapping
+        }
       }
     }
     bySkuMapping.set(m.supplierSku, {
@@ -670,11 +677,16 @@ async function handleLookupFinished(job: any, admin: any, status: string): Promi
   for (const m of allMappings) {
     if (!maps.bySku.has(m.supplierSku)) {
       if (m.shopifyProductId) {
-        // Delete orphan mappings if product was fully processed, pending, or permanently failed
-        // Incomplete products (inventory/channels/images/error) will be retried in retryPostProcess
         if (m.postProcessStatus === "complete" || m.postProcessStatus === "pending" || !m.postProcessStatus || m.postProcessStatus === "error_permanent") {
-          orphanSkus.push(m.supplierSku);
-          console.log(`[Bulk] SKU ${m.supplierSku}: mapping huérfano (status=${m.postProcessStatus || "pending"}, producto ${m.shopifyProductId} no existe en Shopify), se recreará`);
+          try {
+            const check = await gql(admin, `query ($id: ID!) { product(id: $id) { id } }`, { variables: { id: m.shopifyProductId } }, job.shopDomain);
+            if (!check.data?.product) {
+              orphanSkus.push(m.supplierSku);
+              console.log(`[Bulk] SKU ${m.supplierSku}: mapping huérfano (producto ${m.shopifyProductId} no existe en Shopify), se recreará`);
+            }
+          } catch {
+            // Si no podemos verificar, conservar el mapping
+          }
         } else {
         }
       }
@@ -1159,8 +1171,9 @@ async function prepareAndLaunch(
           // Same supplier product (regardless of app-tracked or external)
           // Adopt if not tracked, then let it flow to normal update path at line ~1130
           if (!anyMapping) {
-            const adopted = await prisma.productMapping.create({
-              data: {
+            const adopted = await prisma.productMapping.upsert({
+              where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: sku } },
+              create: {
                 shopDomain: job.shopDomain,
                 configId: config.id,
                 supplierSku: sku,
@@ -1171,6 +1184,12 @@ async function prepareAndLaunch(
                 lastPrice: null,
                 lastQuantity: null,
                 postProcessStatus: "pending",
+              },
+              update: {
+                shopifyProductId: matchInfo.productId,
+                shopifyVariantId: matchInfo.variantId,
+                shopifyInventoryItemId: matchInfo.inventoryItemId,
+                ean: ean || null,
               },
             }).catch((e: any) => {
               console.error(`[Bulk] SKU ${sku}: adopt create failed: ${e?.message}`);
@@ -1990,7 +2009,7 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
                   inventoryItemId: u.inventoryItemId,
                   locationId,
                   quantity: u.quantity,
-                  changeFromQuantity: 0,
+                  changeFromQuantity: null,
                 })),
               },
               idempotencyKey: `bulk-inv-set-${job.id}-${i}-${Date.now()}`,
