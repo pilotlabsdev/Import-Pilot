@@ -1990,6 +1990,7 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
                   inventoryItemId: u.inventoryItemId,
                   locationId,
                   quantity: u.quantity,
+                  changeFromQuantity: 0,
                 })),
               },
               idempotencyKey: `bulk-inv-set-${job.id}-${i}-${Date.now()}`,
