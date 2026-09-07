@@ -532,15 +532,6 @@ export async function runBulkImport({
 
   const targetedMaps = await queryProductsTargeted(admin, shopDomain, preScanSkus, preScanEans);
 
-  // Safety check: if too many queries failed, abort to avoid mass-creating duplicates
-  const totalSkus = preScanSkus.length;
-  const failedBatches = (targetedMaps as any).skuQueryFailed || 0;
-  if (totalSkus > 0 && failedBatches > totalSkus * 0.3) {
-    const msg = `Lookup abortado: ${failedBatches}/${totalSkus} SKUs fallaron en queries. Demasiado riesgo de crear duplicados.`;
-    console.error(`[Bulk] ${msg}`);
-    throw new Error(msg);
-  }
-
   // Build bySkuMapping from existing ProductMapping records
   const allMappings = await prisma.productMapping.findMany({
     where: { shopDomain },
@@ -2891,9 +2882,9 @@ async function queryProductsTargeted(
     }
   `;
 
-  // Query by SKUs in batches of 15 with retry
+  // Query by SKUs in batches of 15 with retry — MUST complete fully or throw
   const uniqueSkus = [...new Set(skus)].filter(Boolean);
-  let skuQueryFailed = 0;
+  const failedSkuBatches: string[][] = [];
   for (let i = 0; i < uniqueSkus.length; i += 15) {
     const batch = uniqueSkus.slice(i, i + 15);
     const query = batch.map((s) => `sku:'${String(s).replace(/'/g, "")}'`).join(" OR ");
@@ -2921,15 +2912,20 @@ async function queryProductsTargeted(
       } catch (e: any) {
         if (attempt === 2) {
           console.error(`[Bulk] Targeted SKU query batch failed (3 attempts): ${batch.join(",")} → ${e?.message}`);
-          skuQueryFailed += batch.length;
+          failedSkuBatches.push(batch);
         }
       }
     }
   }
+  if (failedSkuBatches.length > 0) {
+    const failedSkus = failedSkuBatches.flat();
+    console.error(`[Bulk] Lookup INCOMPLETO: ${failedSkus.length} SKUs no se pudieron consultar → import abortado, se reintentará en el próximo ciclo`);
+    throw new Error(`Lookup incomplete: ${failedSkus.length} SKU queries failed after 3 attempts. Import will retry next cycle.`);
+  }
 
-  // Query by EANs/barcodes (only those NOT already found by SKU query) with retry
+  // Query by EANs/barcodes (only those NOT already found by SKU query) with retry — MUST complete fully or throw
   const uniqueEans = [...new Set(eans)].filter((e) => e && !byBarcode.has(e));
-  let eanQueryFailed = 0;
+  const failedEanBatches: string[][] = [];
   for (let i = 0; i < uniqueEans.length; i += 15) {
     const batch = uniqueEans.slice(i, i + 15);
     const query = batch.map((e) => `barcode:'${String(e).replace(/'/g, "")}'`).join(" OR ");
@@ -2957,14 +2953,19 @@ async function queryProductsTargeted(
       } catch (e: any) {
         if (attempt === 2) {
           console.error(`[Bulk] Targeted barcode query batch failed (3 attempts): ${batch.join(",")} → ${e?.message}`);
-          eanQueryFailed += batch.length;
+          failedEanBatches.push(batch);
         }
       }
     }
   }
+  if (failedEanBatches.length > 0) {
+    const failedEans = failedEanBatches.flat();
+    console.error(`[Bulk] Lookup INCOMPLETO: ${failedEans.length} EANs no se pudieron consultar → import abortado, se reintentará en el próximo ciclo`);
+    throw new Error(`Lookup incomplete: ${failedEans.length} EAN queries failed after 3 attempts. Import will retry next cycle.`);
+  }
 
-  console.log(`[Bulk] Targeted lookup: bySku.size=${bySku.size}, byBarcode.size=${byBarcode.size}, skuQueryFailed=${skuQueryFailed}, eanQueryFailed=${eanQueryFailed}`);
-  return { bySku, byBarcode, skuQueryFailed, eanQueryFailed };
+  console.log(`[Bulk] Targeted lookup OK: bySku.size=${bySku.size}, byBarcode.size=${byBarcode.size}`);
+  return { bySku, byBarcode };
 }
 
 // --- Helpers de Shopify ---
