@@ -1930,10 +1930,26 @@ async function tryFinalize(job: any, admin: any): Promise<void> {
 
 async function finalizeBulkImport(job: any, admin: any): Promise<void> {
   const workDir = job.workDir;
-  const manifest = JSON.parse(await fs.readFile(job.manifestPath, "utf-8"));
+  let manifest: any;
+  try {
+    manifest = JSON.parse(await fs.readFile(job.manifestPath, "utf-8"));
+  } catch (e: any) {
+    console.error(`[Bulk] Finalize: manifest not found at ${job.manifestPath} → ${e?.message}`);
+    await failJob(job, "systemError.finalize_no_manifest");
+    return;
+  }
   const log = await prisma.importLog.findUnique({ where: { id: job.logId } });
-  if (!log) return;
-  if (log.status !== "running") return; // ya finalizado (idempotencia en resume)
+  if (!log) {
+    console.log(`[Bulk] Finalize: ImportLog ${job.logId} not found → marking job done`);
+    await prisma.bulkJob.update({ where: { id: job.id }, data: { phase: "done" } });
+    return;
+  }
+  if (log.status !== "running") {
+    console.log(`[Bulk] Finalize: ImportLog status=${log.status} (not running) → marking job done`);
+    await prisma.bulkJob.update({ where: { id: job.id }, data: { phase: "done" } });
+    clearBulkActive(job.shopDomain);
+    return;
+  }
 
   try {
   const config = await prisma.importConfig.findUnique({ where: { id: job.configId } });
@@ -2438,6 +2454,41 @@ async function reconcileLookupPhase(job: any): Promise<void> {
     job.ops.find((o: any) => o.kind === "lookup");
 
   if (!lookupRow || !lookupRow.shopifyOpId) {
+    // Targeted approach: lookup completed inline (no shopifyOpId) but prepareAndLaunch didn't finish.
+    // Re-run the entire import from scratch (idempotent).
+    if (lookupRow && lookupRow.status === "processed") {
+      console.log(`[Bulk] Reconcile lookup: targeted lookup already processed, re-running prepareAndLaunch`);
+      try {
+        const config = await prisma.importConfig.findUnique({
+          where: { id: job.configId },
+          include: { categoryMaps: true },
+        });
+        if (!config) { await failJob(job, "systemError.config_not_found"); return; }
+        const sourceKey = getSourceKey(config);
+        const columnMaps = (await prisma.columnMapping.findMany({
+          where: { configId: config.id, sourceKey },
+        })).map((cm) => ({ shopifyField: cm.shopifyField, csvColumn: cm.csvColumn, defaultValue: cm.defaultValue }));
+        const { skus: preScanSkus, eans: preScanEans } = await preScanCsv(config, columnMaps, job.filterSkus, job.filterCategories);
+        const targetedMaps = await queryProductsTargeted(admin, job.shopDomain, preScanSkus, preScanEans);
+        const allMappings = await prisma.productMapping.findMany({ where: { shopDomain: job.shopDomain } });
+        const bySkuMapping = new Map<string, { lastPrice: number | null; lastQuantity: number | null; lastCost: number | null }>();
+        for (const m of allMappings) {
+          bySkuMapping.set(m.supplierSku, { lastPrice: m.lastPrice, lastQuantity: m.lastQuantity, lastCost: m.lastCost ?? null });
+        }
+        const rules = await getActivePriceRules(job.shopDomain, job.configId);
+        const locationId = await getLocationId(admin, job.shopDomain, job.configId);
+        await prepareAndLaunch(job, config, admin, columnMaps, rules, targetedMaps, bySkuMapping, job.filterType, job.filterSkus, job.filterCategories, locationId, sourceKey);
+        console.log(`[Bulk] Reconcile lookup: prepareAndLaunch re-launched for job ${job.id.slice(0,8)}`);
+      } catch (e: any) {
+        console.error(`[Bulk] Reconcile lookup: re-run failed: ${e?.message}`);
+        if (e?.message?.includes("Lookup incomplete")) {
+          console.log(`[Bulk] Lookup still incomplete, will retry next cycle`);
+        } else {
+          await failJob(job, e?.message || "systemError.reconcile_lookup_rerun_failed");
+        }
+      }
+      return;
+    }
     // Crash justo después de crear el job, antes de lanzar/registrar la lookup.
     const op = await runLookupQuery(admin, job.shopDomain);
     if (!op.id) {
