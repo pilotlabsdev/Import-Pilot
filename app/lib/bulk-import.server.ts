@@ -126,7 +126,6 @@ async function gql(admin: any, query: string, varsOrOptions?: any, shopDomain?: 
     const isAuth = msg.includes("Unauthorized") || msg.includes("Session not found") || e?.response?.status === 401;
     if (!isAuth) throw e;
 
-    // Token expired mid-import → refresh and retry once
     if (!shopDomain) {
       console.error(`[Bulk] Auth error en gql (no shopDomain): ${msg}`);
       throw new Error(`Token inválido o expirado. Reinstala la app para obtener un nuevo token.`);
@@ -135,9 +134,14 @@ async function gql(admin: any, query: string, varsOrOptions?: any, shopDomain?: 
     const now = Date.now();
     const lastRefresh = lastRefreshAt.get(shopDomain) || 0;
     if (now - lastRefresh < MIN_REFRESH_INTERVAL_MS) {
-      // Already refreshed recently, don't retry
-      console.error(`[Bulk] Auth error after recent refresh for ${shopDomain}: ${msg}`);
-      throw new Error(`Token inválido o expirado tras refresh reciente para ${shopDomain}.`);
+      // Already refreshed successfully recently, try with fresh client anyway
+      try {
+        const freshAdmin = await getFreshAdminClient(shopDomain);
+        return await rateLimitedGraphql(freshAdmin, query, vars || {});
+      } catch {
+        console.error(`[Bulk] Auth error after recent refresh for ${shopDomain}: ${msg}`);
+        throw new Error(`Token inválido o expirado tras refresh reciente para ${shopDomain}.`);
+      }
     }
 
     console.log(`[Bulk] Token expired mid-import for ${shopDomain}, refreshing...`);
@@ -148,7 +152,6 @@ async function gql(admin: any, query: string, varsOrOptions?: any, shopDomain?: 
 
     lastRefreshAt.set(shopDomain, now);
 
-    // Recreate admin client with fresh token from DB
     const freshAdmin = await getFreshAdminClient(shopDomain);
     console.log(`[Bulk] Token refreshed for ${shopDomain}, retrying...`);
 
@@ -528,6 +531,15 @@ export async function runBulkImport({
   const { skus: preScanSkus, eans: preScanEans } = await preScanCsv(fullConfig, columnMaps, filterSkus, filterCategories);
 
   const targetedMaps = await queryProductsTargeted(admin, shopDomain, preScanSkus, preScanEans);
+
+  // Safety check: if too many queries failed, abort to avoid mass-creating duplicates
+  const totalSkus = preScanSkus.length;
+  const failedBatches = (targetedMaps as any).skuQueryFailed || 0;
+  if (totalSkus > 0 && failedBatches > totalSkus * 0.3) {
+    const msg = `Lookup abortado: ${failedBatches}/${totalSkus} SKUs fallaron en queries. Demasiado riesgo de crear duplicados.`;
+    console.error(`[Bulk] ${msg}`);
+    throw new Error(msg);
+  }
 
   // Build bySkuMapping from existing ProductMapping records
   const allMappings = await prisma.productMapping.findMany({
@@ -2952,7 +2964,7 @@ async function queryProductsTargeted(
   }
 
   console.log(`[Bulk] Targeted lookup: bySku.size=${bySku.size}, byBarcode.size=${byBarcode.size}, skuQueryFailed=${skuQueryFailed}, eanQueryFailed=${eanQueryFailed}`);
-  return { bySku, byBarcode };
+  return { bySku, byBarcode, skuQueryFailed, eanQueryFailed };
 }
 
 // --- Helpers de Shopify ---

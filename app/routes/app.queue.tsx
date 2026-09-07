@@ -27,14 +27,9 @@ const STATUS_TONE: Record<string, "success" | "critical" | "attention" | "info" 
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  try {
-    const { session } = await safeAuthenticate(request);
-    console.log(`[Queue Page] Loader OK, shop=${session.shop}`);
-    return data({ shopDomain: session.shop });
-  } catch (error: any) {
-    console.error(`[Queue Page] Loader FAILED:`, error?.message || error);
-    throw error;
-  }
+  const { session } = await safeAuthenticate(request);
+  console.log(`[Queue Page] Loader OK, shop=${session.shop}`);
+  return data({ shopDomain: session.shop });
 };
 
 export default function QueuePage() {
