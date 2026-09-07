@@ -4,7 +4,7 @@ import { prisma, getOrCreateConfig } from "~/lib/db.server";
 import { safeAuthenticate } from "~/shopify.server";
 
 async function discoverLocations(admin: any) {
-  const locationMap = new Map<string, { id: string; name: string; isActive: boolean }>();
+  const locationMap = new Map<string, { id: string; name: string; isActive: boolean; fulfillsOnlineOrders: boolean }>();
 
   const locResponse = await admin.graphql(
     `#graphql
@@ -31,7 +31,7 @@ async function discoverLocations(admin: any) {
   const locs = locJson.data?.locations?.edges || [];
   for (const l of locs) {
     if (!locationMap.has(l.node.id)) {
-      locationMap.set(l.node.id, { id: l.node.id, name: l.node.name, isActive: l.node.isActive });
+      locationMap.set(l.node.id, { id: l.node.id, name: l.node.name, isActive: l.node.isActive, fulfillsOnlineOrders: l.node.fulfillsOnlineOrders || false });
     }
   }
 
@@ -78,7 +78,7 @@ async function discoverLocations(admin: any) {
       for (const level of levels) {
         const loc = level.node?.location;
         if (loc && !locationMap.has(loc.id)) {
-          locationMap.set(loc.id, { id: loc.id, name: loc.name, isActive: loc.isActive });
+          locationMap.set(loc.id, { id: loc.id, name: loc.name, isActive: loc.isActive, fulfillsOnlineOrders: false });
         }
       }
     }
@@ -93,6 +93,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const shopDomain = url.searchParams.get("shop") || "";
 
   const locations = await discoverLocations(admin);
+
+  // Sort: default Shopify location first (fulfillsOnlineOrders), then active, then by name
+  locations.sort((a, b) => {
+    if (a.fulfillsOnlineOrders !== b.fulfillsOnlineOrders) return a.fulfillsOnlineOrders ? -1 : 1;
+    const aActive = a.isActive ? 1 : 0;
+    const bActive = b.isActive ? 1 : 0;
+    if (aActive !== bActive) return bActive - aActive;
+    return a.name.localeCompare(b.name);
+  });
 
   const config = shopDomain
     ? await getOrCreateConfig(shopDomain)

@@ -364,9 +364,13 @@ export default function Config() {
       const res = await fetch(`/api/locations?shop=${shopDomain}`);
       const d = await res.json();
       setLocations(d.locations || []);
-      if (d.selectedId && !selectedLocationId) {
-        setSelectedLocationId(d.selectedId);
-        setSelectedLocationName(d.selectedName || "");
+      if (!selectedLocationId) {
+        const id = d.selectedId || d.defaultId || "";
+        const name = d.selectedName || d.locations?.find((l: any) => l.id === id)?.name || "";
+        if (id) {
+          setSelectedLocationId(id);
+          setSelectedLocationName(name);
+        }
       }
     } catch {} finally {
       setLoadingLocations(false);

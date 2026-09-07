@@ -78,8 +78,9 @@ export function parseCSVLine(line: string, delimiter: string = "|"): string[] {
 export function autoDetectDelimiter(sample: string): string {
   const candidates = ["|", ",", ";", "\t"];
   let bestDelimiter = "|";
-  let bestScore = 0;
-  const lines = sample.split("\n").slice(0, 5);
+  let bestScore = -1;
+  const lines = sample.split(/\r?\n/).filter((l) => l.trim().length > 0).slice(0, 20);
+  if (lines.length === 0) return "|";
 
   for (const d of candidates) {
     const counts = lines.map((line) => {
@@ -91,11 +92,15 @@ export function autoDetectDelimiter(sample: string): string {
       }
       return count;
     });
-    const minCount = Math.min(...counts);
-    const maxCount = Math.max(...counts);
-    const consistent = maxCount > 0 && maxCount - minCount <= 1;
-    if (consistent && maxCount > bestScore) {
-      bestScore = maxCount;
+    const nonZeroCounts = counts.filter((c) => c > 0);
+    if (nonZeroCounts.length < Math.ceil(lines.length * 0.5)) continue;
+    const minCount = Math.min(...nonZeroCounts);
+    const maxCount = Math.max(...nonZeroCounts);
+    const avgCount = nonZeroCounts.reduce((a, b) => a + b, 0) / nonZeroCounts.length;
+    const consistency = maxCount > 0 ? 1 - (maxCount - minCount) / (maxCount || 1) : 0;
+    const score = avgCount * consistency * (nonZeroCounts.length / lines.length);
+    if (score > bestScore) {
+      bestScore = score;
       bestDelimiter = d;
     }
   }
@@ -142,12 +147,10 @@ export async function* streamCSV(
 
         buffer += decoder.decode(value, { stream: true });
 
-        if (!effectiveDelimiter && buffer.length > 0) {
-          const sample = buffer.split("\n").slice(0, 5).join("\n");
-          if (sample.length > 10 || buffer.includes("\n")) {
-            effectiveDelimiter = autoDetectDelimiter(sample);
-            console.log(`[CSV] Delimiter auto-detectado: ${JSON.stringify(effectiveDelimiter)}`);
-          }
+        if (!effectiveDelimiter && buffer.includes("\n")) {
+          const sample = buffer.split("\n").slice(0, 20).join("\n");
+          effectiveDelimiter = autoDetectDelimiter(sample);
+          console.log(`[CSV] Delimiter auto-detectado: ${JSON.stringify(effectiveDelimiter)}`);
         }
 
         const lines = buffer.split("\n");
