@@ -743,7 +743,7 @@ async function processProduct({
 
   // === INTER-SUPPLIER CHECK: existing mapping may belong to another supplier ===
   const shopSettings0 = await prisma.shopSettings.findUnique({ where: { shopDomain } });
-  const dupPolicy0 = shopSettings0?.duplicatePolicy || "create_both";
+  const dupPolicy0 = shopSettings0?.duplicatePolicy || "skip_existing";
   if (existing && existing.configId !== config.id && (dupPolicy0 === "skip_existing" || dupPolicy0 === "priority")) {
     const otherConfig = await prisma.importConfig.findUnique({ where: { id: existing.configId } });
     const otherSupplierName = otherConfig?.name || "desconocido";
@@ -910,7 +910,7 @@ async function processProduct({
   {
     const rowEan = getField(row, columnMaps, "ean") || row["ean"] || "";
     const shopSettings = await prisma.shopSettings.findUnique({ where: { shopDomain } });
-    const dupPolicy = shopSettings?.duplicatePolicy || "create_both";
+    const dupPolicy = shopSettings?.duplicatePolicy || "skip_existing";
     if (rowEan && (dupPolicy === "skip_existing" || dupPolicy === "priority")) {
       const dupCheck = await checkDuplicate(shopDomain, config.id, rowEan, sku);
       if (dupCheck.shouldSkip) {
@@ -1287,7 +1287,7 @@ async function processProduct({
 
     const rowEan = getField(row, columnMaps, "ean") || row["ean"] || "";
     const shopSettings = await prisma.shopSettings.findUnique({ where: { shopDomain } });
-    const dupPolicy2 = shopSettings?.duplicatePolicy || "create_both";
+    const dupPolicy2 = shopSettings?.duplicatePolicy || "skip_existing";
 
     // Fast lookup from pre-loaded barcode map
     let foundBarcode: BarcodeMatch | null = null;

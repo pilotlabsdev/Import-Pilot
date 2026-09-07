@@ -46,7 +46,7 @@ export async function checkDuplicate(
     where: { shopDomain },
   });
 
-  const policy = settings?.duplicatePolicy || "create_both";
+  const policy = settings?.duplicatePolicy || "skip_existing";
 
   switch (policy) {
     case "create_both":
