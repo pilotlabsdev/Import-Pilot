@@ -107,15 +107,10 @@ const shopify = shopifyApp({
   },
   hooks: {
     afterAuth: async ({ session }) => {
-      try {
-        await shopify.registerWebhooks({ session });
-      } catch (err: any) {
-        console.error(`[Shopify] afterAuth: webhook registration failed for ${session.shop}: ${err?.message || err}`);
-      }
-
-      // Compliance webhooks (customers/data_request, customers/redact, shop/redact)
-      // are registered via shopify.app.toml compliance_topics — not via GraphQL API
-      // because they don't exist in the WebhookSubscriptionTopic enum.
+      // Webhooks (app/uninstalled, bulk_operations/finish, products/*, inventory_items/*)
+      // are registered via shopify.app.toml [webhooks] section — not via GraphQL API.
+      // registerWebhooks() was removed because it requires write_webhooks scope which
+      // we don't have, and it was causing 401 errors that could block the auth flow.
 
       try {
         const existingSessions = await prisma.session.findMany({
