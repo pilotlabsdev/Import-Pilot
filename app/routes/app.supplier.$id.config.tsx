@@ -361,7 +361,7 @@ export default function Config() {
   const fetchLocations = useCallback(async () => {
     setLoadingLocations(true);
     try {
-      const res = await fetch(`/api/locations?shop=${shopDomain}`);
+      const res = await fetch(`/api/locations?shop=${shopDomain}&configId=${config.id}`);
       const d = await res.json();
       setLocations(d.locations || []);
       if (!selectedLocationId) {
@@ -375,7 +375,7 @@ export default function Config() {
     } catch {} finally {
       setLoadingLocations(false);
     }
-  }, [shopDomain, selectedLocationId]);
+  }, [shopDomain, config.id, selectedLocationId]);
 
   useEffect(() => { fetchLocations(); }, []);
 

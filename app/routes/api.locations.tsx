@@ -91,6 +91,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin } = await safeAuthenticate(request);
   const url = new URL(request.url);
   const shopDomain = url.searchParams.get("shop") || "";
+  const configIdParam = url.searchParams.get("configId") || "";
 
   const locations = await discoverLocations(admin);
 
@@ -103,9 +104,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     return a.name.localeCompare(b.name);
   });
 
-  const config = shopDomain
-    ? await getOrCreateConfig(shopDomain)
-    : null;
+  // Look up the specific supplier's saved location, not the first/active one
+  const config = configIdParam
+    ? await prisma.importConfig.findUnique({ where: { id: configIdParam }, select: { locationId: true, locationName: true } })
+    : (shopDomain ? await getOrCreateConfig(shopDomain) : null);
 
   return data({
     locations,
