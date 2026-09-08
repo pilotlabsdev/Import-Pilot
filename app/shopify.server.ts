@@ -7,6 +7,7 @@ import {
 } from "@shopify/shopify-app-react-router/server";
 import type { BillingConfigRecurringLineItem } from "@shopify/shopify-api";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
+import { redirect } from "react-router";
 import { prisma } from "~/lib/db.server";
 import { PLAN_HANDLES, PLAN_LIMITS } from "~/lib/plans";
 
@@ -165,17 +166,14 @@ export const addDocumentResponseHeaders = shopify.addDocumentResponseHeaders;
  * Safe wrapper around authenticate.admin() that handles session expiry gracefully.
  * When the session is expired, the library throws a raw Response(401).
  * This wrapper catches it and redirects to "/" which triggers App Bridge session refresh.
+ * Uses throw redirect() so React Router follows it automatically (no ErrorBoundary).
  */
 export async function safeAuthenticate(request: Request) {
   try {
     return await authenticate.admin(request);
   } catch (res: any) {
     if (res instanceof Response && res.status === 401) {
-      console.log(`[Auth] Session expired for ${request.url}, redirecting to refresh`);
-      throw new Response(null, {
-        status: 302,
-        headers: { Location: "/" },
-      });
+      throw redirect("/");
     }
     throw res;
   }

@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { data, Links, Meta, Outlet, Scripts, ScrollRestoration, useLoaderData, useRouteError, isRouteErrorResponse } from "react-router";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AppProvider as PolarisAppProvider } from "@shopify/polaris";
 import "@shopify/polaris/build/esm/styles.css";
@@ -71,7 +71,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width,initial-scale=1" />
         <meta name="shopify-api-key" content={SHOPIFY_API_KEY} />
-        <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" />
         <link rel="preconnect" href="https://cdn.shopify.com/" />
         <link rel="stylesheet" href="https://cdn.shopify.com/static/fonts/inter/v4/styles.css" />
         <Meta />
@@ -138,20 +137,13 @@ export function ErrorBoundary() {
   const rawStatus = error instanceof Response ? error.status : 0;
   const status = rrStatus || rawStatus;
 
-  // Shopify auth errors: 200 (App Bridge bootstrap / missing params), 302 (redirect to bounce), 401 (session expired)
-  const isShopifyAuthError = status === 200 || status === 302 || status === 401;
+  // Auth errors (302 redirect, 401 unauthorized) are handled by safeAuthenticate
+  // and the library's authenticate.admin(). Only show error page for real server errors.
+  const isServerError = status >= 500 || status === 0;
 
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (!isShopifyAuthError) return;
-    timerRef.current = setTimeout(() => window.location.reload(), 2000);
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
-  }, [isShopifyAuthError]);
-
-  if (isShopifyAuthError) {
+  if (!isServerError) {
+    // Auth or redirect errors: let the browser follow the redirect naturally.
+    // Return minimal HTML so App Bridge can re-initialize.
     return (
       <html lang="en">
         <head>
@@ -162,8 +154,7 @@ export function ErrorBoundary() {
         <body style={{ fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif", display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh", margin: 0, background: "#f6f6f7" }}>
           <div style={{ textAlign: "center", padding: "40px", background: "white", borderRadius: "8px", boxShadow: "0 1px 3px rgba(0,0,0,0.1)", maxWidth: "400px" }}>
             <div style={{ width: 32, height: 32, border: "3px solid #006fbb", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 16px" }} />
-            <h2 style={{ fontSize: "16px", fontWeight: 600, marginBottom: 8, color: "#202223" }}>Reconectando...</h2>
-            <p style={{ fontSize: "14px", color: "#6d7175", marginBottom: 0 }}>Sesion renovada automaticamente</p>
+            <h2 style={{ fontSize: "16px", fontWeight: 600, marginBottom: 8, color: "#202223" }}>Cargando...</h2>
           </div>
           <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
           <Scripts />

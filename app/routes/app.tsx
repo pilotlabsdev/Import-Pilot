@@ -4,7 +4,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { NavMenu } from "@shopify/app-bridge-react";
 import { useTranslation } from "react-i18next";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useRevalidator } from "react-router";
 
 import { safeAuthenticate } from "~/shopify.server";
@@ -168,24 +168,18 @@ export function ErrorBoundary() {
   const rawStatus = error instanceof Response ? error.status : 0;
   const status = rrStatus || rawStatus;
 
-  // Auth errors: 200 (App Bridge bootstrap), 302 (redirect to bounce), 401 (session expired)
-  const isAuthError = status === 200 || status === 302 || status === 401;
+  // Auth errors (302, 401) are handled by safeAuthenticate + library.
+  // Only show error page for real server errors (5xx) or unknown errors.
+  const isServerError = status >= 500 || status === 0;
 
-  // Bulletproof auto-reload: useRef prevents cleanup from cancelling the timer
-  const reloadScheduled = useRef(false);
-  useEffect(() => {
-    if (!isAuthError || reloadScheduled.current) return;
-    reloadScheduled.current = true;
-    setTimeout(() => window.location.reload(), 1500);
-  }, [isAuthError]);
-
-  if (isAuthError) {
+  if (!isServerError) {
+    // Auth or redirect: return minimal shell so App Bridge can re-initialize
     return (
       <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "60vh" }}>
         <div style={{ textAlign: "center", color: "#6d7175" }}>
           <div style={{ width: "24px", height: "24px", border: "3px solid #ddd", borderTopColor: "#006fbb", borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 12px" }} />
           <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-          <p>Conectando...</p>
+          <p>Cargando...</p>
         </div>
       </div>
     );
