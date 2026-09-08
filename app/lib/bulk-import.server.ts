@@ -1652,6 +1652,13 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
 
     const isNewProduct = op.kind === "create";
 
+    // Check if product already existed (productSet is an upsert — Shopify returns existing product)
+    const existingMapping = await prisma.productMapping.findUnique({
+      where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: meta.sku } },
+      select: { shopifyProductId: true },
+    }).catch(() => null);
+    const actuallyNew = isNewProduct && !existingMapping;
+
     await prisma.productMapping.upsert({
       where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: meta.sku } },
       create: {
@@ -1667,7 +1674,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
         lastQuantity: meta.stockQty,
         lastCost: meta.costPrice > 0 ? meta.costPrice : null,
         lastImportSource: sourceKey || null,
-        postProcessStatus: isNewProduct ? "pending" : "complete",
+        postProcessStatus: actuallyNew ? "pending" : "complete",
       },
       update: {
         shopifyProductId: product.id,
@@ -1678,13 +1685,13 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
         lastQuantity: meta.stockApplied !== false ? meta.stockQty : undefined,
         lastCost: meta.costPrice > 0 ? meta.costPrice : undefined,
         lastImportSource: sourceKey || undefined,
-        postProcessStatus: isNewProduct ? "pending" : "complete",
+        postProcessStatus: actuallyNew ? "pending" : "complete",
         postProcessError: null,
         postProcessRetries: 0,
       },
     });
 
-    if (isNewProduct) {
+    if (actuallyNew) {
       createdCount++;
 
       // TEST: inventoryBulkToggleActivation deshabilitado — productSet ya incluye inventoryQuantities
@@ -1822,7 +1829,14 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
                   postProcessStatus: op.kind === "create" ? "pending" : "complete", postProcessError: null, postProcessRetries: 0,
                 },
               }).catch(() => {});
-              if (op.kind === "create") createdCount++;
+              if (op.kind === "create") {
+                const existedBefore = await prisma.productMapping.findUnique({
+                  where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: rm.sku } },
+                  select: { shopifyProductId: true },
+                }).catch(() => null);
+                if (!existedBefore) createdCount++;
+                else unchangedCount++;
+              }
               else updatedCount++;
             } else {
               transientFailedCount++;
