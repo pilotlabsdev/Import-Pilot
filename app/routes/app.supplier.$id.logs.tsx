@@ -1,6 +1,4 @@
-import type { LoaderFunctionArgs } from "react-router";
-import { data } from "react-router";
-
+import type { LoaderFunctionArgs, HeadersFunction } from "react-router";
 import { useLoaderData } from "react-router";
 import {
   Badge,
@@ -10,6 +8,8 @@ import {
   Text,
 } from "@shopify/polaris";
 import { useTranslation } from "react-i18next";
+
+import { boundary } from "@shopify/shopify-app-react-router/server";
 
 import { prisma } from "~/lib/db.server";
 import { safeAuthenticate } from "~/shopify.server";
@@ -26,7 +26,11 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     take: 50,
   });
 
-  return data({ logs, shopDomain, configId });
+  return { logs, shopDomain, configId };
+};
+
+export const headers: HeadersFunction = (headersArgs) => {
+  return boundary.headers(headersArgs);
 };
 
 function statusTone(status: string) {
@@ -41,7 +45,7 @@ function statusTone(status: string) {
 }
 
 export default function Logs() {
-  const { logs, shopDomain, configId } = useLoaderData<typeof loader>();
+  const { logs } = useLoaderData<typeof loader>();
   const { t } = useTranslation();
 
   const rows = logs.map((log) => {

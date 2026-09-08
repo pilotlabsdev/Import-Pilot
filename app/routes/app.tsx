@@ -120,11 +120,6 @@ export default function App() {
         }
         return res;
       } catch (err) {
-        const url = typeof args[0] === "string" ? args[0] : args[0] instanceof URL ? args[0].toString() : args[0]?.url || "";
-        if (url.includes(".data") && Date.now() - lastReconnect > DEBOUNCE_MS) {
-          lastReconnect = Date.now();
-          triggerReconnect();
-        }
         throw err;
       }
     };
