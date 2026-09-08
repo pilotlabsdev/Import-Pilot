@@ -185,6 +185,11 @@ model ProductMapping {
   lastComparePrice  Float?
   lastCost          Float?
   lastQuantity      Int?
+  lastTitle         String?  // For change detection in bulk imports
+  lastDescription   String?  // For change detection in bulk imports
+  lastVendor         String?
+  lastProductType    String?
+  lastTags           String?  // JSON array of tags
   lastSyncAt        DateTime @default(now())
   lastImportSource  String?  // URL exacta o nombre de archivo exacto (para stock 0 selectivo)
   postProcessStatus String  @default("pending") // pending | inventory | channels | images | complete | error | error_permanent

@@ -399,6 +399,11 @@ interface MetaLine {
   stockQty: number;
   category: string;
   collectionIds: string[];
+  title?: string;
+  description?: string;
+  vendor?: string;
+  productType?: string;
+  tags?: string[];
   productId?: string;
   variantId?: string;
   inventoryItemId?: string;
@@ -1275,6 +1280,12 @@ async function prepareAndLaunch(
 
     const match = maps.byBarcode.get(ean) || maps.bySku.get(sku);
 
+    const csvTitle = getField(row, columnMaps, "title") || "";
+    const csvDescription = getField(row, columnMaps, "description") || "";
+    const csvVendor = getField(row, columnMaps, "vendor") || "";
+    const csvProductType = shopifyProductType || getField(row, columnMaps, "productType") || "";
+    const csvTags = [categoryTags, getField(row, columnMaps, "tags") || ""].filter(Boolean);
+
     const meta: MetaLine = {
       sku,
       ean,
@@ -1284,6 +1295,11 @@ async function prepareAndLaunch(
       stockQty,
       category,
       collectionIds,
+      title: csvTitle,
+      description: csvDescription,
+      vendor: csvVendor,
+      productType: csvProductType,
+      tags: csvTags.length > 0 ? csvTags : undefined,
     };
 
     if (match) {
@@ -1655,7 +1671,11 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
     // Check if product already existed (productSet is an upsert — Shopify returns existing product)
     const existingMapping = await prisma.productMapping.findUnique({
       where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: meta.sku } },
-      select: { shopifyProductId: true, lastPrice: true, lastComparePrice: true, lastQuantity: true, lastCost: true },
+      select: {
+        shopifyProductId: true,
+        lastPrice: true, lastComparePrice: true, lastQuantity: true, lastCost: true,
+        lastTitle: true, lastDescription: true, lastVendor: true, lastProductType: true, lastTags: true,
+      },
     }).catch(() => null);
     const actuallyNew = isNewProduct && !existingMapping;
 
@@ -1663,6 +1683,11 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
     let priceChanged = meta.priceChanged || false;
     let stockChanged = meta.stockChanged || false;
     let costChanged = meta.costChanged || false;
+    let titleChanged = false;
+    let descriptionChanged = false;
+    let vendorChanged = false;
+    let productTypeChanged = false;
+    let tagsChanged = false;
     if (!actuallyNew && existingMapping) {
       const csvPrice = meta.priceApplied !== false ? meta.regularPrice : undefined;
       const csvCompare = meta.priceApplied !== false ? meta.compareAtPrice : undefined;
@@ -1672,6 +1697,14 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       if (csvCompare !== undefined && csvCompare !== existingMapping.lastComparePrice) priceChanged = true;
       if (csvQty !== undefined && csvQty !== existingMapping.lastQuantity) stockChanged = true;
       if (csvCost !== undefined && csvCost !== existingMapping.lastCost) costChanged = true;
+      if (meta.title && meta.title !== existingMapping.lastTitle) titleChanged = true;
+      if (meta.description && meta.description !== existingMapping.lastDescription) descriptionChanged = true;
+      if (meta.vendor && meta.vendor !== existingMapping.lastVendor) vendorChanged = true;
+      if (meta.productType && meta.productType !== existingMapping.lastProductType) productTypeChanged = true;
+      if (meta.tags) {
+        const csvTags = JSON.stringify(meta.tags);
+        if (csvTags !== existingMapping.lastTags) tagsChanged = true;
+      }
     }
 
     await prisma.productMapping.upsert({
@@ -1688,6 +1721,11 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
         lastComparePrice: meta.compareAtPrice,
         lastQuantity: meta.stockQty,
         lastCost: meta.costPrice > 0 ? meta.costPrice : null,
+        lastTitle: meta.title || null,
+        lastDescription: meta.description || null,
+        lastVendor: meta.vendor || null,
+        lastProductType: meta.productType || null,
+        lastTags: meta.tags ? JSON.stringify(meta.tags) : null,
         lastImportSource: sourceKey || null,
         postProcessStatus: actuallyNew ? "pending" : "complete",
       },
@@ -1699,6 +1737,11 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
         lastComparePrice: meta.priceApplied !== false ? meta.compareAtPrice : undefined,
         lastQuantity: meta.stockApplied !== false ? meta.stockQty : undefined,
         lastCost: meta.costPrice > 0 ? meta.costPrice : undefined,
+        lastTitle: meta.title || undefined,
+        lastDescription: meta.description || undefined,
+        lastVendor: meta.vendor || undefined,
+        lastProductType: meta.productType || undefined,
+        lastTags: meta.tags ? JSON.stringify(meta.tags) : undefined,
         lastImportSource: sourceKey || undefined,
         postProcessStatus: actuallyNew ? "pending" : "complete",
         postProcessError: null,
@@ -1774,7 +1817,8 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
         data: { postProcessStatus: "complete", postProcessError: null },
       }).catch(() => {});
     } else {
-      if (priceChanged || stockChanged || costChanged) {
+      const anyChanged = priceChanged || stockChanged || costChanged || titleChanged || descriptionChanged || vendorChanged || productTypeChanged || tagsChanged;
+      if (anyChanged) {
         updatedCount++;
         if (priceChanged) priceChanges++;
         if (stockChanged) stockChanges++;
