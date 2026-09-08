@@ -1059,9 +1059,15 @@ async function prepareAndLaunch(
   const hasAnyFilter = skuSet !== null || catSet !== null;
 
   const seenSkus = new Set<string>();
+  const CHECKPOINT_INTERVAL = 500;
+  const resumeFromLine = job.resumeFromLine || 0;
+  let checkpointCounter = 0;
 
   for await (const item of streamFile(await resolveFileUrl(getEffectiveUrl(config)), config.csvDelimiter)) {
     const { row, lineNumber } = item;
+
+    // Checkpoint/resume: skip lines already processed in a previous run
+    if (lineNumber <= resumeFromLine) continue;
     const sku = (getField(row, columnMaps, "sku") || row["sku"] || "").trim();
     allSkus.push(sku);
 
@@ -1091,6 +1097,12 @@ async function prepareAndLaunch(
     seenSkus.add(skuLower);
 
     totalCount++;
+
+    // Checkpoint/resume: save progress every CHECKPOINT_INTERVAL rows
+    checkpointCounter++;
+    if (checkpointCounter % CHECKPOINT_INTERVAL === 0) {
+      await prisma.bulkJob.update({ where: { id: job.id }, data: { resumeFromLine: lineNumber } }).catch(() => {});
+    }
 
     const ean = (() => {
       const mapped = getField(row, columnMaps, "ean");
@@ -1372,6 +1384,9 @@ async function prepareAndLaunch(
 
   await flush("create");
   await flush("update");
+
+  // Checkpoint/resume: streaming complete, clear checkpoint
+  await prisma.bulkJob.update({ where: { id: job.id }, data: { resumeFromLine: null } }).catch(() => {});
 
   // Post-loop batch: detect external duplicates for EANs NOT found in byBarcode
   // These are products that exist in Shopify but don't have barcode set on any variant.
