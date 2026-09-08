@@ -60,7 +60,6 @@ function scheduleNext(configId: string, frequency: string, lastImportAt: Date | 
   }
 
   const nextRunAt = new Date(Date.now() + delay);
-  console.log(`[Scheduler] ${configId.slice(0, 8)} próximo import en ${Math.round(delay / 60_000)} min (${nextRunAt.toLocaleTimeString("es-ES")})`);
 
   const timer = setTimeout(() => {
     void runScheduledImport(configId);
@@ -78,7 +77,6 @@ async function resumeInterruptedJobs() {
     });
 
     if (runningItems.length > 0) {
-      console.log(`[Scheduler] Reanudando ${runningItems.length} imports interrumpidos`);
       // Reset to queued so processNext picks them up
       for (const item of runningItems) {
         await prisma.importQueue.update({
@@ -114,7 +112,6 @@ async function resumeInterruptedJobs() {
           const sourceLabel = config.dataSource === "file"
             ? config.localFilePath?.split(/[/\\]/).pop() || "Archivo local"
             : config.csvUrl || "URL";
-          console.log(`[Scheduler] Reanudando orphan log ${log.id.slice(0, 8)} (${config.name})`);
           await enqueue({
             shopDomain: log.shopDomain,
             configId: log.configId,
@@ -157,24 +154,19 @@ async function checkBulkOperations() {
           }).catch(() => null);
 
           if (knownOp && knownOp.status !== "processed") {
-            console.log(`[Scheduler] Bulk orphan detectado: ${op.id} en ${shopDomain}, procesando`);
-            await handleBulkOperationFinish({ admin, opId: op.id, status: "COMPLETED" }).catch((e) =>
-              console.error(`[Scheduler] Error procesando bulk orphan ${op.id}:`, e?.message)
-            );
+            await handleBulkOperationFinish({ admin, opId: op.id, status: "COMPLETED" }).catch(() => {});
           }
         }
-      } catch (e: any) {
-        console.error(`[Scheduler] Error checking bulk ops for ${shopDomain}:`, e?.message);
+      } catch {
+        // Skip shops with auth errors
       }
     }
-  } catch (e) {
-    console.error("[Scheduler] Error in checkBulkOperations:", e);
+  } catch {
+    // Error reading active jobs
   }
 }
 
 async function startupCleanup(): Promise<void> {
-  console.log("[Scheduler] Running startup cleanup...");
-
   // 1. Fail stuck BulkJobs (from previous process killed by SIGTERM/OOM)
   const stuckBulkJobs = await prisma.bulkJob.findMany({
     where: { phase: { in: ["lookup", "mutations", "finalizing"] } },
@@ -182,7 +174,6 @@ async function startupCleanup(): Promise<void> {
   });
 
   for (const job of stuckBulkJobs) {
-    console.log(`[Scheduler] Startup: failing stuck BulkJob ${job.id.slice(0,8)} (phase=${job.phase})`);
     await prisma.bulkJob.update({
       where: { id: job.id },
       data: { phase: "failed" },
@@ -209,7 +200,6 @@ async function startupCleanup(): Promise<void> {
     select: { id: true, configId: true },
   });
   for (const log of stuckLogs) {
-    console.log(`[Scheduler] Startup: failing stuck ImportLog ${log.id.slice(0,8)}`);
     await prisma.importLog.update({
       where: { id: log.id },
       data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "systemError.process_restarted", lineNumber: 0 }]) },
@@ -226,7 +216,6 @@ async function startupCleanup(): Promise<void> {
     select: { id: true, configId: true, shopDomain: true },
   });
   for (const item of stuckQueue) {
-    console.log(`[Scheduler] Startup: failing stuck queue item ${item.id.slice(0,8)}`);
     await prisma.importQueue.update({
       where: { id: item.id },
       data: { status: "failed", finishedAt: new Date() },
@@ -313,7 +302,7 @@ export function startScheduler() {
         }
       }
       if (staleRunning.length > 0) {
-        console.log(`[Scheduler] Limpiados ${staleRunning.length} items running stale`);
+          console.log(`[Scheduler] Limpiados ${staleRunning.length} items running stale`);
       }
     }).catch(() => {});
 
@@ -322,6 +311,7 @@ export function startScheduler() {
       where: { status: "running", startedAt: { lt: new Date(Date.now() - STALE_QUEUED_MS) } },
       select: { id: true, configId: true, lastProgressAt: true, startedAt: true },
     }).then(async (orphanLogs) => {
+      let cleaned = 0;
       for (const log of orphanLogs) {
         const hasQueueItem = await prisma.importQueue.findFirst({
           where: { logId: log.id, status: { in: ["queued", "running"] } },
@@ -336,8 +326,11 @@ export function startScheduler() {
             where: { id: log.id },
             data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "systemError.timeout_orphan", lineNumber: 0 }]) },
           }).catch(() => {});
-          console.log(`[Scheduler] Limpiado orphan ImportLog ${log.id.slice(0, 8)}`);
+          cleaned++;
         }
+      }
+      if (cleaned > 0) {
+        console.log(`[Scheduler] Limpiados ${cleaned} orphan ImportLogs`);
       }
     }).catch(() => {});
   }, 60_000);
@@ -404,7 +397,6 @@ export async function refreshSchedules() {
 
       scheduledFrequencies.set(config.id, config.frequency);
       scheduleNext(config.id, config.frequency, config.lastImportAt);
-      console.log(`[Scheduler] Programada ${config.name} → ${config.frequency}`);
     }
   } finally {
     refreshing = false;
@@ -413,7 +405,6 @@ export async function refreshSchedules() {
 
 async function runScheduledImport(configId: string) {
   if (configLocks.has(configId)) {
-    console.log(`[Scheduler] ${configId.slice(0, 8)} ya está en proceso, skip`);
     return;
   }
   configLocks.add(configId);
@@ -433,7 +424,6 @@ async function runScheduledImport(configId: string) {
         }).catch(() => null);
         const lastActivity = log?.lastProgressAt || log?.startedAt;
         if (lastActivity && (Date.now() - lastActivity.getTime()) > 15 * 60 * 1000) {
-          console.log(`[Scheduler] ${configId.slice(0, 8)} running sin progreso (${Math.round((Date.now() - lastActivity.getTime()) / 60_000)}min), limpiando`);
           await prisma.importQueue.update({
             where: { id: activeQueueItem.id },
             data: { status: "failed", finishedAt: new Date() },
@@ -463,7 +453,6 @@ async function runScheduledImport(configId: string) {
         const elapsed = Date.now() - referenceTime.getTime();
         if (elapsed < IMPORT_COOLDOWN_MS) {
           const remaining = IMPORT_COOLDOWN_MS - elapsed;
-          console.log(`[Scheduler] ${configId.slice(0, 8)} importación reciente (${Math.round(elapsed / 1000)}s atrás), cooldown ${Math.round(remaining / 1000)}s`);
           scheduleNext(configId, scheduledFrequencies.get(configId) || "4h", null, remaining + 5_000);
           return;
         }
@@ -478,20 +467,17 @@ async function runScheduledImport(configId: string) {
     }
 
     if (config.planPaused) {
-      console.log(`[Scheduler] ${config.name} pausado por límite de plan, skip`);
       scheduleNext(configId, scheduledFrequencies.get(configId) || "4h", null);
       return;
     }
 
     const subscription = await getSubscriptionInfo(config.shopDomain);
     if (!subscription.hasActiveSubscription && !subscription.isTrial) {
-      console.log(`[Scheduler] ${config.name} sin suscripción activa, skip`);
       scheduleNext(configId, scheduledFrequencies.get(configId) || "4h", null);
       return;
     }
 
     if (subscription.isTrial && subscription.trialDaysRemaining <= 0) {
-      console.log(`[Scheduler] ${config.name} trial expirado, ejecutando enforcePlanLimits`);
       await enforcePlanLimits(config.shopDomain);
       scheduleNext(configId, scheduledFrequencies.get(configId) || "4h", null);
       return;
@@ -505,8 +491,6 @@ async function runScheduledImport(configId: string) {
     const sourceLabel = config.dataSource === "file"
       ? config.localFilePath?.split(/[/\\]/).pop() || "Archivo local"
       : config.csvUrl || "URL";
-
-    console.log(`[Scheduler] ${config.name} encolando importación (${config.importMode})`);
 
     await enqueue({
       shopDomain: config.shopDomain,

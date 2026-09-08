@@ -92,7 +92,6 @@ export async function rateLimitedGraphql(
         );
         if (isThrottled && attempt < maxRetries) {
           const wait = attempt * 2000;
-          console.log(`[RateLimit] Throttled (GQL), retrying in ${wait}ms (attempt ${attempt}/${maxRetries})`);
           await sleep(wait);
           continue;
         }
@@ -103,7 +102,6 @@ export async function rateLimitedGraphql(
         );
         if (isUnauthorized && attempt < maxRetries) {
           const wait = attempt * 3000;
-          console.log(`[Auth] Unauthorized (GQL), retrying in ${wait}ms (attempt ${attempt}/${maxRetries})`);
           await sleep(wait);
           continue;
         }
@@ -121,7 +119,6 @@ export async function rateLimitedGraphql(
           msg.includes("rate limit");
         if (isThrottled && attempt < maxRetries) {
           const wait = attempt * 2000;
-          console.log(`[RateLimit] Throttled (HTTP ${statusCode}), retrying in ${wait}ms (attempt ${attempt}/${maxRetries})`);
           await sleep(wait);
           continue;
         }
@@ -131,7 +128,6 @@ export async function rateLimitedGraphql(
           msg.includes("invalid_token");
         if (isUnauthorized && attempt < maxRetries) {
           const wait = attempt * 3000;
-          console.log(`[Auth] Unauthorized (HTTP ${statusCode}), retrying in ${wait}ms (attempt ${attempt}/${maxRetries})`);
           await sleep(wait);
           continue;
         }

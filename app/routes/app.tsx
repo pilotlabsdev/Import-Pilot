@@ -4,7 +4,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { NavMenu } from "@shopify/app-bridge-react";
 import { useTranslation } from "react-i18next";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRevalidator } from "react-router";
 
 import { safeAuthenticate } from "~/shopify.server";
@@ -106,19 +106,23 @@ export default function App() {
   }
 
   // Listen for fetch failures and trigger reconnect on auth errors
+  // Debounced: only trigger once per 10s to prevent reload loops
   useEffect(() => {
+    let lastReconnect = 0;
+    const DEBOUNCE_MS = 10000;
     const origFetch = window.fetch;
     window.fetch = async (...args) => {
       try {
         const res = await origFetch(...args);
-        if (res.status === 401 || res.status === 502) {
+        if ((res.status === 401 || res.status === 502) && Date.now() - lastReconnect > DEBOUNCE_MS) {
+          lastReconnect = Date.now();
           triggerReconnect();
         }
         return res;
       } catch (err) {
-        // Only trigger reconnect for .data fetches (React Router), not for API polls
-        const url = typeof args[0] === "string" ? args[0] : args[0]?.url || "";
-        if (url.includes(".data")) {
+        const url = typeof args[0] === "string" ? args[0] : args[0] instanceof URL ? args[0].toString() : args[0]?.url || "";
+        if (url.includes(".data") && Date.now() - lastReconnect > DEBOUNCE_MS) {
+          lastReconnect = Date.now();
           triggerReconnect();
         }
         throw err;
@@ -167,11 +171,12 @@ export function ErrorBoundary() {
   // Auth errors: 200 (App Bridge bootstrap), 302 (redirect to bounce), 401 (session expired)
   const isAuthError = status === 200 || status === 302 || status === 401;
 
+  // Bulletproof auto-reload: useRef prevents cleanup from cancelling the timer
+  const reloadScheduled = useRef(false);
   useEffect(() => {
-    if (!isAuthError) return;
-    // Silent auto-reload — App Bridge handles re-authentication
-    const timer = setTimeout(() => window.location.reload(), 1500);
-    return () => clearTimeout(timer);
+    if (!isAuthError || reloadScheduled.current) return;
+    reloadScheduled.current = true;
+    setTimeout(() => window.location.reload(), 1500);
   }, [isAuthError]);
 
   if (isAuthError) {

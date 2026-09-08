@@ -133,7 +133,6 @@ export async function* streamCSV(
       if (firstChunk.done) throw new Error("CSV vacío");
       const enc = detectEncoding(firstChunk.value);
       const decoder = new TextDecoder(enc);
-      if (enc !== "utf-8") console.log(`[CSV] Encoding detectado: ${enc}`);
       buffer += decoder.decode(firstChunk.value, { stream: true });
 
       while (true) {
@@ -150,7 +149,6 @@ export async function* streamCSV(
         if (!effectiveDelimiter && buffer.includes("\n")) {
           const sample = buffer.split("\n").slice(0, 20).join("\n");
           effectiveDelimiter = autoDetectDelimiter(sample);
-          console.log(`[CSV] Delimiter auto-detectado: ${JSON.stringify(effectiveDelimiter)}`);
         }
 
         const lines = buffer.split("\n");
@@ -221,13 +219,11 @@ export async function* streamCSV(
         }
       }
 
-      console.log(`[streamCSV] Stream complete: ${lineNumber} lines processed (${lineNumber > 1 ? lineNumber - 1 : 0} data rows)`);
       return; // Success, exit retry loop
     } catch (error: any) {
       lastError = error;
       if (attempt < maxRetries) {
         const wait = attempt * 2000;
-        console.log(`[streamCSV] Error fetching CSV (attempt ${attempt}/${maxRetries}): ${error?.message}. Retrying in ${wait}ms...`);
         await new Promise((r) => setTimeout(r, wait));
       }
     }
@@ -241,7 +237,7 @@ export async function* streamCSVFromBuffer(
 ): AsyncGenerator<{ headers: string[]; row: ProductRow; lineNumber: number }> {
   const enc = detectEncoding(content);
   const decoder = new TextDecoder(enc);
-  if (enc !== "utf-8") console.log(`[CSV] Encoding detectado: ${enc}`);
+
   const text = decoder.decode(content);
   let headers: string[] = [];
   let lineNumber = 0;
@@ -268,13 +264,11 @@ export async function* streamCSVFromBuffer(
 
     if (effectiveDelimiter === null) {
       effectiveDelimiter = autoDetectDelimiter(fullLine);
-      console.log(`[CSV] Delimiter auto-detectado: ${JSON.stringify(effectiveDelimiter)}`);
     }
 
     lineNumber++;
     if (lineNumber === 1) {
       headers = parseCSVLine(fullLine.trim(), effectiveDelimiter || "|").map((h) => h.toLowerCase());
-      console.log(`[CSV] Headers detectados:`, headers);
       continue;
     }
 
@@ -297,7 +291,6 @@ export async function* streamCSVFromBuffer(
       yield { headers, row, lineNumber };
     }
   }
-  console.log(`[CSV] streamCSVFromBuffer total rows yielded: ${lineNumber - 1}`);
 }
 
 export async function* streamExcelFromBuffer(
@@ -438,7 +431,6 @@ export async function* streamExcel(
       lastError = error;
       if (attempt < maxRetries) {
         const wait = attempt * 2000;
-        console.log(`[streamExcel] Error fetching Excel (attempt ${attempt}/${maxRetries}): ${error?.message}. Retrying in ${wait}ms...`);
         await new Promise((r) => setTimeout(r, wait));
       }
     }
@@ -547,7 +539,6 @@ export async function fetchCSVSkus(
     }
   }
 
-  console.log(`[fetchCSVSkus] Total unique SKUs: ${seen.size}`);
   return [...seen.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([sku, name]) => ({
@@ -628,7 +619,6 @@ export async function fetchCSVHeaders(
         lastError = error;
         if (attempt < maxRetries) {
           const wait = attempt * 2000;
-          console.log(`[fetchCSVHeaders] Error (attempt ${attempt}/${maxRetries}): ${error?.message}. Retrying in ${wait}ms...`);
           await new Promise((r) => setTimeout(r, wait));
         }
       }
@@ -723,12 +713,11 @@ export async function fetchCSVHeaders(
       lastError = error;
       if (attempt < maxRetries) {
         const wait = attempt * 2000;
-        console.log(`[fetchCSVHeaders] Error (attempt ${attempt}/${maxRetries}): ${error?.message}. Retrying in ${wait}ms...`);
-        await new Promise((r) => setTimeout(r, wait));
+          await new Promise((r) => setTimeout(r, wait));
+        }
       }
     }
-  }
-  throw lastError || new Error("Error descargando CSV tras reintentos");
+    throw lastError || new Error("Error descargando CSV tras reintentos");
 }
 
 function normalize(s: string): string {

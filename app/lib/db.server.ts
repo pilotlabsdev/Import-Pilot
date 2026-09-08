@@ -77,15 +77,11 @@ export async function ensureSingleSession(shop: string): Promise<{ id: string; a
   });
 
   if (sessions.length === 0) {
-    console.log(`[Session] No sessions found for ${shop}`);
     return null;
   }
 
   if (sessions.length === 1) {
-    const s = sessions[0];
-    const isExpired = s.expires ? new Date(s.expires) < now : false;
-    console.log(`[Session] Single session for ${shop}: id=${s.id}, expires=${s.expires?.toISOString() || "null"}, isExpired=${isExpired}`);
-    return s;
+    return sessions[0];
   }
 
   // Multiple sessions: pick the best one
@@ -110,8 +106,9 @@ export async function ensureSingleSession(shop: string): Promise<{ id: string; a
 
   const [best, ...stale] = scored;
   const idsToDelete = stale.map((s) => s.id);
-  await prisma.session.deleteMany({ where: { id: { in: idsToDelete } } });
-  console.log(`[Session] Deduped ${idsToDelete.length} stale session(s) for ${shop}: kept id=${best.id} (score=${best.score}, expired=${best.isExpired}), deleted [${idsToDelete.join(", ")}]`);
+  if (idsToDelete.length > 0) {
+    await prisma.session.deleteMany({ where: { id: { in: idsToDelete } } });
+  }
   return best;
 }
 
@@ -198,17 +195,15 @@ export async function refreshAccessToken(shop: string): Promise<string | null> {
   });
 
   if (!session?.refreshToken) {
-    console.error(`[Token Refresh] No refresh token for ${shop}. Merchant must reinstall app.`);
+    console.error(`[Token] No refresh token for ${shop}`);
     return null;
   }
 
   // Check if refresh token itself is expired
   if (session.refreshTokenExpires && new Date(session.refreshTokenExpires) < new Date()) {
-    console.error(`[Token Refresh] Refresh token expired for ${shop} (expired: ${session.refreshTokenExpires}). Merchant must reinstall app.`);
+    console.error(`[Token] Refresh token expired for ${shop}`);
     return null;
   }
-
-  console.log(`[Token Refresh] Refreshing token for ${shop}...`);
 
   try {
     const response = await fetch(`https://${shop}/admin/oauth/access_token`, {
@@ -245,10 +240,8 @@ export async function refreshAccessToken(shop: string): Promise<string | null> {
       },
     });
 
-    console.log(`[Token Refresh] OK for ${shop}: new token, expires=${expiresAt?.toISOString() || "null"}, refreshExpires=${refreshExpiresAt?.toISOString() || "null"}`);
     return access_token;
-  } catch (err: any) {
-    console.error(`[Token Refresh] Error for ${shop}: ${err?.message || err}`);
+  } catch {
     return null;
   }
 }
@@ -270,7 +263,6 @@ export async function ensureFreshToken(shop: string, forceRefresh = false): Prom
   });
 
   if (!session) {
-    console.error(`[Token] No session for ${shop}`);
     return null;
   }
 
@@ -284,10 +276,5 @@ export async function ensureFreshToken(shop: string, forceRefresh = false): Prom
   }
 
   // Token expired, expiring soon, or force-refreshed → refresh
-  if (forceRefresh) {
-    console.log(`[Token] Force-refreshing token for ${shop} (API returned 401)...`);
-  } else {
-    console.log(`[Token] Token for ${shop} expiring in ${Math.round(msUntilExpiry / 1000)}s, refreshing...`);
-  }
   return refreshAccessToken(shop);
 }

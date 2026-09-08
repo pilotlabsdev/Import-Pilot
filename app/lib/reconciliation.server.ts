@@ -49,11 +49,7 @@ export async function reconcileOrphanedMappings(shopDomain: string): Promise<{ c
     where: { id: { in: orphaned.map((m) => m.id) } },
   });
 
-  for (const m of orphaned) {
-    console.log(`[Reconciliation] Deleted orphaned mapping: SKU="${m.supplierSku}" productId=${m.shopifyProductId}`);
-  }
 
-  console.log(`[Reconciliation] ${shopDomain}: checked=${uniqueProductIds.length}, deleted=${deleted.count}`);
   return { checked: uniqueProductIds.length, deleted: deleted.count };
 }
 

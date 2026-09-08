@@ -58,19 +58,16 @@ export async function enqueue(params: {
   const existingQueued = existingForConfig.find((i) => i.status === "queued");
 
   if (hasRunning && existingQueued) {
-    console.log(`[Queue] Skip enqueue for ${params.configId}: already 1 running + 1 queued`);
     return { ...existingQueued, alreadyQueued: true } as QueueItem;
   }
 
   if (hasRunning && !existingQueued) {
     if (existingForConfig.length >= 2) {
-      console.log(`[Queue] Skip enqueue for ${params.configId}: already running, will queue next`);
       return { ...existingForConfig[0], alreadyQueued: true } as QueueItem;
     }
   }
 
   if (existingQueued) {
-    console.log(`[Queue] Skip enqueue for ${params.configId}: already ${existingForConfig.length} queued/running`);
     return { ...existingQueued, alreadyQueued: true } as QueueItem;
   }
 
@@ -94,8 +91,6 @@ export async function enqueue(params: {
       position: (maxPos._max.position || 0) + 1,
     },
   });
-
-  console.log(`[Queue] Enqueued import for ${params.shopDomain} (configId=${params.configId}, position=${item.position})`);
 
   await processNext(params.shopDomain);
 
@@ -144,11 +139,7 @@ export async function processNext(shopDomain: string): Promise<void> {
       data: { status: "running", startedAt: new Date() },
     });
 
-    console.log(`[Queue] Processing import ${item.id} for ${shopDomain} (configId=${item.configId})`);
-
-    processQueueItem(item, lock, shopDomain).catch((error) => {
-      console.error(`[Queue] Unhandled error processing ${item.id}:`, error);
-    });
+    processQueueItem(item, lock, shopDomain).catch(() => {});
   }
 }
 
@@ -167,28 +158,19 @@ async function processQueueItem(
       // Refresh token if about to expire
       const freshToken = await ensureFreshToken(shopDomain);
       if (!freshToken) {
-        console.error(`[Queue] Token expirado para ${shopDomain}, saltando importación ${item.id}`);
         await prisma.importQueue.update({
           where: { id: item.id },
           data: { status: "failed", finishedAt: new Date() },
         });
         return;
       }
-      console.log(`[Queue] Creating admin client for ${shopDomain} (item ${item.id})`);
       ({ admin } = await shopify.unauthenticated.admin(shopDomain));
-      console.log(`[Queue] Admin client OK for ${shopDomain}`);
-    } catch (e: any) {
-      const msg = e?.message || "";
-      console.error(`[Queue] Failed to create admin client for ${shopDomain}:`, msg);
-      if (msg.includes("Session not found") || e?.response?.status === 401 || msg.includes("Unauthorized")) {
-        console.error(`[Queue] No valid session for ${shopDomain}, skipping import ${item.id}`);
-        await prisma.importQueue.update({
-          where: { id: item.id },
-          data: { status: "failed", finishedAt: new Date() },
-        });
-        return;
-      }
-      throw e;
+    } catch {
+      await prisma.importQueue.update({
+        where: { id: item.id },
+        data: { status: "failed", finishedAt: new Date() },
+      });
+      return;
     }
 
     if (item.importMode === "bulk") {
@@ -205,7 +187,6 @@ async function processQueueItem(
       // Re-check if the item was already cancelled during import
       const currentItem = await prisma.importQueue.findUnique({ where: { id: item.id }, select: { status: true } });
       if (currentItem?.status === "cancelled") {
-        console.log(`[Queue] Bulk import ${item.id} was cancelled during processing, keeping cancelled status`);
         return;
       }
 
@@ -236,7 +217,6 @@ async function processQueueItem(
       const resumeFromSku = orphanLog?.lastSku || undefined;
 
       if (resumeFromSku) {
-        console.log(`[Queue] Resumiendo desde checkpoint SKU: ${resumeFromSku}`);
         // Mark old log as failed (we extracted the checkpoint)
         await prisma.importLog.update({
           where: { id: orphanLog!.id },
@@ -260,7 +240,6 @@ async function processQueueItem(
       // Re-check if the item was already cancelled during import (race condition: cancelQueueItem may have run while import was finishing)
       const currentItem = await prisma.importQueue.findUnique({ where: { id: item.id }, select: { status: true } });
       if (currentItem?.status === "cancelled") {
-        console.log(`[Queue] Import ${item.id} was cancelled during processing, keeping cancelled status`);
         return;
       }
 
@@ -288,13 +267,11 @@ async function processQueueItem(
     }
   } catch (error: any) {
     if (error?.name === "AbortError") {
-      console.log(`[Queue] Import ${item.id} cancelled`);
       await prisma.importQueue.update({
         where: { id: item.id },
         data: { status: "cancelled", finishedAt: new Date() },
       });
     } else {
-      console.error(`[Queue] Import ${item.id} failed:`, error?.message);
       await prisma.importQueue.update({
         where: { id: item.id },
         data: { status: "failed", finishedAt: new Date() },

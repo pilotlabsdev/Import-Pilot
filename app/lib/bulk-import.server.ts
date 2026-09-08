@@ -62,7 +62,6 @@ export async function getFreshAdminClient(shopDomain: string) {
       const res = await doFetch(query, vars, token);
 
       if (res.status === 401) {
-        console.log(`[Bulk] Got 401 for ${shopDomain}, refreshing token and retrying...`);
         const newToken = await ensureFreshToken(shopDomain, true);
         if (newToken && newToken !== token) {
           token = newToken;
@@ -110,7 +109,6 @@ async function withRetry<T>(fn: () => Promise<T>, label: string, maxRetries = 3)
       lastError = e;
       if (attempt < maxRetries) {
         const wait = attempt * 2000;
-        console.log(`[Bulk] ${label}: retry ${attempt}/${maxRetries} in ${wait}ms: ${e?.message}`);
         await new Promise((r) => setTimeout(r, wait));
       }
     }
@@ -161,22 +159,18 @@ async function gql(admin: any, query: string, varsOrOptions?: any, shopDomain?: 
         const freshAdmin = await getFreshAdminClient(shopDomain);
         return await rateLimitedGraphql(freshAdmin, query, vars || {});
       } catch {
-        console.error(`[Bulk] Auth error after recent refresh for ${shopDomain}: ${msg}`);
         throw new Error(`Token inválido o expirado tras refresh reciente para ${shopDomain}.`);
       }
     }
 
-    console.log(`[Bulk] Token expired mid-import for ${shopDomain}, refreshing...`);
     const newToken = await refreshAccessToken(shopDomain);
     if (!newToken) {
-      throw new Error(`Token expirado para ${shopDomain} y no se pudo refrescar. El merchant debe acceder al admin para renovar.`);
+      throw new Error(`Token expirado para ${shopDomain} y no se pudo refrescar.`);
     }
 
     lastRefreshAt.set(shopDomain, now);
 
     const freshAdmin = await getFreshAdminClient(shopDomain);
-    console.log(`[Bulk] Token refreshed for ${shopDomain}, retrying...`);
-
     return rateLimitedGraphql(freshAdmin, query, vars || {});
   }
 }
@@ -189,7 +183,6 @@ interface BulkImageTask {
 
 async function processBulkImageQueue(admin: any, queue: BulkImageTask[], shopDomain?: string, concurrency = 10): Promise<void> {
   if (queue.length === 0) return;
-  console.log(`[Bulk] Processing image queue: ${queue.length} products, batch size ${concurrency}`);
 
   for (let i = 0; i < queue.length; i += concurrency) {
     const batch = queue.slice(i, i + concurrency);
@@ -230,7 +223,6 @@ async function processBulkImageQueue(admin: any, queue: BulkImageTask[], shopDom
     await Promise.all(promises);
     if (i + concurrency < queue.length) await new Promise((r) => setTimeout(r, 200));
   }
-  console.log(`[Bulk] Image queue complete: ${queue.length} products processed`);
 }
 
 // Like gql() but auto-refreshes token on 401 and retries with new admin client.
@@ -245,7 +237,6 @@ async function gqlWithRefresh(shopDomain: string, adminRef: { current: any }, qu
     if (!isAuth) throw e;
 
     // Token expired mid-import → refresh and retry once
-    console.log(`[Bulk] Token expired mid-import for ${shopDomain}, refreshing...`);
     const newToken = await refreshAccessToken(shopDomain);
     if (!newToken) {
       throw new Error(`Token expirado para ${shopDomain} y no se pudo refrescar. El merchant debe acceder al admin para renovar.`);
@@ -254,7 +245,6 @@ async function gqlWithRefresh(shopDomain: string, adminRef: { current: any }, qu
     // Recreate admin client with fresh token from DB
     const freshAdmin = await getFreshAdminClient(shopDomain);
     adminRef.current = freshAdmin;
-    console.log(`[Bulk] Token refreshed mid-import for ${shopDomain}, retrying...`);
 
     return rateLimitedGraphql(adminRef.current, query, vars || {});
   }
@@ -280,7 +270,6 @@ export async function cancelBulkImport(configId: string, shopDomain: string): Pr
     });
 
     if (stuckQueueItems.count > 0 || stuckLogs.count > 0) {
-      console.log(`[Bulk] cancelBulkImport: no active BulkJob but cleaned up ${stuckQueueItems.count} queue item(s) and ${stuckLogs.count} log(s) for configId=${configId}`);
       return { success: true, message: `Cancelado: ${stuckQueueItems.count} en cola, ${stuckLogs.count} logs` };
     }
 
@@ -292,7 +281,6 @@ export async function cancelBulkImport(configId: string, shopDomain: string): Pr
     }).catch(() => null);
 
     if (existingLog) {
-      console.log(`[Bulk] cancelBulkImport: no active BulkJob, existing log ${existingLog.id} already ${existingLog.status}`);
       return { success: false, message: "No hay importación activa para esta configuración" };
     }
 
@@ -475,13 +463,10 @@ export async function runBulkImport({
   // authenticate.admin() auto-refreshes, but unauthenticated.admin() doesn't.
   const freshToken = await ensureFreshToken(shopDomain);
   if (!freshToken) {
-    throw new Error(`Token expirado o inválido para ${shopDomain}. El merchant debe acceder al admin de Shopify para renovar el token (o reinstalar la app si el refresh token expiró).`);
+    throw new Error(`Token expirado o inválido para ${shopDomain}.`);
   }
 
-  console.log(`[Bulk] Best session for ${shopDomain}: id=${bestSession.id}, expires=${bestSession.expires?.toISOString() || "null"}`);
-
   const admin = await getFreshAdminClient(shopDomain);
-  console.log(`[Bulk] Admin client created for ${shopDomain}`);
 
   // Pre-flight: verify token is valid before starting bulk operation
   try {
@@ -493,7 +478,7 @@ export async function runBulkImport({
         throw new Error(`Token inválido para ${shopDomain}. Reinstala la app para obtener un nuevo token.`);
       }
     } else {
-      console.log(`[Bulk] Pre-flight OK for ${shopDomain}, shop: ${pingRes.data?.shop?.name}`);
+      // Pre-flight OK
     }
   } catch (e: any) {
     console.error(`[Bulk] Pre-flight FAILED for ${shopDomain}:`, e?.message || e);
@@ -570,7 +555,6 @@ export async function runBulkImport({
           const check = await gql(admin, `query ($id: ID!) { product(id: $id) { id } }`, { variables: { id: m.shopifyProductId } }, job.shopDomain);
           if (!check.data?.product) {
             await prisma.productMapping.delete({ where: { id: m.id } }).catch(() => {});
-            console.log(`[Bulk] SKU ${m.supplierSku}: mapping huérfano eliminado (producto no existe en Shopify)`);
             continue;
           }
         } catch {
@@ -595,13 +579,11 @@ export async function runBulkImport({
   });
   const locationId = await getLocationId(admin, shopDomain, fullConfig.id);
   if (incompleteMappings.length > 0) {
-    console.log(`[Bulk] Found ${incompleteMappings.length} incomplete products, attempting repair...`);
     for (const mapping of incompleteMappings) {
       await retryPostProcess(admin, mapping, job, fullConfig, locationId).catch((e: any) => {
         console.error(`[Bulk] retryPostProcess failed for SKU ${mapping.supplierSku}: ${e?.message}`);
       });
     }
-    console.log(`[Bulk] Repair pass complete`);
   }
 
   const rules = await getActivePriceRules(job.shopDomain, job.configId);
@@ -618,7 +600,6 @@ export async function runBulkImport({
     data: { status: "processed" },
   });
 
-  console.log(`[Bulk] Job ${job.id} creado para ${shopDomain}, targeted lookup + mutations launched`);
   return { bulk: true, jobId: job.id, logId: log.id };
 }
 
@@ -631,24 +612,18 @@ export async function handleBulkOperationFinish({
   opId: string;
   status: string;
 }): Promise<void> {
-  console.log(`[Bulk] handleBulkOperationFinish: opId=${opId}, status=${status}`);
   const op = await prisma.bulkJobOp.findUnique({ where: { shopifyOpId: opId } });
   if (!op) {
-    console.log(`[Bulk] Webhook de operación desconocida: ${opId}`);
     return;
   }
 
   const job = await prisma.bulkJob.findUnique({ where: { id: op.jobId } });
   if (!job) {
-    console.log(`[Bulk] Job ${op.jobId} no encontrado para op ${opId}`);
     return;
   }
 
-  console.log(`[Bulk] Op ${opId}: kind=${op.kind}, job.phase=${job.phase}, op.status=${op.status}`);
-
   if (op.kind === "lookup") {
     if (job.phase !== "lookup") {
-      console.log(`[Bulk] Lookup webhook ignorado: job.phase=${job.phase} (esperado: lookup)`);
       return;
     }
     await handleLookupFinished(job, admin, status);
@@ -657,7 +632,6 @@ export async function handleBulkOperationFinish({
 
   if (op.kind === "create" || op.kind === "update") {
     if (job.phase !== "mutations") {
-      console.log(`[Bulk] Mutation webhook ignorado: job.phase=${job.phase} (esperado: mutations)`);
       return;
     }
     await handleMutationOpFinished(job, op, admin, status);
@@ -690,9 +664,6 @@ async function handleLookupFinished(job: any, admin: any, status: string): Promi
 
   const maps = await buildLookupMaps(lookupPath);
   const sampleSkus = [...maps.bySku.entries()].slice(0, 3);
-  for (const [sku, m] of sampleSkus) {
-    console.log(`[Bulk] Lookup sample SKU=${sku} productId=${m.productId} variantId=${m.variantId}`);
-  }
 
   const allMappings = await prisma.productMapping.findMany({
     where: { shopDomain: job.shopDomain },
@@ -707,7 +678,6 @@ async function handleLookupFinished(job: any, admin: any, status: string): Promi
             const check = await gql(admin, `query ($id: ID!) { product(id: $id) { id } }`, { variables: { id: m.shopifyProductId } }, job.shopDomain);
             if (!check.data?.product) {
               orphanSkus.push(m.supplierSku);
-              console.log(`[Bulk] SKU ${m.supplierSku}: mapping huérfano (producto ${m.shopifyProductId} no existe en Shopify), se recreará`);
             }
           } catch {
             // Si no podemos verificar, conservar el mapping
@@ -734,7 +704,6 @@ async function handleLookupFinished(job: any, admin: any, status: string): Promi
     await prisma.productMapping.deleteMany({
       where: { shopDomain: job.shopDomain, supplierSku: { in: orphanSkus } },
     });
-    console.log(`[Bulk] ${orphanSkus.length} mappings huérfanos eliminados, se recrearán en este ciclo`);
   }
 
   const baseConfig = await prisma.importConfig.findUnique({ where: { id: job.configId } });
@@ -767,13 +736,11 @@ async function handleLookupFinished(job: any, admin: any, status: string): Promi
   });
 
   if (incompleteMappings.length > 0) {
-    console.log(`[Bulk] Found ${incompleteMappings.length} incomplete products, attempting repair...`);
     for (const mapping of incompleteMappings) {
       await retryPostProcess(admin, mapping, job, config, locationId).catch((e: any) => {
         console.error(`[Bulk] retryPostProcess failed for SKU ${mapping.supplierSku}: ${e?.message}`);
       });
     }
-    console.log(`[Bulk] Repair pass complete`);
   }
 
   await prepareAndLaunch(job, config, admin, columnMaps, rules, maps, bySkuMapping, job.filterType, job.filterSkus, job.filterCategories, locationId, sourceKey);
@@ -1181,7 +1148,6 @@ async function prepareAndLaunch(
           anyMapping = bySkuMapping_;
           // Product exists in Shopify with different ID → update the mapping
           if (bySkuMapping_.shopifyProductId !== matchInfo.productId) {
-            console.log(`[Bulk] SKU ${sku}: updating mapping from ${bySkuMapping_.shopifyProductId} → ${matchInfo.productId}`);
             await prisma.productMapping.update({
               where: { id: bySkuMapping_.id },
               data: {
@@ -1400,7 +1366,6 @@ async function prepareAndLaunch(
   const allSkusSet = new Set(allSkus.map((s) => s.toLowerCase()));
   if (unmatchedEans.length > 0 && duplicatePolicy !== "create_both") {
     const uniqueUnmatched = [...new Map(unmatchedEans.map((u) => [u.ean, u])).values()];
-    console.log(`[Bulk] Post-loop external detection: ${uniqueUnmatched.length} EANs not found in byBarcode, trying broader search`);
     const TARGETED_QUERY = `#graphql
       query ($q: String!) {
         products(first: 5, query: $q) {
@@ -1430,7 +1395,6 @@ async function prepareAndLaunch(
             // that queryProductsTargeted missed (query failure). NOT an external duplicate.
             if (shopifySku && allSkusSet.has(shopifySku.toLowerCase())) {
               missedSameSkuProducts.set(csvSku.toLowerCase(), shopifyProductId);
-              console.log(`[Bulk] Post-loop found same-SKU product: CSV=${csvSku} Shopify=${shopifySku} EAN=${ean} → ${shopifyProductId} (not external, queryProductsTargeted missed it)`);
               continue;
             }
 
@@ -1445,7 +1409,6 @@ async function prepareAndLaunch(
               duplicateSkippedCount++;
               batchExternalDetected++;
               externalCsvSkus.add(csvSku.toLowerCase());
-              console.log(`[Bulk] External duplicate detected via broader search: SKU=${shopifySku || csvSku} EAN=${ean} → ${shopifyProductId}`);
             }
           }
         } catch (e: any) {
@@ -1454,7 +1417,6 @@ async function prepareAndLaunch(
       }
     }
     if (batchExternalDetected > 0) {
-      console.log(`[Bulk] Post-loop external detection: ${batchExternalDetected} external products detected`);
     }
   }
 
@@ -1517,7 +1479,6 @@ async function prepareAndLaunch(
     newCreateCount -= (removedExternal + convertedToUpdates);
     matchedUpdateCount += convertedToUpdates;
     if (removedExternal > 0 || convertedToUpdates > 0) {
-      console.log(`[Bulk] Rewrote create files: ${removedExternal} external removed, ${convertedToUpdates} same-SKU converted to updates`);
     }
   }
 
@@ -1602,21 +1563,14 @@ async function prepareAndLaunch(
     launchedUpdates++;
   }
 
-  console.log(
-    `[Bulk] Job ${job.id}: ${totalCount} filas, ${launchedCreates} ops create, ${launchedUpdates} ops update`
-  );
 }
 
 async function handleMutationOpFinished(job: any, op: any, admin: any, status: string): Promise<void> {
-  console.log(`[Bulk] handleMutationOpFinished called: op.kind=${op.kind}, op.index=${op.index}, status=${status}, opId=${op.id}`);
   const claim = await prisma.bulkJobOp.updateMany({
     where: { id: op.id, status: "launched" },
     data: { status: "processing", startedAt: new Date() },
   });
-  console.log(`[Bulk] Claim result: count=${claim.count}, current op status after claim query`);
   if (claim.count === 0) {
-    const currentOp = await prisma.bulkJobOp.findUnique({ where: { id: op.id }, select: { status: true } });
-    console.log(`[Bulk] Claim failed. Op current status: ${currentOp?.status}`);
     return;
   }
 
@@ -1635,10 +1589,8 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
   const workDir = job.workDir;
 
   const resultPath = path.join(workDir, `${op.kind}-result-${op.index}.jsonl`);
-  console.log(`[Bulk] Downloading result from op ${op.shopifyOpId}...`);
   try {
     await downloadOperationResult(admin, op.shopifyOpId, resultPath, job.shopDomain);
-    console.log(`[Bulk] Download OK to ${resultPath}`);
   } catch (e: any) {
     console.error(`[Bulk] Download FAILED: ${e?.message}`);
     await prisma.bulkJobOp.update({
@@ -1651,7 +1603,6 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
   const metaPath = path.join(workDir, `${op.kind}-meta-${op.index}.jsonl`);
   const metaLines = await readJsonLines(metaPath);
   const resultLines = await readJsonLines(resultPath);
-  console.log(`[Bulk] Meta lines: ${metaLines.length}, Result lines: ${resultLines.length}`);
 
   const errorsPath = manifest.errorsPath;
 
@@ -1682,7 +1633,6 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       const isTransient = errMsg.includes("currently being modified") || errMsg.includes("try again later");
       if (isTransient) {
         transientRetries.push({ meta, error: errMsg });
-        console.log(`[Bulk] SKU=${meta.sku}: transient error, will retry individually: ${errMsg}`);
       } else {
         opErrors++;
         errorWrites.push(
@@ -1820,11 +1770,9 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
   let transientRetriedCount = 0;
   let transientFailedCount = 0;
   if (transientRetries.length > 0) {
-    console.log(`[Bulk] Retrying ${transientRetries.length} transient errors individually...`);
     const RETRY_DELAYS = [3000, 7000, 15000];
     for (let attempt = 0; attempt <= RETRY_DELAYS.length && transientRetries.length > 0; attempt++) {
       if (attempt > 0) {
-        console.log(`[Bulk] Transient retry attempt ${attempt}/${RETRY_DELAYS.length}, waiting ${RETRY_DELAYS[attempt - 1]}ms...`);
         await new Promise((r) => setTimeout(r, RETRY_DELAYS[attempt - 1]));
       }
       const stillPending: typeof transientRetries = [];
@@ -1855,7 +1803,6 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
             const product = res.data?.productSet?.product;
             if (product?.id) {
               transientRetriedCount++;
-              console.log(`[Bulk] SKU=${rm.sku}: transient retry succeeded → ${product.id}`);
               const variant = product.variants?.edges?.[0]?.node;
               await prisma.productMapping.upsert({
                 where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: rm.sku } },
@@ -1894,7 +1841,6 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       transientFailedCount++;
       errorWrites.push(JSON.stringify({ sku: rm.sku, error: `retry_exhausted: ${rErr}`, lineNumber: 0 }));
     }
-    console.log(`[Bulk] Transient retries done: ${transientRetriedCount} succeeded, ${transientFailedCount} failed`);
   }
 
   await prisma.bulkJobOp.update({
@@ -1965,12 +1911,10 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
   }
   const log = await prisma.importLog.findUnique({ where: { id: job.logId } });
   if (!log) {
-    console.log(`[Bulk] Finalize: ImportLog ${job.logId} not found → marking job done`);
     await prisma.bulkJob.update({ where: { id: job.id }, data: { phase: "done" } });
     return;
   }
   if (log.status !== "running") {
-    console.log(`[Bulk] Finalize: ImportLog status=${log.status} (not running) → marking job done`);
     await prisma.bulkJob.update({ where: { id: job.id }, data: { phase: "done" } });
     clearBulkActive(job.shopDomain);
     return;
@@ -2017,7 +1961,6 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
     }
 
     if (skuStockMap.size > 0) {
-      console.log(`[Bulk] inventorySetQuantities: ${skuStockMap.size} products to set stock`);
       const inventoryUpdates: Array<{ inventoryItemId: string; quantity: number; sku: string }> = [];
       for (const mapping of existingMappings) {
         if (!skuStockMap.has(mapping.supplierSku)) continue;
@@ -2071,7 +2014,6 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
           stockSetErrors += batch.length;
         }
       }
-      console.log(`[Bulk] inventorySetQuantities: ${stockSetCount} set, ${stockSetErrors} errors`);
     }
 
     // Zero stock for SKUs absent from the CSV.
@@ -2258,7 +2200,6 @@ export async function forceCleanupStuckBulkJobs(shopDomain?: string): Promise<{ 
     // Jobs stuck in lookup without lookupOpId
     if (job.phase === "lookup" && !job.lookupOpId) {
       const reason = `lookup stuck sin lookupOpId (age=${Math.round(ageMs/60000)}min)`;
-      console.log(`[Bulk] Force cleanup: job ${job.id.slice(0,8)} — ${reason}`);
       await prisma.bulkJobOp.deleteMany({ where: { jobId: job.id } });
       await prisma.bulkJob.update({ where: { id: job.id }, data: { phase: "failed" } });
       if (job.workDir) await fs.rm(job.workDir, { recursive: true, force: true }).catch(() => {});
@@ -2274,7 +2215,6 @@ export async function forceCleanupStuckBulkJobs(shopDomain?: string): Promise<{ 
     // Jobs stuck in mutations without manifestPath
     if (job.phase === "mutations" && !job.manifestPath) {
       const reason = `mutations stuck sin manifestPath (age=${Math.round(ageMs/60000)}min)`;
-      console.log(`[Bulk] Force cleanup: job ${job.id.slice(0,8)} — ${reason}`);
       await prisma.bulkJobOp.deleteMany({ where: { jobId: job.id } });
       await prisma.bulkJob.update({ where: { id: job.id }, data: { phase: "failed" } });
       if (job.workDir) await fs.rm(job.workDir, { recursive: true, force: true }).catch(() => {});
@@ -2290,7 +2230,6 @@ export async function forceCleanupStuckBulkJobs(shopDomain?: string): Promise<{ 
     // Jobs older than 2 hours
     if (ageMs > 2 * 60 * 60 * 1000) {
       const reason = `job stuck demasiado viejo (age=${Math.round(ageMs/60000)}min, phase=${job.phase})`;
-      console.log(`[Bulk] Force cleanup: job ${job.id.slice(0,8)} — ${reason}`);
       await prisma.bulkJobOp.deleteMany({ where: { jobId: job.id } });
       await prisma.bulkJob.update({ where: { id: job.id }, data: { phase: "failed" } });
       if (job.workDir) await fs.rm(job.workDir, { recursive: true, force: true }).catch(() => {});
@@ -2316,7 +2255,6 @@ export async function forceCleanupStuckBulkJobs(shopDomain?: string): Promise<{ 
     const noProgress = (log.created || 0) + (log.updated || 0) + (log.unchanged || 0) === 0;
     if ((noProgress && ageMs > 5 * 60 * 1000) || ageMs > 15 * 60 * 1000) {
       const reason = `orphan ImportLog running por ${Math.round(ageMs/60000)}min (sin progreso: ${noProgress})`;
-      console.log(`[Bulk] Force cleanup: orphan log ${log.id.slice(0,8)} — ${reason}`);
       await prisma.importLog.update({ where: { id: log.id }, data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: reason, lineNumber: 0 }]) } });
       details.push(`Log ${log.id.slice(0,8)}: ${reason}`);
       cleaned++;
@@ -2332,7 +2270,6 @@ export async function forceCleanupStuckBulkJobs(shopDomain?: string): Promise<{ 
     cleaned += staleQueued.count;
   }
 
-  console.log(`[Bulk] Force cleanup: ${cleaned} items limpiados`);
   return { cleaned, details };
 }
 
@@ -2341,10 +2278,6 @@ export async function reconcileStaleBulkJobs(): Promise<void> {
     where: { phase: { in: ["lookup", "mutations", "finalizing"] } },
     include: { ops: true },
   });
-
-  if (jobs.length > 0) {
-    console.log(`[Bulk] Reconcile: ${jobs.length} active job(s): ${jobs.map((j: any) => `${j.id.slice(0,8)}(${j.phase})`).join(", ")}`);
-  }
 
   for (const job of jobs) {
     const ageMs = Date.now() - new Date(job.updatedAt).getTime();
@@ -2386,7 +2319,6 @@ export async function reconcileStaleBulkJobs(): Promise<void> {
     // Siempre confiamos en los timeouts por actividad de cada fase.
 
     try {
-      console.log(`[Bulk] Reconcile: resuming job ${job.id.slice(0,8)} (phase=${job.phase}, age=${Math.round(ageMs/1000)}s)`);
       if (job.phase === "lookup") {
         await reconcileLookupPhase(job);
       } else if (job.phase === "mutations") {
@@ -2394,7 +2326,6 @@ export async function reconcileStaleBulkJobs(): Promise<void> {
       } else if (job.phase === "finalizing") {
         await ensureSingleSession(job.shopDomain);
         const admin = await getFreshAdminClient(job.shopDomain);
-        console.log(`[Bulk] Reconcile finalizing: admin client created for ${job.shopDomain}`);
         await finalizeBulkImport(job, admin);
       }
     } catch (error: any) {
@@ -2445,7 +2376,6 @@ export async function cleanupFinishedBulkJobs(): Promise<number> {
     );
   }
 
-  console.log(`[Bulk] Limpieza: eliminados ${jobs.length} jobs bulk terminados`);
   return jobs.length;
 }
 
@@ -2464,8 +2394,6 @@ async function resetStaleProcessing(row: any): Promise<boolean> {
 async function reconcileLookupPhase(job: any): Promise<void> {
   // Deduplicate sessions before getting admin client
   const bestSession = await ensureSingleSession(job.shopDomain);
-  const isExpired = bestSession?.expires ? new Date(bestSession.expires) < new Date() : true;
-  console.log(`[Bulk] Reconcile lookup: shop=${job.shopDomain}, sessionExpired=${isExpired}, accessToken=${bestSession?.accessToken ? "present" : "MISSING"}`);
 
   if (!bestSession) {
     console.error(`[Bulk] Reconcile lookup: No session for ${job.shopDomain}, aborting`);
@@ -2485,10 +2413,8 @@ async function reconcileLookupPhase(job: any): Promise<void> {
       // Guard: if prepareAndLaunch already created mutation ops, don't re-run it
       const existingMutationOps = job.ops.filter((o: any) => (o.kind === "create" || o.kind === "update") && (o.status === "launched" || o.status === "processing" || o.status === "processed"));
       if (existingMutationOps.length > 0) {
-        console.log(`[Bulk] Reconcile lookup: targeted lookup processed but mutation ops already exist (${existingMutationOps.length} ops), skipping re-run`);
         return;
       }
-      console.log(`[Bulk] Reconcile lookup: targeted lookup already processed, re-running prepareAndLaunch`);
       try {
         const config = await prisma.importConfig.findUnique({
           where: { id: job.configId },
@@ -2509,11 +2435,9 @@ async function reconcileLookupPhase(job: any): Promise<void> {
         const rules = await getActivePriceRules(job.shopDomain, job.configId);
         const locationId = await getLocationId(admin, job.shopDomain, job.configId);
         await prepareAndLaunch(job, config, admin, columnMaps, rules, targetedMaps, bySkuMapping, job.filterType, job.filterSkus, job.filterCategories, locationId, sourceKey);
-        console.log(`[Bulk] Reconcile lookup: prepareAndLaunch re-launched for job ${job.id.slice(0,8)}`);
       } catch (e: any) {
         console.error(`[Bulk] Reconcile lookup: re-run failed: ${e?.message}`);
         if (e?.message?.includes("Lookup incomplete")) {
-          console.log(`[Bulk] Lookup still incomplete, will retry next cycle`);
         } else {
           await failJob(job, e?.message || "systemError.reconcile_lookup_rerun_failed");
         }
@@ -2556,16 +2480,11 @@ async function reconcileLookupPhase(job: any): Promise<void> {
 
 async function reconcileMutationsPhase(job: any): Promise<void> {
   if (!job.manifestPath) {
-    // Phase was set to "mutations" early (before prepareAndLaunch finishes streaming).
-    // The manifest doesn't exist yet — wait for prepareAndLaunch to complete.
-    console.log(`[Bulk] Reconcile mutations: job ${job.id.slice(0,8)} has no manifest yet, prepareAndLaunch likely still running`);
     return;
   }
 
   // Deduplicate sessions before getting admin client
   const bestSession = await ensureSingleSession(job.shopDomain);
-  const isExpired = bestSession?.expires ? new Date(bestSession.expires) < new Date() : true;
-  console.log(`[Bulk] Reconcile mutations: shop=${job.shopDomain}, sessionExpired=${isExpired}, accessToken=${bestSession?.accessToken ? "present" : "MISSING"}`);
 
   if (!bestSession) {
     await failJob(job, `systemError.no_session`);
@@ -2610,9 +2529,7 @@ async function reconcileMutationsPhase(job: any): Promise<void> {
     if (!bulk) continue;
 
     const status = (bulk.status || "").toLowerCase();
-    console.log(`[Bulk] Polling op ${op.shopifyOpId} (kind=${op.kind}, index=${op.index}): status=${status}`);
     if (["completed", "failed", "canceled"].includes(status)) {
-      console.log(`[Bulk] Op ${op.shopifyOpId} finished with status=${status}, processing results...`);
       await handleBulkOperationFinish({ admin, opId: op.shopifyOpId, status });
     }
   }
@@ -2936,7 +2853,6 @@ async function preScanCsv(
     if (ean) eanSet.add(ean);
   }
 
-  console.log(`[Bulk] Pre-scan: ${skuSet.size} unique SKUs, ${eanSet.size} unique EANs`);
   return { skus: [...skuSet], eans: [...eanSet] };
 }
 
@@ -3048,7 +2964,6 @@ async function queryProductsTargeted(
     throw new Error(`Lookup incomplete: ${failedEans.length} EAN queries failed after 3 attempts. Import will retry next cycle.`);
   }
 
-  console.log(`[Bulk] Targeted lookup OK: bySku.size=${bySku.size}, byBarcode.size=${byBarcode.size}`);
   return { bySku, byBarcode };
 }
 
@@ -3279,20 +3194,6 @@ async function buildLookupMaps(lookupPath: string): Promise<{
     variantIds.set(id, match);
     if (line.barcode) byBarcode.set(String(line.barcode), match);
     if (line.sku) bySku.set(String(line.sku), match);
-  }
-
-  console.log(`[Bulk] buildLookupMaps: totalLines=${allLines.length} products=${productLines} variants=${variantLines} invItems=${invItemLines} skippedNoSkuBarcode=${skippedNoSkuBarcode}`);
-  console.log(`[Bulk] buildLookupMaps: variantsWithBarcode=${variantsWithBarcode} variantsWithoutBarcode=${variantsWithoutBarcode} byBarcode.size=${byBarcode.size} bySku.size=${bySku.size}`);
-  if (sampleVariant) {
-    console.log(`[Bulk] buildLookupMaps: sampleVariant=${JSON.stringify(sampleVariant)}`);
-  }
-  // Dump first 3 variant lines (raw keys) for debugging JSONL structure
-  let variantCount = 0;
-  for (const line of allLines) {
-    if (line.__parentId && variantCount < 3) {
-      variantCount++;
-      console.log(`[Bulk] buildLookupMaps: rawLine${variantCount} keys=${Object.keys(line).join(",")} sku=${line.sku ?? "null"} barcode=${line.barcode ?? "null"} invItem=${JSON.stringify(line.inventoryItem ?? "null")}`);
-    }
   }
 
   return { byBarcode, bySku };

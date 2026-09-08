@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 
 interface ReconnectingOverlayProps {
@@ -8,25 +8,33 @@ interface ReconnectingOverlayProps {
 export function ReconnectingOverlay({ onRetry }: ReconnectingOverlayProps) {
   const { t } = useTranslation();
   const [visible, setVisible] = useState(false);
+  const reloadScheduled = useRef(false);
 
   // Auth expiry: show overlay, reload after 1s (App Bridge handles re-auth)
+  // useRef prevents double-reload if component re-renders
   useEffect(() => {
     const handler = (e: MessageEvent) => {
       if (e.data === "shopify:app:auth:expired" || e.data?.type === "shopify:app:auth:expired") {
         setVisible(true);
-        setTimeout(() => window.location.reload(), 1000);
+        if (!reloadScheduled.current) {
+          reloadScheduled.current = true;
+          setTimeout(() => window.location.reload(), 1000);
+        }
       }
     };
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
   }, []);
 
-  // Offline: show overlay. Online: reload.
+  // Offline: show overlay. Online: reload. Debounced to prevent loops.
   useEffect(() => {
     const handleOffline = () => setVisible(true);
     const handleOnline = () => {
-      setVisible(true);
-      setTimeout(() => window.location.reload(), 500);
+      if (!reloadScheduled.current) {
+        setVisible(true);
+        reloadScheduled.current = true;
+        setTimeout(() => window.location.reload(), 500);
+      }
     };
 
     window.addEventListener("offline", handleOffline);

@@ -245,15 +245,12 @@ export async function getCachedCsvRows(
   if (!forceRefresh) {
     const cached = rowCache.get(key);
     if (cached && Date.now() - cached.createdAt < TTL_MS) {
-      console.log(`[CsvCache] Rows hit: ${cached.rows.length} rows for ${configId}`);
       return { rows: cached.rows, headers: cached.headers };
     }
   } else {
     rowCache.delete(key);
-    console.log(`[CsvCache] Force refresh: cache cleared for ${configId}`);
   }
 
-  console.log(`[CsvCache] Rows miss: parsing ${url}`);
   const startTime = Date.now();
   const rows: Array<Record<string, string | undefined>> = [];
   let headers: string[] = [];
@@ -270,7 +267,6 @@ export async function getCachedCsvRows(
   }
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-  console.log(`[CsvCache] Parsed ${rows.length} rows in ${elapsed}s (error=${streamError || "none"})`);
 
   // Don't cache if stream errored with partial data — next request will retry
   if (streamError && rows.length > 0) {
