@@ -1655,9 +1655,24 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
     // Check if product already existed (productSet is an upsert — Shopify returns existing product)
     const existingMapping = await prisma.productMapping.findUnique({
       where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: meta.sku } },
-      select: { shopifyProductId: true },
+      select: { shopifyProductId: true, lastPrice: true, lastComparePrice: true, lastQuantity: true, lastCost: true },
     }).catch(() => null);
     const actuallyNew = isNewProduct && !existingMapping;
+
+    // For existing products sent as "create", detect actual changes by comparing with last known state
+    let priceChanged = meta.priceChanged || false;
+    let stockChanged = meta.stockChanged || false;
+    let costChanged = meta.costChanged || false;
+    if (!actuallyNew && existingMapping) {
+      const csvPrice = meta.priceApplied !== false ? meta.regularPrice : undefined;
+      const csvCompare = meta.priceApplied !== false ? meta.compareAtPrice : undefined;
+      const csvQty = meta.stockApplied !== false ? meta.stockQty : undefined;
+      const csvCost = meta.costPrice > 0 ? meta.costPrice : undefined;
+      if (csvPrice !== undefined && csvPrice !== existingMapping.lastPrice) priceChanged = true;
+      if (csvCompare !== undefined && csvCompare !== existingMapping.lastComparePrice) priceChanged = true;
+      if (csvQty !== undefined && csvQty !== existingMapping.lastQuantity) stockChanged = true;
+      if (csvCost !== undefined && csvCost !== existingMapping.lastCost) costChanged = true;
+    }
 
     await prisma.productMapping.upsert({
       where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: meta.sku } },
@@ -1759,11 +1774,11 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
         data: { postProcessStatus: "complete", postProcessError: null },
       }).catch(() => {});
     } else {
-      if (meta.priceChanged || meta.stockChanged || meta.costChanged) {
+      if (priceChanged || stockChanged || costChanged) {
         updatedCount++;
-        if (meta.priceChanged) priceChanges++;
-        if (meta.stockChanged) stockChanges++;
-        if (meta.costChanged) costChanges++;
+        if (priceChanged) priceChanges++;
+        if (stockChanged) stockChanges++;
+        if (costChanged) costChanges++;
       } else {
         unchangedCount++;
       }
@@ -1832,10 +1847,24 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
               if (op.kind === "create") {
                 const existedBefore = await prisma.productMapping.findUnique({
                   where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: rm.sku } },
-                  select: { shopifyProductId: true },
+                  select: { shopifyProductId: true, lastPrice: true, lastComparePrice: true, lastQuantity: true, lastCost: true },
                 }).catch(() => null);
-                if (!existedBefore) createdCount++;
-                else unchangedCount++;
+                if (!existedBefore) {
+                  createdCount++;
+                } else {
+                  let rePriceChanged = false, reStockChanged = false, reCostChanged = false;
+                  if (rm.regularPrice !== existedBefore.lastPrice || rm.compareAtPrice !== existedBefore.lastComparePrice) rePriceChanged = true;
+                  if (rm.stockQty !== existedBefore.lastQuantity) reStockChanged = true;
+                  if (rm.costPrice > 0 && rm.costPrice !== existedBefore.lastCost) reCostChanged = true;
+                  if (rePriceChanged || reStockChanged || reCostChanged) {
+                    updatedCount++;
+                    if (rePriceChanged) priceChanges++;
+                    if (reStockChanged) stockChanges++;
+                    if (reCostChanged) costChanges++;
+                  } else {
+                    unchangedCount++;
+                  }
+                }
               }
               else updatedCount++;
             } else {
