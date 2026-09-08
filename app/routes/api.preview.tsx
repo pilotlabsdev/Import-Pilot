@@ -41,13 +41,11 @@ function setShopifyCache(shopDomain: string, data: Map<string, ShopifySkuData>):
 async function fetchShopifySkusByBatch(
   admin: any,
   locationId: string,
-  skuList: string[],
-  eanToSkuMap?: Map<string, string>
+  skuList: string[]
 ): Promise<Map<string, ShopifySkuData>> {
   const map = new Map<string, ShopifySkuData>();
   const BATCH_SIZE = 50;
 
-  // Phase 1: Search by SKU
   for (let i = 0; i < skuList.length; i += BATCH_SIZE) {
     const batch = skuList.slice(i, i + BATCH_SIZE);
     const query = batch.map((sku) => `sku:${JSON.stringify(sku)}`).join(" OR ");
@@ -122,87 +120,6 @@ async function fetchShopifySkusByBatch(
     }
   }
 
-  // Phase 2: Search by barcode/EAN (maps results to supplier SKU keys)
-  if (eanToSkuMap && eanToSkuMap.size > 0) {
-    const eanList = [...eanToSkuMap.keys()];
-    for (let i = 0; i < eanList.length; i += BATCH_SIZE) {
-      const batch = eanList.slice(i, i + BATCH_SIZE);
-      const query = batch.map((ean) => `barcode:${JSON.stringify(ean)}`).join(" OR ");
-
-      try {
-        let cursor: string | null = null;
-        let hasMore = true;
-
-        while (hasMore) {
-          const variables: any = { query, first: 250, locationId };
-          if (cursor) variables.after = cursor;
-
-          const res: Response = await admin.graphql(
-            `#graphql
-            query BarcodeSearch($query: String!, $first: Int!, $after: String, $locationId: ID!) {
-              productVariants(first: $first, after: $after, query: $query) {
-                edges {
-                  node {
-                    id
-                    sku
-                    barcode
-                    price
-                    compareAtPrice
-                    inventoryQuantity
-                    product { id }
-                    inventoryItem {
-                      id
-                      inventoryLevel(locationId: $locationId) {
-                        quantities(names: ["available"]) {
-                          name
-                          quantity
-                        }
-                      }
-                    }
-                  }
-                }
-                pageInfo { hasNextPage endCursor }
-              }
-            }`,
-            { variables }
-          );
-          const json: any = await res.json();
-          if (json.errors) {
-            console.error(`[Preview] Barcode GraphQL errors:`, JSON.stringify(json.errors).substring(0, 500));
-          }
-          const edges = json.data?.productVariants?.edges || [];
-
-          for (const edge of edges) {
-            const v = edge.node;
-            const barcode = v.barcode?.toLowerCase();
-            if (barcode && eanToSkuMap.has(barcode)) {
-              const supplierSku = eanToSkuMap.get(barcode)!;
-              const supplierSkuLower = supplierSku.toLowerCase();
-              // Only add if not already found by SKU search
-              if (!map.has(supplierSkuLower)) {
-                const availQty = v.inventoryItem?.inventoryLevel?.quantities?.find((q: any) => q.name === "available");
-                map.set(supplierSkuLower, {
-                  productId: v.product?.id || "",
-                  variantId: v.id,
-                  inventoryItemId: v.inventoryItem?.id ?? null,
-                  stock: availQty?.quantity ?? 0,
-                  price: parseFloat(v.price || "0"),
-                  compareAtPrice: v.compareAtPrice ? parseFloat(v.compareAtPrice) : 0,
-                  totalStock: v.inventoryQuantity ?? 0,
-                });
-              }
-            }
-          }
-
-          hasMore = json.data?.productVariants?.pageInfo?.hasNextPage ?? false;
-          cursor = hasMore ? json.data.productVariants.pageInfo.endCursor : null;
-        }
-      } catch (e: any) {
-        console.error(`[Preview] Error in barcode batch ${Math.floor(i / BATCH_SIZE) + 1}:`, e?.message);
-      }
-    }
-  }
-
   return map;
 }
 
@@ -210,8 +127,7 @@ async function fetchAllShopifySkus(
   admin: any,
   locationId: string,
   shopDomain: string,
-  csvSkus: string[],
-  eanToSkuMap?: Map<string, string>
+  csvSkus: string[]
 ): Promise<Map<string, ShopifySkuData>> {
   const cached = getShopifyCache(shopDomain);
   if (cached) return cached;
@@ -220,8 +136,8 @@ async function fetchAllShopifySkus(
   let result: Map<string, ShopifySkuData>;
 
   if (csvSkus.length > 0) {
-    console.log(`[Preview] Fetching ${csvSkus.length} SKUs + ${eanToSkuMap?.size || 0} EANs from Shopify by batch...`);
-    result = await fetchShopifySkusByBatch(admin, locationId, csvSkus, eanToSkuMap);
+    console.log(`[Preview] Fetching ${csvSkus.length} SKUs from Shopify by batch...`);
+    result = await fetchShopifySkusByBatch(admin, locationId, csvSkus);
   } else {
     console.log(`[Preview] No CSV SKUs, falling back to full product scan...`);
     result = await fetchFullProductScan(admin, locationId);
@@ -388,6 +304,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     let excluded = 0;
     const seenSkusForImport = new Set<string>();
     const pageItems: any[] = [];
+    const allFilteredOriginalSkus = new Set<string>();
 
     const streamStart = Date.now();
     const { rows: csvRows } = await getCachedCsvRows(config.id, effectiveUrl, config.csvDelimiter, forceRefresh);
@@ -420,6 +337,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       filteredTotal++;
       filteredCount++;
       allFilteredSkus.add(skuLower);
+      allFilteredOriginalSkus.add(sku);
 
       if (filteredCount <= start || filteredCount > start + perPage) continue;
 
@@ -433,24 +351,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }
 
     const pageSkus = new Set(pageItems.map((p) => p.skuLower));
-    const skusToFetch = computeStats ? [...allFilteredSkus] : [...pageSkus];
+    const pageOriginalSkus = new Set(pageItems.map((p) => p.sku));
+    // Use original-case SKUs for Shopify query (case-sensitive search), lowercase for local lookups
+    const skusToFetch = computeStats ? [...allFilteredOriginalSkus] : [...pageOriginalSkus];
 
-    // Build EAN→SKU map for barcode search in Shopify
-    const eanToSkuMap = new Map<string, string>();
-    for (const row of csvRows) {
-      const sku = getField(row, "sku") || row["sku"] || "";
-      const ean = getField(row, "ean") || row["ean"] || "";
-      if (sku && ean && ean.trim()) {
-        eanToSkuMap.set(ean.trim().toLowerCase(), sku);
-      }
-    }
-
-    console.log(`[Preview] Filtered ${filteredTotal} rows, ${pageItems.length} on page, fetching Shopify for ${skusToFetch.length} SKUs + ${eanToSkuMap.size} EANs (stats=${computeStats})`);
+    console.log(`[Preview] Filtered ${filteredTotal} rows, ${pageItems.length} on page, fetching Shopify for ${skusToFetch.length} SKUs (stats=${computeStats})`);
 
     let shopifySkus: Map<string, ShopifySkuData> = new Map();
     try {
       const locationId = await getLocationId(admin, shopDomain, config.id);
-      shopifySkus = await fetchAllShopifySkus(admin, locationId, shopDomain, skusToFetch, eanToSkuMap);
+      shopifySkus = await fetchAllShopifySkus(admin, locationId, shopDomain, skusToFetch);
     } catch (e: any) {
       console.error("[Preview] Error fetching Shopify products:", e?.message);
     }
