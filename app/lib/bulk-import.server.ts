@@ -1896,8 +1896,8 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
     data: {
       mutationOpsDone: { increment: 1 },
       createCount: { increment: op.kind === "create" ? createdCount : 0 },
-      updateCount: { increment: op.kind === "update" ? updatedCount : 0 },
-      unchangedCount: { increment: op.kind === "update" ? unchangedCount : 0 },
+      updateCount: { increment: updatedCount },
+      unchangedCount: { increment: unchangedCount },
       priceChanges: { increment: priceChanges },
       stockChanges: { increment: stockChanges },
       costChanges: { increment: costChanges },
