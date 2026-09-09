@@ -40,15 +40,9 @@ const UPDATE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "vendor", label: "config.fieldBrand" },
   { value: "productType", label: "config.fieldProductType" },
   { value: "tags", label: "config.fieldTags" },
-  // NOTE: "metafields" checkbox controls these metafields during updates:
-  //   - supplier_sku (custom) - internal supplier ref, usually not needed in Shopify
-  //   - costo (custom) - always sent regardless of this checkbox
-  //   - description_tag (global) - redundant: seo.description is updated by "description" checkbox
-  //   - tipo_producto (custom) - already sent always, also has its own "productType" checkbox
-  //   - supplier_url (custom) - no practical use in storefront
-  // TODO: consider removing this checkbox entirely, as only description_tag is gated by it
-  //       and that is redundant with the native seo.description update.
-  { value: "metafields", label: "config.fieldMetafields" },
+  // NOTE: "metafields" checkbox removed — it only gated description_tag (redundant with
+  // "description" checkbox's seo.description update), supplier_sku, and supplier_url.
+  // costo and tipo_producto are always sent regardless. See product-mapper.server.ts.
   { value: "collections", label: "config.fieldCollections" },
 ];
 
