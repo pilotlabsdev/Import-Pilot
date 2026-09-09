@@ -410,6 +410,11 @@ interface MetaLine {
   priceChanged?: boolean;
   stockChanged?: boolean;
   costChanged?: boolean;
+  titleChanged?: boolean;
+  descriptionChanged?: boolean;
+  vendorChanged?: boolean;
+  productTypeChanged?: boolean;
+  tagsChanged?: boolean;
   priceApplied?: boolean;
   stockApplied?: boolean;
   skipPrice?: boolean;
@@ -548,7 +553,11 @@ export async function runBulkImport({
   const allMappings = await prisma.productMapping.findMany({
     where: { shopDomain },
   });
-  const bySkuMapping = new Map<string, { lastPrice: number | null; lastQuantity: number | null; lastCost: number | null }>();
+  const bySkuMapping = new Map<string, {
+    lastPrice: number | null; lastQuantity: number | null; lastCost: number | null;
+    lastTitle: string | null; lastDescription: string | null; lastVendor: string | null;
+    lastProductType: string | null; lastTags: string | null;
+  }>();
   for (const m of allMappings) {
     if (targetedMaps.bySku.has(m.supplierSku)) {
       const existing = targetedMaps.bySku.get(m.supplierSku)!;
@@ -571,6 +580,11 @@ export async function runBulkImport({
       lastPrice: m.lastPrice,
       lastQuantity: m.lastQuantity,
       lastCost: m.lastCost ?? null,
+      lastTitle: m.lastTitle ?? null,
+      lastDescription: m.lastDescription ?? null,
+      lastVendor: m.lastVendor ?? null,
+      lastProductType: m.lastProductType ?? null,
+      lastTags: m.lastTags ?? null,
     });
   }
 
@@ -673,7 +687,11 @@ async function handleLookupFinished(job: any, admin: any, status: string): Promi
   const allMappings = await prisma.productMapping.findMany({
     where: { shopDomain: job.shopDomain },
   });
-  const bySkuMapping = new Map<string, { lastPrice: number | null; lastQuantity: number | null; lastCost: number | null }>();
+  const bySkuMapping = new Map<string, {
+    lastPrice: number | null; lastQuantity: number | null; lastCost: number | null;
+    lastTitle: string | null; lastDescription: string | null; lastVendor: string | null;
+    lastProductType: string | null; lastTags: string | null;
+  }>();
   const orphanSkus: string[] = [];
   for (const m of allMappings) {
     if (!maps.bySku.has(m.supplierSku)) {
@@ -702,6 +720,11 @@ async function handleLookupFinished(job: any, admin: any, status: string): Promi
         lastPrice: m.lastPrice,
         lastQuantity: m.lastQuantity,
         lastCost: m.lastCost ?? null,
+        lastTitle: m.lastTitle ?? null,
+        lastDescription: m.lastDescription ?? null,
+        lastVendor: m.lastVendor ?? null,
+        lastProductType: m.lastProductType ?? null,
+        lastTags: m.lastTags ?? null,
       });
     }
   }
@@ -939,7 +962,11 @@ async function prepareAndLaunch(
   columnMaps: Array<{ shopifyField: string; csvColumn: string | null; defaultValue: string | null }>,
   rules: any[],
   maps: { byBarcode: Map<string, LookupMatch>; bySku: Map<string, LookupMatch> },
-  bySkuMapping: Map<string, { lastPrice: number | null; lastQuantity: number | null; lastCost: number | null }>,
+  bySkuMapping: Map<string, {
+    lastPrice: number | null; lastQuantity: number | null; lastCost: number | null;
+    lastTitle: string | null; lastDescription: string | null; lastVendor: string | null;
+    lastProductType: string | null; lastTags: string | null;
+  }>,
   filterType?: string | null,
   filterSkus?: string | null,
   filterCategories?: string | null,
@@ -1335,6 +1362,16 @@ async function prepareAndLaunch(
       const costChanged =
         costPrice > 0 && !!match.inventoryItemId && Math.abs((mapping?.lastCost ?? 0) - costPrice) > 0.001;
 
+      // Pre-compute non-price/stock field changes for accurate counting
+      const csvTitle = getField(row, columnMaps, "title") || "";
+      const csvDescription = getField(row, columnMaps, "description") || "";
+      const csvVendor = getField(row, columnMaps, "vendor") || "";
+      const titleChanged = effectiveOpts.has("name") && !!csvTitle && csvTitle !== (mapping?.lastTitle ?? "");
+      const descriptionChanged = effectiveOpts.has("description") && !!csvDescription && csvDescription !== (mapping?.lastDescription ?? "");
+      const vendorChanged = effectiveOpts.has("vendor") && !!csvVendor && csvVendor !== (mapping?.lastVendor ?? "");
+      const productTypeChanged = effectiveOpts.has("productType") && !!csvProductType && csvProductType !== (mapping?.lastProductType ?? "");
+      const tagsChanged = effectiveOpts.has("tags") && csvTags.length > 0 && JSON.stringify(csvTags) !== (mapping?.lastTags ?? "[]");
+
       // With productSet we always send the product — the mutation is idempotent
       // and the user may have selected non-price/stock fields (name, description, etc.)
       meta.productId = match.productId;
@@ -1343,6 +1380,11 @@ async function prepareAndLaunch(
       meta.priceChanged = priceChanged;
       meta.stockChanged = stockChanged;
       meta.costChanged = costChanged;
+      meta.titleChanged = titleChanged;
+      meta.descriptionChanged = descriptionChanged;
+      meta.vendorChanged = vendorChanged;
+      meta.productTypeChanged = productTypeChanged;
+      meta.tagsChanged = tagsChanged;
       meta.priceApplied = effectiveOpts.has("price");
       meta.stockApplied = effectiveOpts.has("stock") && stockQty >= 0;
       meta.skipPrice = excludedFields?.includes("price") || false;
@@ -1698,11 +1740,11 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
     let priceChanged = meta.priceChanged || false;
     let stockChanged = meta.stockChanged || false;
     let costChanged = meta.costChanged || false;
-    let titleChanged = false;
-    let descriptionChanged = false;
-    let vendorChanged = false;
-    let productTypeChanged = false;
-    let tagsChanged = false;
+    let titleChanged = meta.titleChanged || false;
+    let descriptionChanged = meta.descriptionChanged || false;
+    let vendorChanged = meta.vendorChanged || false;
+    let productTypeChanged = meta.productTypeChanged || false;
+    let tagsChanged = meta.tagsChanged || false;
     if (!actuallyNew && existingMapping) {
       const csvPrice = meta.priceApplied !== false ? meta.regularPrice : undefined;
       const csvCompare = meta.priceApplied !== false ? meta.compareAtPrice : undefined;
@@ -2530,9 +2572,18 @@ async function reconcileLookupPhase(job: any): Promise<void> {
         const { skus: preScanSkus, eans: preScanEans } = await preScanCsv(config, columnMaps, job.filterSkus, job.filterCategories);
         const targetedMaps = await queryProductsTargeted(admin, job.shopDomain, preScanSkus, preScanEans);
         const allMappings = await prisma.productMapping.findMany({ where: { shopDomain: job.shopDomain } });
-        const bySkuMapping = new Map<string, { lastPrice: number | null; lastQuantity: number | null; lastCost: number | null }>();
+  const bySkuMapping = new Map<string, {
+    lastPrice: number | null; lastQuantity: number | null; lastCost: number | null;
+    lastTitle: string | null; lastDescription: string | null; lastVendor: string | null;
+    lastProductType: string | null; lastTags: string | null;
+  }>();
         for (const m of allMappings) {
-          bySkuMapping.set(m.supplierSku, { lastPrice: m.lastPrice, lastQuantity: m.lastQuantity, lastCost: m.lastCost ?? null });
+          bySkuMapping.set(m.supplierSku, {
+            lastPrice: m.lastPrice, lastQuantity: m.lastQuantity, lastCost: m.lastCost ?? null,
+            lastTitle: m.lastTitle ?? null, lastDescription: m.lastDescription ?? null,
+            lastVendor: m.lastVendor ?? null, lastProductType: m.lastProductType ?? null,
+            lastTags: m.lastTags ?? null,
+          });
         }
         const rules = await getActivePriceRules(job.shopDomain, job.configId);
         const locationId = await getLocationId(admin, job.shopDomain, job.configId);
