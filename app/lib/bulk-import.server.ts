@@ -1378,6 +1378,14 @@ async function prepareAndLaunch(
       const productTypeChanged = effectiveOpts.has("productType") && !!csvProductType && csvProductType !== (match.shopifyProductType ?? "");
       const tagsChanged = effectiveOpts.has("tags") && csvTags.length > 0 && JSON.stringify(csvTags) !== JSON.stringify(match.shopifyTags ?? []);
 
+      // DEBUG: Log field change detection for diagnosis (only first 3 matches to avoid spam)
+      if (matchedUpdateCount <= 3) {
+        console.log(`[DEBUG] SKU ${sku}: hasName=${effectiveOpts.has("name")}, csvTitle="${csvTitle}", shopifyTitle="${match.shopifyTitle ?? ""}", titleChanged=${titleChanged}`);
+        console.log(`[DEBUG] SKU ${sku}: hasDesc=${effectiveOpts.has("description")}, csvDesc="${csvDescription.substring(0,50)}", shopifyDesc="${(match.shopifyDescription ?? "").substring(0,50)}", descChanged=${descriptionChanged}`);
+        console.log(`[DEBUG] SKU ${sku}: hasVendor=${effectiveOpts.has("vendor")}, csvVendor="${csvVendor}", shopifyVendor="${match.shopifyVendor ?? ""}", vendorChanged=${vendorChanged}`);
+        console.log(`[DEBUG] SKU ${sku}: hasProductType=${effectiveOpts.has("productType")}, csvPT="${csvProductType}", shopifyPT="${match.shopifyProductType ?? ""}", ptChanged=${productTypeChanged}`);
+      }
+
       // With productSet we always send the product — the mutation is idempotent
       // and the user may have selected non-price/stock fields (name, description, etc.)
       meta.productId = match.productId;
@@ -1768,6 +1776,14 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
         const csvTags = JSON.stringify(meta.tags);
         if (csvTags !== existingMapping.lastTags) tagsChanged = true;
       }
+
+      // DEBUG: Log final change detection for existing products
+      console.log(`[DEBUG-FINISH] SKU ${meta.sku}: titleChanged=${titleChanged}, meta.titleChanged=${meta.titleChanged}, csvTitle="${meta.title}", lastTitle="${existingMapping.lastTitle}"`);
+      console.log(`[DEBUG-FINISH] SKU ${meta.sku}: descChanged=${descriptionChanged}, csvDesc="${(meta.description ?? "").substring(0,40)}", lastDesc="${(existingMapping.lastDescription ?? "").substring(0,40)}"`);
+      console.log(`[DEBUG-FINISH] SKU ${meta.sku}: vendorChanged=${vendorChanged}, csvVendor="${meta.vendor}", lastVendor="${existingMapping.lastVendor}"`);
+    } else {
+      // DEBUG: Log when actuallyNew or no existingMapping
+      console.log(`[DEBUG-FINISH] SKU ${meta.sku}: actuallyNew=${actuallyNew}, hasMapping=${!!existingMapping}, meta.titleChanged=${meta.titleChanged}`);
     }
 
     await prisma.productMapping.upsert({
