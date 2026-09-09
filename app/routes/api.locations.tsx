@@ -6,27 +6,23 @@ import { safeAuthenticate } from "~/shopify.server";
 async function discoverLocations(admin: any) {
   const locationMap = new Map<string, { id: string; name: string; isActive: boolean; fulfillsOnlineOrders: boolean; isDefault: boolean }>();
 
-  // First: get the default Shopify location
+  // First: get the primary/default Shopify location via `location` query (no args = primary)
   let defaultLocationId = "";
   try {
     const defaultRes = await admin.graphql(
       `#graphql
       query {
-        locations(first: 1, query: "default:true") {
-          edges {
-            node {
-              id
-              name
-              isActive
-              fulfillsOnlineOrders
-            }
-          }
+        location {
+          id
+          name
+          isActive
+          fulfillsOnlineOrders
         }
       }`
     );
     const defaultJson = await defaultRes.json();
-    const defaultLoc = defaultJson.data?.locations?.edges?.[0]?.node;
-    if (defaultLoc) {
+    const defaultLoc = defaultJson.data?.location;
+    if (defaultLoc?.id) {
       defaultLocationId = defaultLoc.id;
       locationMap.set(defaultLoc.id, {
         id: defaultLoc.id,
@@ -35,6 +31,7 @@ async function discoverLocations(admin: any) {
         fulfillsOnlineOrders: defaultLoc.fulfillsOnlineOrders || false,
         isDefault: true,
       });
+      console.log(`[Locations] Default location found: ${defaultLoc.name} (${defaultLoc.id})`);
     }
   } catch (e: any) {
     console.error("[Locations] Error fetching default location:", e?.message);
