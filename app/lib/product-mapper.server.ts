@@ -447,6 +447,12 @@ export function mapCsvRowToProductSetUpdate(
   if (!opts.has("metafields")) {
     input.metafields = [];
   } else {
+    // Metafields gated by "metafields" checkbox in updateOptions:
+    //   supplier_sku - internal ref, usually not needed
+    //   costo        - ALWAYS sent (not truly gated, see below)
+    //   description_tag - redundant, seo.description updated by "description" checkbox
+    //   tipo_producto   - also sent always, plus has its own "productType" checkbox
+    //   supplier_url    - no storefront use
     const metafields = [];
     if (sku) metafields.push({ namespace: "custom", key: "supplier_sku", value: sku, type: "single_line_text_field" });
     if (costo) metafields.push({ namespace: "custom", key: "costo", value: costo.replace(",", "."), type: "number_decimal" });
