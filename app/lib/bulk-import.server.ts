@@ -388,6 +388,11 @@ interface LookupMatch {
   inventoryItemId: string;
   shopifyCost: number;
   sku: string;
+  shopifyTitle?: string;
+  shopifyDescription?: string;
+  shopifyVendor?: string;
+  shopifyProductType?: string;
+  shopifyTags?: string[];
 }
 
 interface MetaLine {
@@ -1363,14 +1368,15 @@ async function prepareAndLaunch(
         costPrice > 0 && !!match.inventoryItemId && Math.abs((mapping?.lastCost ?? 0) - costPrice) > 0.001;
 
       // Pre-compute non-price/stock field changes for accurate counting
+      // Compare CSV vs current Shopify value from lookup (not vs lastTitle from ProductMapping)
       const csvTitle = getField(row, columnMaps, "title") || "";
       const csvDescription = getField(row, columnMaps, "description") || "";
       const csvVendor = getField(row, columnMaps, "vendor") || "";
-      const titleChanged = effectiveOpts.has("name") && !!csvTitle && csvTitle !== (mapping?.lastTitle ?? "");
-      const descriptionChanged = effectiveOpts.has("description") && !!csvDescription && csvDescription !== (mapping?.lastDescription ?? "");
-      const vendorChanged = effectiveOpts.has("vendor") && !!csvVendor && csvVendor !== (mapping?.lastVendor ?? "");
-      const productTypeChanged = effectiveOpts.has("productType") && !!csvProductType && csvProductType !== (mapping?.lastProductType ?? "");
-      const tagsChanged = effectiveOpts.has("tags") && csvTags.length > 0 && JSON.stringify(csvTags) !== (mapping?.lastTags ?? "[]");
+      const titleChanged = effectiveOpts.has("name") && !!csvTitle && csvTitle !== (match.shopifyTitle ?? "");
+      const descriptionChanged = effectiveOpts.has("description") && !!csvDescription && csvDescription !== (match.shopifyDescription ?? "");
+      const vendorChanged = effectiveOpts.has("vendor") && !!csvVendor && csvVendor !== (match.shopifyVendor ?? "");
+      const productTypeChanged = effectiveOpts.has("productType") && !!csvProductType && csvProductType !== (match.shopifyProductType ?? "");
+      const tagsChanged = effectiveOpts.has("tags") && csvTags.length > 0 && JSON.stringify(csvTags) !== JSON.stringify(match.shopifyTags ?? []);
 
       // With productSet we always send the product — the mutation is idempotent
       // and the user may have selected non-price/stock fields (name, description, etc.)
@@ -3023,7 +3029,7 @@ async function queryProductsTargeted(
       products(first: 100, query: $q) {
         edges {
           node {
-            id
+            id title vendor productType tags descriptionHtml
             variants(first: 5) {
               edges {
                 node { id sku barcode inventoryItem { id unitCost { amount } } }
@@ -3047,8 +3053,14 @@ async function queryProductsTargeted(
       try {
         const json = await gql(admin, TARGETED_QUERY, { variables: { q: query } }, shopDomain);
         for (const edge of json.data?.products?.edges || []) {
-          const productId = edge.node.id;
-          for (const vEdge of edge.node.variants?.edges || []) {
+          const node = edge.node;
+          const productId = node.id;
+          const productTitle = node.title || undefined;
+          const productDescription = node.descriptionHtml || undefined;
+          const productVendor = node.vendor || undefined;
+          const productProductType = node.productType || undefined;
+          const productTags: string[] | undefined = node.tags?.length > 0 ? node.tags : undefined;
+          for (const vEdge of node.variants?.edges || []) {
             const v = vEdge.node;
             const match: LookupMatch = {
               productId,
@@ -3056,6 +3068,11 @@ async function queryProductsTargeted(
               inventoryItemId: v.inventoryItem?.id || "",
               shopifyCost: parseFloat(v.inventoryItem?.unitCost?.amount ?? "0") || 0,
               sku: v.sku || "",
+              shopifyTitle: productTitle,
+              shopifyDescription: productDescription,
+              shopifyVendor: productVendor,
+              shopifyProductType: productProductType,
+              shopifyTags: productTags,
             };
             if (v.sku) bySku.set(String(v.sku), match);
             if (v.barcode) byBarcode.set(String(v.barcode), match);
@@ -3088,8 +3105,14 @@ async function queryProductsTargeted(
       try {
         const json = await gql(admin, TARGETED_QUERY, { variables: { q: query } }, shopDomain);
         for (const edge of json.data?.products?.edges || []) {
-          const productId = edge.node.id;
-          for (const vEdge of edge.node.variants?.edges || []) {
+          const node = edge.node;
+          const productId = node.id;
+          const productTitle = node.title || undefined;
+          const productDescription = node.descriptionHtml || undefined;
+          const productVendor = node.vendor || undefined;
+          const productProductType = node.productType || undefined;
+          const productTags: string[] | undefined = node.tags?.length > 0 ? node.tags : undefined;
+          for (const vEdge of node.variants?.edges || []) {
             const v = vEdge.node;
             const match: LookupMatch = {
               productId,
@@ -3097,6 +3120,11 @@ async function queryProductsTargeted(
               inventoryItemId: v.inventoryItem?.id || "",
               shopifyCost: parseFloat(v.inventoryItem?.unitCost?.amount ?? "0") || 0,
               sku: v.sku || "",
+              shopifyTitle: productTitle,
+              shopifyDescription: productDescription,
+              shopifyVendor: productVendor,
+              shopifyProductType: productProductType,
+              shopifyTags: productTags,
             };
             if (v.sku && !bySku.has(v.sku)) bySku.set(String(v.sku), match);
             if (v.barcode) byBarcode.set(String(v.barcode), match);
