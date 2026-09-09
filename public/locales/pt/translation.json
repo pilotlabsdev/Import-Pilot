@@ -177,7 +177,7 @@
   "config.manualImport": "Importação manual",
   "config.manualImportHelp": "A importação agendada (cron) não está disponível com arquivos enviados. Somente funciona com URLs remotas.",
   "config.updateFields": "Campos a atualizar em produtos existentes",
-  "config.updateFieldsHelp": "Os campos não selecionados serão mantidos como estão no Shopify ao atualizar produtos já importados. Nota: Imagens só se aplicam no modo Chunks.",
+  "config.updateFieldsHelp": "Os campos não selecionados serão mantidos como estão no Shopify ao atualizar produtos já importados. As imagens são processadas automaticamente após cada atualização.",
   "config.fieldName": "Nome",
   "config.fieldDescription": "Descrição",
   "config.fieldPrice": "Preço",

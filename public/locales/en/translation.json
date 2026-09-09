@@ -177,7 +177,7 @@
   "config.manualImport": "Manual import",
   "config.manualImportHelp": "Scheduled imports (cron) are not available with uploaded files. Only works with remote URLs.",
   "config.updateFields": "Fields to update on existing products",
-  "config.updateFieldsHelp": "Unselected fields are preserved as-is in Shopify when updating already imported products. Note: Images only apply in Chunks mode.",
+  "config.updateFieldsHelp": "Unselected fields are preserved as-is in Shopify when updating already imported products. Images are processed automatically after each update.",
   "config.fieldName": "Name",
   "config.fieldDescription": "Description",
   "config.fieldPrice": "Price",

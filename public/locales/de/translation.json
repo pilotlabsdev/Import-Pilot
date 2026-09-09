@@ -177,7 +177,7 @@
   "config.manualImport": "Manueller Import",
   "config.manualImportHelp": "Geplanter Import (Cron) ist mit hochgeladenen Dateien nicht verfügbar. Funktioniert nur mit Remote-URLs.",
   "config.updateFields": "Felder beim Aktualisieren bestehender Produkte",
-  "config.updateFieldsHelp": "Nicht ausgewählte Felder bleiben beim Aktualisieren bereits importierter Produkte unverändert in Shopify. Hinweis: Bilder werden nur im Chunk-Modus aktualisiert.",
+  "config.updateFieldsHelp": "Nicht ausgewählte Felder bleiben beim Aktualisieren bereits importierter Produkte unverändert in Shopify. Bilder werden automatisch nach jedem Aktualisierungsvorgang verarbeitet.",
   "config.fieldName": "Name",
   "config.fieldDescription": "Beschreibung",
   "config.fieldPrice": "Preis",

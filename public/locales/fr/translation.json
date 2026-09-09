@@ -177,7 +177,7 @@
   "config.manualImport": "Import manuel",
   "config.manualImportHelp": "L'import programmé (cron) n'est pas disponible avec les fichiers téléversés. Il ne fonctionne qu'avec les URLs distantes.",
   "config.updateFields": "Champs à mettre à jour sur les produits existants",
-  "config.updateFieldsHelp": "Les champs non sélectionnés sont conservés tels quels dans Shopify lors de la mise à jour des produits déjà importés. Note : Images ne s'applique qu'en mode Chunks.",
+  "config.updateFieldsHelp": "Les champs non sélectionnés sont conservés tels quels dans Shopify lors de la mise à jour des produits déjà importés. Les images sont traitées automatiquement après chaque mise à jour.",
   "config.fieldName": "Nom",
   "config.fieldDescription": "Description",
   "config.fieldPrice": "Prix",
