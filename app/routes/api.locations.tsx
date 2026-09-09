@@ -4,8 +4,43 @@ import { prisma, getOrCreateConfig } from "~/lib/db.server";
 import { safeAuthenticate } from "~/shopify.server";
 
 async function discoverLocations(admin: any) {
-  const locationMap = new Map<string, { id: string; name: string; isActive: boolean; fulfillsOnlineOrders: boolean }>();
+  const locationMap = new Map<string, { id: string; name: string; isActive: boolean; fulfillsOnlineOrders: boolean; isDefault: boolean }>();
 
+  // First: get the default Shopify location
+  let defaultLocationId = "";
+  try {
+    const defaultRes = await admin.graphql(
+      `#graphql
+      query {
+        locations(first: 1, query: "default:true") {
+          edges {
+            node {
+              id
+              name
+              isActive
+              fulfillsOnlineOrders
+            }
+          }
+        }
+      }`
+    );
+    const defaultJson = await defaultRes.json();
+    const defaultLoc = defaultJson.data?.locations?.edges?.[0]?.node;
+    if (defaultLoc) {
+      defaultLocationId = defaultLoc.id;
+      locationMap.set(defaultLoc.id, {
+        id: defaultLoc.id,
+        name: defaultLoc.name,
+        isActive: defaultLoc.isActive,
+        fulfillsOnlineOrders: defaultLoc.fulfillsOnlineOrders || false,
+        isDefault: true,
+      });
+    }
+  } catch (e: any) {
+    console.error("[Locations] Error fetching default location:", e?.message);
+  }
+
+  // Then: get all locations for the dropdown
   const locResponse = await admin.graphql(
     `#graphql
     query {
@@ -31,12 +66,19 @@ async function discoverLocations(admin: any) {
   const locs = locJson.data?.locations?.edges || [];
   for (const l of locs) {
     if (!locationMap.has(l.node.id)) {
-      locationMap.set(l.node.id, { id: l.node.id, name: l.node.name, isActive: l.node.isActive, fulfillsOnlineOrders: l.node.fulfillsOnlineOrders || false });
+      locationMap.set(l.node.id, {
+        id: l.node.id,
+        name: l.node.name,
+        isActive: l.node.isActive,
+        fulfillsOnlineOrders: l.node.fulfillsOnlineOrders || false,
+        isDefault: l.node.id === defaultLocationId,
+      });
     }
   }
 
   if (locationMap.size > 0) return Array.from(locationMap.values());
 
+  // Fallback: discover locations from product inventory levels
   const response = await admin.graphql(
     `#graphql
     query {
@@ -78,7 +120,7 @@ async function discoverLocations(admin: any) {
       for (const level of levels) {
         const loc = level.node?.location;
         if (loc && !locationMap.has(loc.id)) {
-          locationMap.set(loc.id, { id: loc.id, name: loc.name, isActive: loc.isActive, fulfillsOnlineOrders: false });
+          locationMap.set(loc.id, { id: loc.id, name: loc.name, isActive: loc.isActive, fulfillsOnlineOrders: false, isDefault: false });
         }
       }
     }
@@ -95,8 +137,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const locations = await discoverLocations(admin);
 
-  // Sort: default Shopify location first (fulfillsOnlineOrders), then active, then by name
+  // Sort: default Shopify location first, then fulfillsOnlineOrders, then active, then by name
   locations.sort((a, b) => {
+    if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
     if (a.fulfillsOnlineOrders !== b.fulfillsOnlineOrders) return a.fulfillsOnlineOrders ? -1 : 1;
     const aActive = a.isActive ? 1 : 0;
     const bActive = b.isActive ? 1 : 0;
