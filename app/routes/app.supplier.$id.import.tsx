@@ -380,9 +380,10 @@ export default function ImportTab() {
             <Banner
               tone="warning"
               title={t("import.duplicateProducts", { count: unresolvedDuplicates })}
-              action={{ content: t("import.viewDuplicates"), url: "/app/duplicates" }}
             >
-              {t("import.duplicateMessage")}
+              <div style={{ marginTop: "8px" }}>
+                <Button size="slim" onClick={() => navigate("/app/duplicates")}>{t("import.viewDuplicates")}</Button>
+              </div>
             </Banner>
           </Layout.Section>
         )}
