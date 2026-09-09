@@ -381,6 +381,7 @@ export default function ImportTab() {
               tone="warning"
               title={t("import.duplicateProducts", { count: unresolvedDuplicates })}
             >
+              <p>{t("import.duplicateMessage")}</p>
               <div style={{ marginTop: "8px" }}>
                 <Button size="slim" onClick={() => navigate("/app/duplicates")}>{t("import.viewDuplicates")}</Button>
               </div>
