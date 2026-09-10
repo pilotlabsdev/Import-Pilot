@@ -23,6 +23,16 @@ import { sendNotification } from "./notifications.server";
 import { setBulkActive, clearBulkActive } from "./bulk-active-cache.server";
 import shopify from "~/shopify.server";
 
+function normalizeHtml(html: string): string {
+  if (!html) return "";
+  return html
+    .replace(/<br\s*\/?>/gi, "<br/>")
+    .replace(/<hr\s*\/?>/gi, "<hr/>")
+    .replace(/\s+/g, " ")
+    .replace(/>\s+</g, "><")
+    .trim();
+}
+
 /**
  * Creates a fresh GraphQL client that always reads the current access token from DB.
  * Returns a Response-like object compatible with Shopify's admin.graphql() interface.
@@ -1424,7 +1434,7 @@ async function prepareAndLaunch(
       const vendorBaseline = match.shopifyVendor ?? lastVendor ?? "";
       const ptBaseline = match.shopifyProductType ?? lastProductType ?? "";
       const titleChanged = effectiveOpts.has("name") && csvTitle !== titleBaseline;
-      const descriptionChanged = effectiveOpts.has("description") && csvDescription !== descBaseline;
+      const descriptionChanged = effectiveOpts.has("description") && normalizeHtml(csvDescription) !== normalizeHtml(descBaseline);
       const vendorChanged = effectiveOpts.has("vendor") && csvVendor !== vendorBaseline;
       const productTypeChanged = effectiveOpts.has("productType") && csvProductType !== ptBaseline;
       const tagsChanged = effectiveOpts.has("tags") && lastTags !== null && csvTags.length > 0 && JSON.stringify(csvTags) !== lastTags;
@@ -1822,7 +1832,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       if (csvQty !== undefined && csvQty !== existingMapping.lastQuantity) stockChanged = true;
       if (csvCost !== undefined && csvCost !== existingMapping.lastCost) costChanged = true;
       if (!titleChanged && meta.title && existingMapping.lastTitle !== null && meta.title !== existingMapping.lastTitle) titleChanged = true;
-      if (!descriptionChanged && meta.description && existingMapping.lastDescription !== null && meta.description !== existingMapping.lastDescription) descriptionChanged = true;
+      if (!descriptionChanged && meta.description && existingMapping.lastDescription !== null && normalizeHtml(meta.description) !== normalizeHtml(existingMapping.lastDescription)) descriptionChanged = true;
       if (!vendorChanged && meta.vendor && existingMapping.lastVendor !== null && meta.vendor !== existingMapping.lastVendor) vendorChanged = true;
       if (!productTypeChanged && meta.productType && existingMapping.lastProductType !== null && meta.productType !== existingMapping.lastProductType) productTypeChanged = true;
       if (!tagsChanged && meta.tags && existingMapping.lastTags !== null) {

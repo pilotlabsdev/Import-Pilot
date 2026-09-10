@@ -9,6 +9,16 @@ import { rateLimitedGraphql } from "./import-locks.server";
 import { ensureMetafieldDefinitions } from "./metafield-definitions";
 import shopify from "~/shopify.server";
 
+function normalizeHtml(html: string): string {
+  if (!html) return "";
+  return html
+    .replace(/<br\s*\/?>/gi, "<br/>")
+    .replace(/<hr\s*\/?>/gi, "<hr/>")
+    .replace(/\s+/g, " ")
+    .replace(/>\s+</g, "><")
+    .trim();
+}
+
 interface BarcodeMatch {
   productId: string;
   variantId: string;
@@ -1580,7 +1590,7 @@ async function processProduct({
     const lastProductType = existing.lastProductType ?? null;
     const lastTags = existing.lastTags ?? null;
     const titleChanged = updateOpts.has("name") && productInput.title && productInput.title !== lastTitle;
-    const descriptionChanged = updateOpts.has("description") && productInput.descriptionHtml && productInput.descriptionHtml !== lastDescription;
+    const descriptionChanged = updateOpts.has("description") && productInput.descriptionHtml && normalizeHtml(productInput.descriptionHtml) !== normalizeHtml(lastDescription ?? "");
     const vendorChanged = updateOpts.has("vendor") && productInput.vendor && productInput.vendor !== lastVendor;
     const productTypeChanged = updateOpts.has("productType") && productInput.productType && productInput.productType !== lastProductType;
     const tagsChanged = updateOpts.has("tags") && productInput.tags?.length && JSON.stringify(productInput.tags) !== lastTags;
