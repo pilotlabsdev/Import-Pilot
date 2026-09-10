@@ -1419,8 +1419,13 @@ async function prepareAndLaunch(
       const productTypeChanged = effectiveOpts.has("productType") && lastProductType !== null && csvProductType !== lastProductType;
       const tagsChanged = effectiveOpts.has("tags") && lastTags !== null && csvTags.length > 0 && JSON.stringify(csvTags) !== lastTags;
 
-      // With productSet we always send the product — the mutation is idempotent
-      // and the user may have selected non-price/stock fields (name, description, etc.)
+      // Skip products with NO changes — don't send mutation
+      if (!priceChanged && !stockChanged && !costChanged && !titleChanged && !descriptionChanged && !vendorChanged && !productTypeChanged && !tagsChanged) {
+        matchedUnchangedCount++;
+        unchangedCount++;
+        continue;
+      }
+
       meta.productId = match.productId;
       meta.variantId = match.variantId;
       meta.inventoryItemId = match.inventoryItemId;
