@@ -1413,11 +1413,11 @@ async function prepareAndLaunch(
       const csvTitle = getField(row, columnMaps, "title") || "";
       const csvDescription = getField(row, columnMaps, "description") || "";
       const csvVendor = getField(row, columnMaps, "vendor") || "";
-      const titleChanged = effectiveOpts.has("name") && !!csvTitle && !!match.shopifyTitle && csvTitle !== match.shopifyTitle;
-      const descriptionChanged = effectiveOpts.has("description") && !!csvDescription && !!match.shopifyDescription && csvDescription !== match.shopifyDescription;
-      const vendorChanged = effectiveOpts.has("vendor") && !!csvVendor && !!match.shopifyVendor && csvVendor !== match.shopifyVendor;
-      const productTypeChanged = effectiveOpts.has("productType") && !!csvProductType && !!match.shopifyProductType && csvProductType !== match.shopifyProductType;
-      const tagsChanged = effectiveOpts.has("tags") && csvTags.length > 0 && !!match.shopifyTags && JSON.stringify(csvTags) !== JSON.stringify(match.shopifyTags);
+      const titleChanged = effectiveOpts.has("name") && !!csvTitle && csvTitle !== (match.shopifyTitle ?? "");
+      const descriptionChanged = effectiveOpts.has("description") && !!csvDescription && csvDescription !== (match.shopifyDescription ?? "");
+      const vendorChanged = effectiveOpts.has("vendor") && !!csvVendor && csvVendor !== (match.shopifyVendor ?? "");
+      const productTypeChanged = effectiveOpts.has("productType") && !!csvProductType && csvProductType !== (match.shopifyProductType ?? "");
+      const tagsChanged = effectiveOpts.has("tags") && csvTags.length > 0 && JSON.stringify(csvTags) !== JSON.stringify(match.shopifyTags ?? []);
 
       // With productSet we always send the product — the mutation is idempotent
       // and the user may have selected non-price/stock fields (name, description, etc.)
