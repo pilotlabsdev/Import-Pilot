@@ -1413,11 +1413,11 @@ async function prepareAndLaunch(
       const csvTitle = getField(row, columnMaps, "title") || "";
       const csvDescription = getField(row, columnMaps, "description") || "";
       const csvVendor = getField(row, columnMaps, "vendor") || "";
-      const titleChanged = effectiveOpts.has("name") && !!csvTitle && csvTitle !== (match.shopifyTitle ?? "");
-      const descriptionChanged = effectiveOpts.has("description") && !!csvDescription && csvDescription !== (match.shopifyDescription ?? "");
-      const vendorChanged = effectiveOpts.has("vendor") && !!csvVendor && csvVendor !== (match.shopifyVendor ?? "");
-      const productTypeChanged = effectiveOpts.has("productType") && !!csvProductType && csvProductType !== (match.shopifyProductType ?? "");
-      const tagsChanged = effectiveOpts.has("tags") && csvTags.length > 0 && JSON.stringify(csvTags) !== JSON.stringify(match.shopifyTags ?? []);
+      const titleChanged = effectiveOpts.has("name") && lastTitle !== null && csvTitle !== lastTitle;
+      const descriptionChanged = effectiveOpts.has("description") && lastDescription !== null && csvDescription !== lastDescription;
+      const vendorChanged = effectiveOpts.has("vendor") && lastVendor !== null && csvVendor !== lastVendor;
+      const productTypeChanged = effectiveOpts.has("productType") && lastProductType !== null && csvProductType !== lastProductType;
+      const tagsChanged = effectiveOpts.has("tags") && lastTags !== null && csvTags.length > 0 && JSON.stringify(csvTags) !== lastTags;
 
       // With productSet we always send the product — the mutation is idempotent
       // and the user may have selected non-price/stock fields (name, description, etc.)
@@ -1928,20 +1928,15 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
         data: { postProcessStatus: "complete", postProcessError: null },
       }).catch(() => {});
     } else {
-      const anyChanged = priceChanged || stockChanged || costChanged || titleChanged || descriptionChanged || vendorChanged || productTypeChanged || tagsChanged;
-      if (anyChanged) {
-        updatedCount++;
-        if (priceChanged) priceChanges++;
-        if (stockChanged) stockChanges++;
-        if (costChanged) costChanges++;
-        if (titleChanged) titleChanges++;
-        if (descriptionChanged) descChanges++;
-        if (vendorChanged) vendorChanges++;
-        if (productTypeChanged) ptChanges++;
-        if (tagsChanged) tagChanges++;
-      } else {
-        unchangedCount++;
-      }
+      updatedCount++;
+      if (priceChanged) priceChanges++;
+      if (stockChanged) stockChanges++;
+      if (costChanged) costChanges++;
+      if (titleChanged) titleChanges++;
+      if (descriptionChanged) descChanges++;
+      if (vendorChanged) vendorChanges++;
+      if (productTypeChanged) ptChanges++;
+      if (tagsChanged) tagChanges++;
     }
   }
 
