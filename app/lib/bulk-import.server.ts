@@ -1398,21 +1398,22 @@ async function prepareAndLaunch(
       // With productSet, price and stock are always sent in the mutation.
       // Track as "applied" whenever the option is selected (productSet handles idempotency).
       // Compare against previous values to detect actual changes.
-      const priceChanged = effectiveOpts.has("price") && (lastPrice === null || lastPrice !== prices.regularPrice);
-      const stockChanged = effectiveOpts.has("stock") && stockQty >= 0 && (lastQty === null || lastQty !== stockQty);
+      const priceChanged = effectiveOpts.has("price") && lastPrice !== null && lastPrice !== prices.regularPrice;
+      const stockChanged = effectiveOpts.has("stock") && stockQty >= 0 && lastQty !== null && lastQty !== stockQty;
       const costChanged =
         costPrice > 0 && !!match.inventoryItemId && Math.abs((mapping?.lastCost ?? 0) - costPrice) > 0.001;
 
       // Pre-compute non-price/stock field changes for accurate counting
       // Compare CSV vs current Shopify value from lookup (not vs lastTitle from ProductMapping)
+      // Only detect changes when Shopify actually returned a value (not undefined/empty)
       const csvTitle = getField(row, columnMaps, "title") || "";
       const csvDescription = getField(row, columnMaps, "description") || "";
       const csvVendor = getField(row, columnMaps, "vendor") || "";
-      const titleChanged = effectiveOpts.has("name") && !!csvTitle && csvTitle !== (match.shopifyTitle ?? "");
-      const descriptionChanged = effectiveOpts.has("description") && !!csvDescription && csvDescription !== (match.shopifyDescription ?? "");
-      const vendorChanged = effectiveOpts.has("vendor") && !!csvVendor && csvVendor !== (match.shopifyVendor ?? "");
-      const productTypeChanged = effectiveOpts.has("productType") && !!csvProductType && csvProductType !== (match.shopifyProductType ?? "");
-      const tagsChanged = effectiveOpts.has("tags") && csvTags.length > 0 && JSON.stringify(csvTags) !== JSON.stringify(match.shopifyTags ?? []);
+      const titleChanged = effectiveOpts.has("name") && !!csvTitle && match.shopifyTitle !== undefined && csvTitle !== match.shopifyTitle;
+      const descriptionChanged = effectiveOpts.has("description") && !!csvDescription && match.shopifyDescription !== undefined && csvDescription !== match.shopifyDescription;
+      const vendorChanged = effectiveOpts.has("vendor") && !!csvVendor && match.shopifyVendor !== undefined && csvVendor !== match.shopifyVendor;
+      const productTypeChanged = effectiveOpts.has("productType") && !!csvProductType && match.shopifyProductType !== undefined && csvProductType !== match.shopifyProductType;
+      const tagsChanged = effectiveOpts.has("tags") && csvTags.length > 0 && match.shopifyTags !== undefined && JSON.stringify(csvTags) !== JSON.stringify(match.shopifyTags);
 
       // With productSet we always send the product — the mutation is idempotent
       // and the user may have selected non-price/stock fields (name, description, etc.)
