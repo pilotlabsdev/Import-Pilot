@@ -1398,8 +1398,8 @@ async function prepareAndLaunch(
       // With productSet, price and stock are always sent in the mutation.
       // Track as "applied" whenever the option is selected (productSet handles idempotency).
       // Compare against previous values to detect actual changes.
-      const priceChanged = effectiveOpts.has("price") && lastPrice !== null && lastPrice !== prices.regularPrice;
-      const stockChanged = effectiveOpts.has("stock") && stockQty >= 0 && lastQty !== null && lastQty !== stockQty;
+      const priceChanged = effectiveOpts.has("price") && (lastPrice === null || lastPrice !== prices.regularPrice);
+      const stockChanged = effectiveOpts.has("stock") && stockQty >= 0 && (lastQty === null || lastQty !== stockQty);
       const costChanged =
         costPrice > 0 && !!match.inventoryItemId && Math.abs((mapping?.lastCost ?? 0) - costPrice) > 0.001;
 
@@ -1798,10 +1798,10 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       const csvCompare = meta.priceApplied !== false ? meta.compareAtPrice : undefined;
       const csvQty = meta.stockApplied !== false ? meta.stockQty : undefined;
       const csvCost = meta.costPrice > 0 ? meta.costPrice : undefined;
-      if (csvPrice !== undefined && existingMapping.lastPrice !== null && csvPrice !== existingMapping.lastPrice) priceChanged = true;
-      if (csvCompare !== undefined && existingMapping.lastComparePrice !== null && csvCompare !== existingMapping.lastComparePrice) priceChanged = true;
-      if (csvQty !== undefined && existingMapping.lastQuantity !== null && csvQty !== existingMapping.lastQuantity) stockChanged = true;
-      if (csvCost !== undefined && existingMapping.lastCost !== null && csvCost !== existingMapping.lastCost) costChanged = true;
+      if (csvPrice !== undefined && csvPrice !== existingMapping.lastPrice) priceChanged = true;
+      if (csvCompare !== undefined && csvCompare !== existingMapping.lastComparePrice) priceChanged = true;
+      if (csvQty !== undefined && csvQty !== existingMapping.lastQuantity) stockChanged = true;
+      if (csvCost !== undefined && csvCost !== existingMapping.lastCost) costChanged = true;
       if (meta.title && existingMapping.lastTitle !== null && meta.title !== existingMapping.lastTitle) titleChanged = true;
       if (meta.description && existingMapping.lastDescription !== null && meta.description !== existingMapping.lastDescription) descriptionChanged = true;
       if (meta.vendor && existingMapping.lastVendor !== null && meta.vendor !== existingMapping.lastVendor) vendorChanged = true;
