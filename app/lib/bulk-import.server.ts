@@ -330,7 +330,7 @@ export async function cancelBulkImport(configId: string, shopDomain: string): Pr
 }
 
 // --- productSet unified mutation (replaces productCreate + productUpdate + post-processing) ---
-const PRODUCT_SET_MUTATION = `mutation call($identifier: ProductSetIdentifiers, $input: ProductSetInput!) { productSet(identifier: $identifier, input: $input) { product { id title variants(first: 1) { edges { node { id sku barcode price compareAtPrice inventoryItem { id } } } } } userErrors { field message } } }`;
+const PRODUCT_SET_MUTATION = `mutation call($identifier: ProductSetIdentifiers, $input: ProductSetInput!) { productSet(identifier: $identifier, input: $input) { product { id title descriptionHtml variants(first: 1) { edges { node { id sku barcode price compareAtPrice inventoryItem { id } } } } } userErrors { field message } } }`;
 
 // Legacy mutations kept for backward compatibility during reconcile of in-flight jobs
 const LEGACY_CREATE_MUTATION = `mutation call($input: ProductInput!) { productCreate(input: $input) { product { id title variants { edges { node { id sku barcode inventoryItem { id } } } } } userErrors { field message } } }`;
@@ -1429,6 +1429,9 @@ async function prepareAndLaunch(
       const productTypeChanged = effectiveOpts.has("productType") && csvProductType !== ptBaseline;
       const tagsChanged = effectiveOpts.has("tags") && lastTags !== null && csvTags.length > 0 && JSON.stringify(csvTags) !== lastTags;
 
+      // Diagnostic: log title/desc detection for ALL matched products
+      console.log(`[Bulk] DIAG SKU=${sku} opts=[${[...effectiveOpts].join(",")}] csvTitle="${csvTitle}" titleBase="${titleBaseline}" titleChanged=${titleChanged} csvDesc="${csvDescription?.substring(0,30)}" descBase="${descBaseline?.substring(0,30)}" descChanged=${descriptionChanged} lastTitleDB="${mapping?.lastTitle}" matchTitle="${match.shopifyTitle}" lastDescDB="${mapping?.lastDescription?.substring(0,30)}" matchDesc="${match.shopifyDescription?.substring(0,30)}" priceChanged=${priceChanged} stockChanged=${stockChanged} costChanged=${costChanged}`);
+
       // Skip products with NO changes — don't send mutation
       if (!priceChanged && !stockChanged && !costChanged && !titleChanged && !descriptionChanged && !vendorChanged && !productTypeChanged && !tagsChanged) {
         matchedUnchangedCount++;
@@ -1788,9 +1791,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
 
     const product = line.data?.productSet?.product || line.data?.productCreate?.product || line.data?.productUpdate?.product;
     const variant = product?.variants?.edges?.[0]?.node;
-    if (meta.titleChanged || meta.descriptionChanged) {
-      console.log(`[Bulk] FINALIZE SKU=${meta.sku} product.title="${product?.title}" product.descriptionHtml="${(product?.descriptionHtml || "")?.substring(0,30)}" meta.title="${meta.title}" meta.desc="${meta.description?.substring(0,30)}" titleChanged=${meta.titleChanged} descChanged=${meta.descriptionChanged}`);
-    }
+    console.log(`[Bulk] FINALIZE SKU=${meta.sku} op=${op.kind} shopTitle="${product?.title}" csvTitle="${meta.title}" shopDesc="${(product?.descriptionHtml || "")?.substring(0,30)}" csvDesc="${meta.description?.substring(0,30)}" titleChanged=${meta.titleChanged} descChanged=${meta.descriptionChanged} priceChanged=${meta.priceChanged} stockChanged=${meta.stockChanged}`);
     if (!product?.id) {
       opErrors++;
       errorWrites.push(JSON.stringify({ sku: meta.sku, error: "systemError.no_product_id" }));
