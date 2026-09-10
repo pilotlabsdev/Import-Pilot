@@ -1414,14 +1414,6 @@ async function prepareAndLaunch(
       const productTypeChanged = effectiveOpts.has("productType") && !!csvProductType && csvProductType !== (match.shopifyProductType ?? "");
       const tagsChanged = effectiveOpts.has("tags") && csvTags.length > 0 && JSON.stringify(csvTags) !== JSON.stringify(match.shopifyTags ?? []);
 
-      // DEBUG: Log field change detection for diagnosis (only first 3 matches to avoid spam)
-      if (matchedUpdateCount <= 3) {
-        console.log(`[DEBUG] SKU ${sku}: hasName=${effectiveOpts.has("name")}, csvTitle="${csvTitle}", shopifyTitle="${match.shopifyTitle ?? ""}", titleChanged=${titleChanged}`);
-        console.log(`[DEBUG] SKU ${sku}: hasDesc=${effectiveOpts.has("description")}, csvDesc="${csvDescription.substring(0,50)}", shopifyDesc="${(match.shopifyDescription ?? "").substring(0,50)}", descChanged=${descriptionChanged}`);
-        console.log(`[DEBUG] SKU ${sku}: hasVendor=${effectiveOpts.has("vendor")}, csvVendor="${csvVendor}", shopifyVendor="${match.shopifyVendor ?? ""}", vendorChanged=${vendorChanged}`);
-        console.log(`[DEBUG] SKU ${sku}: hasProductType=${effectiveOpts.has("productType")}, csvPT="${csvProductType}", shopifyPT="${match.shopifyProductType ?? ""}", ptChanged=${productTypeChanged}`);
-      }
-
       // With productSet we always send the product — the mutation is idempotent
       // and the user may have selected non-price/stock fields (name, description, etc.)
       meta.productId = match.productId;
@@ -1805,26 +1797,20 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       const csvCompare = meta.priceApplied !== false ? meta.compareAtPrice : undefined;
       const csvQty = meta.stockApplied !== false ? meta.stockQty : undefined;
       const csvCost = meta.costPrice > 0 ? meta.costPrice : undefined;
-      if (csvPrice !== undefined && csvPrice !== existingMapping.lastPrice) priceChanged = true;
-      if (csvCompare !== undefined && csvCompare !== existingMapping.lastComparePrice) priceChanged = true;
-      if (csvQty !== undefined && csvQty !== existingMapping.lastQuantity) stockChanged = true;
-      if (csvCost !== undefined && csvCost !== existingMapping.lastCost) costChanged = true;
-      if (meta.title && meta.title !== existingMapping.lastTitle) titleChanged = true;
-      if (meta.description && meta.description !== existingMapping.lastDescription) descriptionChanged = true;
-      if (meta.vendor && meta.vendor !== existingMapping.lastVendor) vendorChanged = true;
-      if (meta.productType && meta.productType !== existingMapping.lastProductType) productTypeChanged = true;
-      if (meta.tags) {
+      if (csvPrice !== undefined && existingMapping.lastPrice !== null && csvPrice !== existingMapping.lastPrice) priceChanged = true;
+      if (csvCompare !== undefined && existingMapping.lastComparePrice !== null && csvCompare !== existingMapping.lastComparePrice) priceChanged = true;
+      if (csvQty !== undefined && existingMapping.lastQuantity !== null && csvQty !== existingMapping.lastQuantity) stockChanged = true;
+      if (csvCost !== undefined && existingMapping.lastCost !== null && csvCost !== existingMapping.lastCost) costChanged = true;
+      if (meta.title && existingMapping.lastTitle !== null && meta.title !== existingMapping.lastTitle) titleChanged = true;
+      if (meta.description && existingMapping.lastDescription !== null && meta.description !== existingMapping.lastDescription) descriptionChanged = true;
+      if (meta.vendor && existingMapping.lastVendor !== null && meta.vendor !== existingMapping.lastVendor) vendorChanged = true;
+      if (meta.productType && existingMapping.lastProductType !== null && meta.productType !== existingMapping.lastProductType) productTypeChanged = true;
+      if (meta.tags && existingMapping.lastTags !== null) {
         const csvTags = JSON.stringify(meta.tags);
         if (csvTags !== existingMapping.lastTags) tagsChanged = true;
       }
 
-      // DEBUG: Log final change detection for existing products
-      console.log(`[DEBUG-FINISH] SKU ${meta.sku}: titleChanged=${titleChanged}, meta.titleChanged=${meta.titleChanged}, csvTitle="${meta.title}", lastTitle="${existingMapping.lastTitle}"`);
-      console.log(`[DEBUG-FINISH] SKU ${meta.sku}: descChanged=${descriptionChanged}, csvDesc="${(meta.description ?? "").substring(0,40)}", lastDesc="${(existingMapping.lastDescription ?? "").substring(0,40)}"`);
-      console.log(`[DEBUG-FINISH] SKU ${meta.sku}: vendorChanged=${vendorChanged}, csvVendor="${meta.vendor}", lastVendor="${existingMapping.lastVendor}"`);
     } else {
-      // DEBUG: Log when actuallyNew or no existingMapping
-      console.log(`[DEBUG-FINISH] SKU ${meta.sku}: actuallyNew=${actuallyNew}, hasMapping=${!!existingMapping}, meta.titleChanged=${meta.titleChanged}`);
     }
 
     await prisma.productMapping.upsert({
@@ -2026,11 +2012,11 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
                   if (rm.regularPrice !== existedBefore.lastPrice || rm.compareAtPrice !== existedBefore.lastComparePrice) rePriceChanged = true;
                   if (rm.stockQty !== existedBefore.lastQuantity) reStockChanged = true;
                   if (rm.costPrice > 0 && rm.costPrice !== existedBefore.lastCost) reCostChanged = true;
-                  if (rm.title && rm.title !== existedBefore.lastTitle) reTitleChanged = true;
-                  if (rm.description && rm.description !== existedBefore.lastDescription) reDescChanged = true;
-                  if (rm.vendor && rm.vendor !== existedBefore.lastVendor) reVendorChanged = true;
-                  if (rm.productType && rm.productType !== existedBefore.lastProductType) rePtChanged = true;
-                  if (rm.tags) {
+                  if (rm.title && existedBefore.lastTitle !== null && rm.title !== existedBefore.lastTitle) reTitleChanged = true;
+                  if (rm.description && existedBefore.lastDescription !== null && rm.description !== existedBefore.lastDescription) reDescChanged = true;
+                  if (rm.vendor && existedBefore.lastVendor !== null && rm.vendor !== existedBefore.lastVendor) reVendorChanged = true;
+                  if (rm.productType && existedBefore.lastProductType !== null && rm.productType !== existedBefore.lastProductType) rePtChanged = true;
+                  if (rm.tags && existedBefore.lastTags !== null) {
                     const csvTagsJson = JSON.stringify(rm.tags);
                     if (csvTagsJson !== existedBefore.lastTags) reTagsChanged = true;
                   }
