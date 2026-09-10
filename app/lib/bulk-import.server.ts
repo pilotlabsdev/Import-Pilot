@@ -1387,6 +1387,11 @@ async function prepareAndLaunch(
 
       const lastPrice = mapping?.lastPrice ?? null;
       const lastQty = mapping?.lastQuantity ?? null;
+      const lastTitle = mapping?.lastTitle ?? null;
+      const lastDescription = mapping?.lastDescription ?? null;
+      const lastVendor = mapping?.lastVendor ?? null;
+      const lastProductType = mapping?.lastProductType ?? null;
+      const lastTags = mapping?.lastTags ?? null;
 
       const excludedFields = getExcludedFields(sku, fieldRules);
       if (excludedFields) {
@@ -1404,16 +1409,15 @@ async function prepareAndLaunch(
         costPrice > 0 && !!match.inventoryItemId && Math.abs((mapping?.lastCost ?? 0) - costPrice) > 0.001;
 
       // Pre-compute non-price/stock field changes for accurate counting
-      // Compare CSV vs current Shopify value from lookup (not vs lastTitle from ProductMapping)
-      // Only detect changes when Shopify actually returned a value (not undefined/empty)
+      // Same pattern as price/stock: compare CSV vs ProductMapping last value
       const csvTitle = getField(row, columnMaps, "title") || "";
       const csvDescription = getField(row, columnMaps, "description") || "";
       const csvVendor = getField(row, columnMaps, "vendor") || "";
-      const titleChanged = effectiveOpts.has("name") && !!csvTitle && match.shopifyTitle !== undefined && csvTitle !== match.shopifyTitle;
-      const descriptionChanged = effectiveOpts.has("description") && !!csvDescription && match.shopifyDescription !== undefined && csvDescription !== match.shopifyDescription;
-      const vendorChanged = effectiveOpts.has("vendor") && !!csvVendor && match.shopifyVendor !== undefined && csvVendor !== match.shopifyVendor;
-      const productTypeChanged = effectiveOpts.has("productType") && !!csvProductType && match.shopifyProductType !== undefined && csvProductType !== match.shopifyProductType;
-      const tagsChanged = effectiveOpts.has("tags") && csvTags.length > 0 && match.shopifyTags !== undefined && JSON.stringify(csvTags) !== JSON.stringify(match.shopifyTags);
+      const titleChanged = effectiveOpts.has("name") && (lastTitle === null || csvTitle !== lastTitle);
+      const descriptionChanged = effectiveOpts.has("description") && (lastDescription === null || csvDescription !== lastDescription);
+      const vendorChanged = effectiveOpts.has("vendor") && (lastVendor === null || csvVendor !== lastVendor);
+      const productTypeChanged = effectiveOpts.has("productType") && (lastProductType === null || csvProductType !== lastProductType);
+      const tagsChanged = effectiveOpts.has("tags") && csvTags.length > 0 && (lastTags === null || JSON.stringify(csvTags) !== lastTags);
 
       // With productSet we always send the product — the mutation is idempotent
       // and the user may have selected non-price/stock fields (name, description, etc.)
@@ -1802,11 +1806,11 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       if (csvCompare !== undefined && csvCompare !== existingMapping.lastComparePrice) priceChanged = true;
       if (csvQty !== undefined && csvQty !== existingMapping.lastQuantity) stockChanged = true;
       if (csvCost !== undefined && csvCost !== existingMapping.lastCost) costChanged = true;
-      if (meta.title && existingMapping.lastTitle !== null && meta.title !== existingMapping.lastTitle) titleChanged = true;
-      if (meta.description && existingMapping.lastDescription !== null && meta.description !== existingMapping.lastDescription) descriptionChanged = true;
-      if (meta.vendor && existingMapping.lastVendor !== null && meta.vendor !== existingMapping.lastVendor) vendorChanged = true;
-      if (meta.productType && existingMapping.lastProductType !== null && meta.productType !== existingMapping.lastProductType) productTypeChanged = true;
-      if (meta.tags && existingMapping.lastTags !== null) {
+      if (meta.title && meta.title !== existingMapping.lastTitle) titleChanged = true;
+      if (meta.description && meta.description !== existingMapping.lastDescription) descriptionChanged = true;
+      if (meta.vendor && meta.vendor !== existingMapping.lastVendor) vendorChanged = true;
+      if (meta.productType && meta.productType !== existingMapping.lastProductType) productTypeChanged = true;
+      if (meta.tags) {
         const csvTags = JSON.stringify(meta.tags);
         if (csvTags !== existingMapping.lastTags) tagsChanged = true;
       }
@@ -2013,11 +2017,11 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
                   if (rm.regularPrice !== existedBefore.lastPrice || rm.compareAtPrice !== existedBefore.lastComparePrice) rePriceChanged = true;
                   if (rm.stockQty !== existedBefore.lastQuantity) reStockChanged = true;
                   if (rm.costPrice > 0 && rm.costPrice !== existedBefore.lastCost) reCostChanged = true;
-                  if (rm.title && existedBefore.lastTitle !== null && rm.title !== existedBefore.lastTitle) reTitleChanged = true;
-                  if (rm.description && existedBefore.lastDescription !== null && rm.description !== existedBefore.lastDescription) reDescChanged = true;
-                  if (rm.vendor && existedBefore.lastVendor !== null && rm.vendor !== existedBefore.lastVendor) reVendorChanged = true;
-                  if (rm.productType && existedBefore.lastProductType !== null && rm.productType !== existedBefore.lastProductType) rePtChanged = true;
-                  if (rm.tags && existedBefore.lastTags !== null) {
+                  if (rm.title && rm.title !== existedBefore.lastTitle) reTitleChanged = true;
+                  if (rm.description && rm.description !== existedBefore.lastDescription) reDescChanged = true;
+                  if (rm.vendor && rm.vendor !== existedBefore.lastVendor) reVendorChanged = true;
+                  if (rm.productType && rm.productType !== existedBefore.lastProductType) rePtChanged = true;
+                  if (rm.tags) {
                     const csvTagsJson = JSON.stringify(rm.tags);
                     if (csvTagsJson !== existedBefore.lastTags) reTagsChanged = true;
                   }
