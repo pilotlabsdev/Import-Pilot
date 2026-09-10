@@ -26,7 +26,6 @@ import shopify from "~/shopify.server";
 function normalizeHtml(html: string): string {
   if (!html) return "";
   return html
-    .replace(/>\s+</g, "><")
     .replace(/<[^>]*>/g, "")
     .replace(/&nbsp;/g, " ")
     .replace(/&amp;/g, "&")
@@ -34,6 +33,7 @@ function normalizeHtml(html: string): string {
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#039;/g, "'")
+    .replace(/[\r\n]+/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
