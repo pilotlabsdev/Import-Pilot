@@ -571,10 +571,46 @@ export async function runBulkImport({
     } else if (m.shopifyProductId) {
       if (m.postProcessStatus === "complete" || m.postProcessStatus === "pending" || !m.postProcessStatus || m.postProcessStatus === "error_permanent") {
         try {
-          const check = await gql(admin, `query ($id: ID!) { product(id: $id) { id } }`, { variables: { id: m.shopifyProductId } }, job.shopDomain);
-          if (!check.data?.product) {
+          const productQuery = `#graphql
+            query ($id: ID!) {
+              product(id: $id) {
+                id title vendor productType tags descriptionHtml
+                variants(first: 5) {
+                  edges {
+                    node { id sku barcode inventoryItem { id unitCost { amount } } }
+                  }
+                }
+              }
+            }
+          `;
+          const json = await gql(admin, productQuery, { variables: { id: m.shopifyProductId } }, job.shopDomain);
+          const product = json.data?.product;
+          if (!product) {
             await prisma.productMapping.delete({ where: { id: m.id } }).catch(() => {});
             continue;
+          }
+          const productId = product.id;
+          const productTitle = product.title || undefined;
+          const productDescription = product.descriptionHtml || undefined;
+          const productVendor = product.vendor || undefined;
+          const productProductType = product.productType || undefined;
+          const productTags: string[] | undefined = product.tags?.length > 0 ? product.tags : undefined;
+          for (const vEdge of product.variants?.edges || []) {
+            const v = vEdge.node;
+            const matchData: LookupMatch = {
+              productId,
+              variantId: v.id,
+              inventoryItemId: v.inventoryItem?.id || "",
+              shopifyCost: parseFloat(v.inventoryItem?.unitCost?.amount ?? "0") || 0,
+              sku: v.sku || "",
+              shopifyTitle: productTitle,
+              shopifyDescription: productDescription,
+              shopifyVendor: productVendor,
+              shopifyProductType: productProductType,
+              shopifyTags: productTags,
+            };
+            if (v.sku && !targetedMaps.bySku.has(v.sku)) targetedMaps.bySku.set(String(v.sku), matchData);
+            if (v.barcode && !targetedMaps.byBarcode.has(String(v.barcode))) targetedMaps.byBarcode.set(String(v.barcode), matchData);
           }
         } catch {
           // Si no podemos verificar, conservar el mapping
@@ -1980,7 +2016,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
               if (op.kind === "create") {
                 const existedBefore = await prisma.productMapping.findUnique({
                   where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: rm.sku } },
-                  select: { shopifyProductId: true, lastPrice: true, lastComparePrice: true, lastQuantity: true, lastCost: true },
+                  select: { shopifyProductId: true, lastPrice: true, lastComparePrice: true, lastQuantity: true, lastCost: true, lastTitle: true, lastDescription: true, lastVendor: true, lastProductType: true, lastTags: true },
                 }).catch(() => null);
                 if (!existedBefore) {
                   createdCount++;
