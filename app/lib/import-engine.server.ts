@@ -12,10 +12,14 @@ import shopify from "~/shopify.server";
 function normalizeHtml(html: string): string {
   if (!html) return "";
   return html
-    .replace(/<br\s*\/?>/gi, "<br/>")
-    .replace(/<hr\s*\/?>/gi, "<hr/>")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
     .replace(/\s+/g, " ")
-    .replace(/>\s+</g, "><")
     .trim();
 }
 

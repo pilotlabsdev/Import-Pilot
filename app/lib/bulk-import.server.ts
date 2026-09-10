@@ -26,10 +26,14 @@ import shopify from "~/shopify.server";
 function normalizeHtml(html: string): string {
   if (!html) return "";
   return html
-    .replace(/<br\s*\/?>/gi, "<br/>")
-    .replace(/<hr\s*\/?>/gi, "<hr/>")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
     .replace(/\s+/g, " ")
-    .replace(/>\s+</g, "><")
     .trim();
 }
 
@@ -1049,6 +1053,8 @@ async function prepareAndLaunch(
   let excludedCount = 0;
   let zeroStockSkippedCount = 0;
   let matchedUpdateCount = 0;
+  let vendorDebugLog: string[] | undefined;
+  let descDebugLog: string[] | undefined;
   let matchedUnchangedCount = 0;
   const fieldRules = parseExcludeFieldRules(config.excludeFieldRules);
   let newCreateCount = 0;
@@ -1434,8 +1440,21 @@ async function prepareAndLaunch(
       const vendorBaseline = match.shopifyVendor ?? lastVendor ?? "";
       const ptBaseline = match.shopifyProductType ?? lastProductType ?? "";
       const titleChanged = effectiveOpts.has("name") && csvTitle !== titleBaseline;
-      const descriptionChanged = effectiveOpts.has("description") && normalizeHtml(csvDescription) !== normalizeHtml(descBaseline);
-      const vendorChanged = effectiveOpts.has("vendor") && csvVendor !== vendorBaseline;
+      const descriptionChanged = effectiveOpts.has("description") && normalizeHtml(csvDescription).trim() !== normalizeHtml(descBaseline).trim();
+      const vendorChanged = effectiveOpts.has("vendor") && csvVendor.trim() !== vendorBaseline.trim();
+
+      // DEBUG: log vendor mismatches
+      if (vendorChanged && (vendorDebugLog?.length ?? 0) < 5) {
+        console.log(`[Bulk-DEBUG] vendor mismatch SKU=${sku}: csvVendor=${JSON.stringify(csvVendor)} shopifyVendor=${JSON.stringify(match.shopifyVendor)} lastVendor=${JSON.stringify(lastVendor)} baseline=${JSON.stringify(vendorBaseline)}`);
+        vendorDebugLog = vendorDebugLog || [];
+        vendorDebugLog.push(sku);
+      }
+      // DEBUG: log description mismatches
+      if (descriptionChanged && (descDebugLog?.length ?? 0) < 5) {
+        console.log(`[Bulk-DEBUG] desc mismatch SKU=${sku}: csvDesc(len)=${csvDescription.length} shopifyDesc(len)=${(match.shopifyDescription||'').length} csvFirst100=${JSON.stringify(csvDescription.substring(0,100))} shopifyFirst100=${JSON.stringify((match.shopifyDescription||'').substring(0,100))}`);
+        descDebugLog = descDebugLog || [];
+        descDebugLog.push(sku);
+      }
       const productTypeChanged = effectiveOpts.has("productType") && csvProductType !== ptBaseline;
       const tagsChanged = effectiveOpts.has("tags") && lastTags !== null && csvTags.length > 0 && JSON.stringify(csvTags) !== lastTags;
 
@@ -1832,7 +1851,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       if (csvQty !== undefined && csvQty !== existingMapping.lastQuantity) stockChanged = true;
       if (csvCost !== undefined && csvCost !== existingMapping.lastCost) costChanged = true;
       if (!titleChanged && meta.title && existingMapping.lastTitle !== null && meta.title !== existingMapping.lastTitle) titleChanged = true;
-      if (!descriptionChanged && meta.description && existingMapping.lastDescription !== null && normalizeHtml(meta.description) !== normalizeHtml(existingMapping.lastDescription)) descriptionChanged = true;
+      if (!descriptionChanged && meta.description && existingMapping.lastDescription !== null && normalizeHtml(meta.description).trim() !== normalizeHtml(existingMapping.lastDescription).trim()) descriptionChanged = true;
       if (!vendorChanged && meta.vendor && existingMapping.lastVendor !== null && meta.vendor !== existingMapping.lastVendor) vendorChanged = true;
       if (!productTypeChanged && meta.productType && existingMapping.lastProductType !== null && meta.productType !== existingMapping.lastProductType) productTypeChanged = true;
       if (!tagsChanged && meta.tags && existingMapping.lastTags !== null) {
