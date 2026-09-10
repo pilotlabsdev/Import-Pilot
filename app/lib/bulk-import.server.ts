@@ -1436,6 +1436,10 @@ async function prepareAndLaunch(
         continue;
       }
 
+      if (titleChanged || descriptionChanged) {
+        console.log(`[Bulk] SKU=${sku} CHANGE DETECTED: titleChanged=${titleChanged} descChanged=${descriptionChanged} csvTitle="${csvTitle}" baseline="${titleBaseline}" csvDesc="${csvDescription?.substring(0,30)}" descBaseline="${descBaseline?.substring(0,30)}"`);
+      }
+
       meta.productId = match.productId;
       meta.variantId = match.variantId;
       meta.inventoryItemId = match.inventoryItemId;
@@ -1784,6 +1788,9 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
 
     const product = line.data?.productSet?.product || line.data?.productCreate?.product || line.data?.productUpdate?.product;
     const variant = product?.variants?.edges?.[0]?.node;
+    if (meta.titleChanged || meta.descriptionChanged) {
+      console.log(`[Bulk] FINALIZE SKU=${meta.sku} product.title="${product?.title}" product.descriptionHtml="${(product?.descriptionHtml || "")?.substring(0,30)}" meta.title="${meta.title}" meta.desc="${meta.description?.substring(0,30)}" titleChanged=${meta.titleChanged} descChanged=${meta.descriptionChanged}`);
+    }
     if (!product?.id) {
       opErrors++;
       errorWrites.push(JSON.stringify({ sku: meta.sku, error: "systemError.no_product_id" }));
