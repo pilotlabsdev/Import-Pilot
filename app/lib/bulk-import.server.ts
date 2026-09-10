@@ -1413,14 +1413,14 @@ async function prepareAndLaunch(
       const csvTitle = getField(row, columnMaps, "title") || "";
       const csvDescription = getField(row, columnMaps, "description") || "";
       const csvVendor = getField(row, columnMaps, "vendor") || "";
-      const titleBaseline = lastTitle ?? match.shopifyTitle ?? null;
-      const descBaseline = lastDescription ?? match.shopifyDescription ?? null;
-      const vendorBaseline = lastVendor ?? match.shopifyVendor ?? null;
-      const ptBaseline = lastProductType ?? match.shopifyProductType ?? null;
-      const titleChanged = effectiveOpts.has("name") && titleBaseline !== null && csvTitle !== titleBaseline;
-      const descriptionChanged = effectiveOpts.has("description") && descBaseline !== null && csvDescription !== descBaseline;
-      const vendorChanged = effectiveOpts.has("vendor") && vendorBaseline !== null && csvVendor !== vendorBaseline;
-      const productTypeChanged = effectiveOpts.has("productType") && ptBaseline !== null && csvProductType !== ptBaseline;
+      const titleBaseline = lastTitle ?? match.shopifyTitle ?? "";
+      const descBaseline = lastDescription ?? match.shopifyDescription ?? "";
+      const vendorBaseline = lastVendor ?? match.shopifyVendor ?? "";
+      const ptBaseline = lastProductType ?? match.shopifyProductType ?? "";
+      const titleChanged = effectiveOpts.has("name") && csvTitle !== titleBaseline;
+      const descriptionChanged = effectiveOpts.has("description") && csvDescription !== descBaseline;
+      const vendorChanged = effectiveOpts.has("vendor") && csvVendor !== vendorBaseline;
+      const productTypeChanged = effectiveOpts.has("productType") && csvProductType !== ptBaseline;
       const tagsChanged = effectiveOpts.has("tags") && lastTags !== null && csvTags.length > 0 && JSON.stringify(csvTags) !== lastTags;
 
       // Skip products with NO changes — don't send mutation
