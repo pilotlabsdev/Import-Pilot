@@ -1362,8 +1362,8 @@ async function prepareAndLaunch(
 
     const csvTitle = getField(row, columnMaps, "title") || "";
     const csvDescription = getField(row, columnMaps, "description") || "";
-    const csvVendor = getField(row, columnMaps, "vendor") || "";
-    const csvProductType = shopifyProductType || getField(row, columnMaps, "productType") || "";
+    const csvVendor = getField(row, columnMaps, "brand") || "";
+    const csvProductType = shopifyProductType || getField(row, columnMaps, "category") || "";
     const csvTags = [categoryTags, getField(row, columnMaps, "tags") || ""].filter(Boolean);
 
     const meta: MetaLine = {
@@ -1412,7 +1412,7 @@ async function prepareAndLaunch(
       // Compare CSV vs current Shopify value from lookup
       const csvTitle = getField(row, columnMaps, "title") || "";
       const csvDescription = getField(row, columnMaps, "description") || "";
-      const csvVendor = getField(row, columnMaps, "vendor") || "";
+      const csvVendor = getField(row, columnMaps, "brand") || "";
       const titleBaseline = lastTitle ?? match.shopifyTitle ?? "";
       const descBaseline = lastDescription ?? match.shopifyDescription ?? "";
       const vendorBaseline = lastVendor ?? match.shopifyVendor ?? "";
@@ -1841,10 +1841,10 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
         lastComparePrice: meta.compareAtPrice,
         lastQuantity: meta.stockQty,
         lastCost: meta.costPrice > 0 ? meta.costPrice : null,
-        lastTitle: meta.title || null,
-        lastDescription: meta.description || null,
-        lastVendor: meta.vendor || null,
-        lastProductType: meta.productType || null,
+        lastTitle: meta.title ?? null,
+        lastDescription: meta.description ?? null,
+        lastVendor: meta.vendor ?? null,
+        lastProductType: meta.productType ?? null,
         lastTags: meta.tags ? JSON.stringify(meta.tags) : null,
         lastImportSource: sourceKey || null,
         postProcessStatus: actuallyNew ? "pending" : "complete",
@@ -1857,10 +1857,10 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
         lastComparePrice: meta.priceApplied !== false ? meta.compareAtPrice : undefined,
         lastQuantity: meta.stockApplied !== false ? meta.stockQty : undefined,
         lastCost: meta.costPrice > 0 ? meta.costPrice : undefined,
-        lastTitle: meta.title || undefined,
-        lastDescription: meta.description || undefined,
-        lastVendor: meta.vendor || undefined,
-        lastProductType: meta.productType || undefined,
+        lastTitle: meta.title ?? undefined,
+        lastDescription: meta.description ?? undefined,
+        lastVendor: meta.vendor ?? undefined,
+        lastProductType: meta.productType ?? undefined,
         lastTags: meta.tags ? JSON.stringify(meta.tags) : undefined,
         lastImportSource: sourceKey || undefined,
         postProcessStatus: actuallyNew ? "pending" : "complete",
