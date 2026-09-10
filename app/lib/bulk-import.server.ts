@@ -1428,6 +1428,10 @@ async function prepareAndLaunch(
       const stockChanged = effectiveOpts.has("stock") && stockQty >= 0 && (lastQty === null || lastQty !== stockQty);
       const costChanged =
         costPrice > 0 && !!match.inventoryItemId && Math.abs((mapping?.lastCost ?? 0) - costPrice) > 0.001;
+      const csvHasImages = effectiveOpts.has("images") && (() => {
+        for (let i = 1; i <= 5; i++) { if (getField(row, columnMaps, `image${i}`)) return true; }
+        return false;
+      })();
 
       // Pre-compute non-price/stock field changes for accurate counting
       // Compare CSV vs current Shopify value from lookup
@@ -1447,7 +1451,7 @@ async function prepareAndLaunch(
       const tagsChanged = effectiveOpts.has("tags") && csvTags.length > 0 && JSON.stringify(csvTags) !== tagsBaseline;
 
       // Skip products with NO changes — don't send mutation
-      if (!priceChanged && !stockChanged && !costChanged && !titleChanged && !descriptionChanged && !vendorChanged && !productTypeChanged && !tagsChanged) {
+      if (!priceChanged && !stockChanged && !costChanged && !titleChanged && !descriptionChanged && !vendorChanged && !productTypeChanged && !tagsChanged && !csvHasImages) {
         matchedUnchangedCount++;
         unchangedCount++;
         continue;
@@ -1482,6 +1486,7 @@ async function prepareAndLaunch(
         config.defaultTags || undefined,
         categoryTags || undefined
       );
+      meta.images = inputObj.files?.map((f: any) => f.originalSource) || [];
       await pushUpdate(inputObj, meta, { id: match.productId });
     } else {
       const inputObj = mapCsvRowToProductSet(
@@ -1610,7 +1615,7 @@ async function prepareAndLaunch(
             if (!updateOpts.has("vendor")) delete inp.vendor;
             if (!updateOpts.has("productType")) delete inp.productType;
             if (!updateOpts.has("tags")) delete inp.tags;
-            if (!updateOpts.has("images")) delete inp.images;
+            if (!updateOpts.has("images")) delete inp.files;
           }
           keptInput.push(JSON.stringify(parsed));
           if (metaLinesArr[j]) keptMeta.push(metaLinesArr[j]);
