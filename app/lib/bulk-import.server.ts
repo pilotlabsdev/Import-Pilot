@@ -1440,8 +1440,8 @@ async function prepareAndLaunch(
       const vendorBaseline = match.shopifyVendor ?? lastVendor ?? "";
       const ptBaseline = match.shopifyProductType ?? lastProductType ?? "";
       const titleChanged = effectiveOpts.has("name") && csvTitle !== titleBaseline;
-      const descriptionChanged = effectiveOpts.has("description") && normalizeHtml(csvDescription).trim() !== normalizeHtml(descBaseline).trim();
-      const vendorChanged = effectiveOpts.has("vendor") && csvVendor.trim() !== vendorBaseline.trim();
+      const descriptionChanged = effectiveOpts.has("description") && normalizeHtml(csvDescription).trim() !== "" && normalizeHtml(csvDescription).trim() !== normalizeHtml(descBaseline).trim();
+      const vendorChanged = effectiveOpts.has("vendor") && csvVendor.trim() !== "" && csvVendor.trim() !== vendorBaseline.trim();
 
       // DEBUG: log vendor mismatches
       if (vendorChanged && (vendorDebugLog?.length ?? 0) < 5) {
@@ -1852,7 +1852,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       if (csvCost !== undefined && csvCost !== existingMapping.lastCost) costChanged = true;
       if (!titleChanged && meta.title && existingMapping.lastTitle !== null && meta.title !== existingMapping.lastTitle) titleChanged = true;
       if (!descriptionChanged && meta.description && existingMapping.lastDescription !== null && normalizeHtml(meta.description).trim() !== normalizeHtml(existingMapping.lastDescription).trim()) descriptionChanged = true;
-      if (!vendorChanged && meta.vendor && existingMapping.lastVendor !== null && meta.vendor !== existingMapping.lastVendor) vendorChanged = true;
+      if (!vendorChanged && meta.vendor && meta.vendor.trim() !== "" && existingMapping.lastVendor !== null && meta.vendor !== existingMapping.lastVendor) vendorChanged = true;
       if (!productTypeChanged && meta.productType && existingMapping.lastProductType !== null && meta.productType !== existingMapping.lastProductType) productTypeChanged = true;
       if (!tagsChanged && meta.tags && existingMapping.lastTags !== null) {
         const csvTags = JSON.stringify(meta.tags);
