@@ -155,12 +155,17 @@ model ImportLog {
   created         Int      @default(0)
   updated         Int      @default(0)
   unchanged       Int      @default(0)
-  priceChanges    Int      @default(0)
+   priceChanges    Int      @default(0)
    stockChanges    Int      @default(0)
    costChanges     Int      @default(0)
+   titleChanges    Int      @default(0)
+   descriptionChanges Int   @default(0)
+   vendorChanges   Int      @default(0)
+   productTypeChanges Int  @default(0)
+   tagsChanges     Int      @default(0)
    excludedCount   Int      @default(0)
    errors          String?
-  previewData     String?
+   previewData     String?
   lastSku         String?
   lastProgressAt  DateTime?
   startedAt       DateTime @default(now())
@@ -220,9 +225,14 @@ model BulkJob {
   updateCount      Int      @default(0)
   unchangedCount   Int      @default(0)
   errorCount       Int      @default(0)
-  priceChanges     Int      @default(0)
+   priceChanges     Int      @default(0)
    stockChanges     Int      @default(0)
    costChanges      Int      @default(0)
+   titleChanges     Int      @default(0)
+   descriptionChanges Int    @default(0)
+   vendorChanges    Int      @default(0)
+   productTypeChanges Int    @default(0)
+   tagsChanges      Int      @default(0)
    excludedCount    Int      @default(0)
    forceUpdate      Boolean  @default(false)
   resumeFromLine   Int?     // checkpoint: skip CSV lines up to this number on resume

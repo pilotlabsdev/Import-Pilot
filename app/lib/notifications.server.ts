@@ -10,6 +10,11 @@ interface NotificationPayload {
   priceChanges: number;
   stockChanges: number;
   costChanges: number;
+  titleChanges: number;
+  descriptionChanges: number;
+  vendorChanges: number;
+  productTypeChanges: number;
+  tagsChanges: number;
   errors: Array<{ sku: string; error: string; lineNumber?: number }>;
   duration: string;
 }
@@ -52,6 +57,11 @@ export async function sendNotification(payload: NotificationPayload): Promise<vo
             priceChanges: payload.priceChanges,
             stockChanges: payload.stockChanges,
             costChanges: payload.costChanges,
+            titleChanges: payload.titleChanges,
+            descriptionChanges: payload.descriptionChanges,
+            vendorChanges: payload.vendorChanges,
+            productTypeChanges: payload.productTypeChanges,
+            tagsChanges: payload.tagsChanges,
             errors: payload.errors.length,
             duration: payload.duration,
           },

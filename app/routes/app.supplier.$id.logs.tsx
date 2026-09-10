@@ -66,6 +66,11 @@ export default function Logs() {
       String(log.priceChanges),
       String(log.stockChanges),
       String(log.costChanges),
+      String(log.titleChanges),
+      String(log.descriptionChanges),
+      String(log.vendorChanges),
+      String(log.productTypeChanges),
+      String(log.tagsChanges),
       errors.length > 0 ? (
         <details key={`er-${log.id}`}>
           <summary style={{ cursor: "pointer", color: "#d82c0d" }}>
@@ -102,11 +107,11 @@ export default function Logs() {
             <DataTable
               columnContentTypes={[
                 "text", "text", "text", "text", "numeric", "numeric",
-                "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "text",
+                "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "text",
               ]}
               headings={[
                 t("common.startDate"), t("common.endDate"), t("common.status"), t("common.trigger"), t("common.total"), t("common.created"),
-                t("common.updated"), t("common.unchanged"), t("common.excluded"), t("history.priceDown"), t("history.stockDown"), t("history.costDown"), t("common.errors"),
+                t("common.updated"), t("common.unchanged"), t("common.excluded"), t("history.priceDown"), t("history.stockDown"), t("history.costDown"), t("history.titleDown"), t("history.descDown"), t("history.vendorDown"), t("history.ptDown"), t("history.tagsDown"), t("common.errors"),
               ]}
               rows={rows}
             />

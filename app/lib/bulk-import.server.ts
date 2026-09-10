@@ -1699,6 +1699,11 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
   let priceChanges = 0;
   let stockChanges = 0;
   let costChanges = 0;
+  let titleChanges = 0;
+  let descChanges = 0;
+  let vendorChanges = 0;
+  let ptChanges = 0;
+  let tagChanges = 0;
   let opErrors = 0;
   const transientRetries: Array<{ meta: MetaLine; error: string }> = [];
 
@@ -1902,6 +1907,11 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
         if (priceChanged) priceChanges++;
         if (stockChanged) stockChanges++;
         if (costChanged) costChanges++;
+        if (titleChanged) titleChanges++;
+        if (descriptionChanged) descChanges++;
+        if (vendorChanged) vendorChanges++;
+        if (productTypeChanged) ptChanges++;
+        if (tagsChanged) tagChanges++;
       } else {
         unchangedCount++;
       }
@@ -1976,14 +1986,28 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
                   createdCount++;
                 } else {
                   let rePriceChanged = false, reStockChanged = false, reCostChanged = false;
+                  let reTitleChanged = false, reDescChanged = false, reVendorChanged = false, rePtChanged = false, reTagsChanged = false;
                   if (rm.regularPrice !== existedBefore.lastPrice || rm.compareAtPrice !== existedBefore.lastComparePrice) rePriceChanged = true;
                   if (rm.stockQty !== existedBefore.lastQuantity) reStockChanged = true;
                   if (rm.costPrice > 0 && rm.costPrice !== existedBefore.lastCost) reCostChanged = true;
-                  if (rePriceChanged || reStockChanged || reCostChanged) {
+                  if (rm.title && rm.title !== existedBefore.lastTitle) reTitleChanged = true;
+                  if (rm.description && rm.description !== existedBefore.lastDescription) reDescChanged = true;
+                  if (rm.vendor && rm.vendor !== existedBefore.lastVendor) reVendorChanged = true;
+                  if (rm.productType && rm.productType !== existedBefore.lastProductType) rePtChanged = true;
+                  if (rm.tags) {
+                    const csvTagsJson = JSON.stringify(rm.tags);
+                    if (csvTagsJson !== existedBefore.lastTags) reTagsChanged = true;
+                  }
+                  if (rePriceChanged || reStockChanged || reCostChanged || reTitleChanged || reDescChanged || reVendorChanged || rePtChanged || reTagsChanged) {
                     updatedCount++;
                     if (rePriceChanged) priceChanges++;
                     if (reStockChanged) stockChanges++;
                     if (reCostChanged) costChanges++;
+                    if (reTitleChanged) titleChanges++;
+                    if (reDescChanged) descChanges++;
+                    if (reVendorChanged) vendorChanges++;
+                    if (rePtChanged) ptChanges++;
+                    if (reTagsChanged) tagChanges++;
                   } else {
                     unchangedCount++;
                   }
@@ -2024,6 +2048,11 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       priceChanges: { increment: priceChanges },
       stockChanges: { increment: stockChanges },
       costChanges: { increment: costChanges },
+      titleChanges: { increment: titleChanges },
+      descriptionChanges: { increment: descChanges },
+      vendorChanges: { increment: vendorChanges },
+      productTypeChanges: { increment: ptChanges },
+      tagsChanges: { increment: tagChanges },
       errorCount: { increment: opErrors },
     },
   });
@@ -2042,6 +2071,11 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
         priceChanges: freshJob.priceChanges,
         stockChanges: freshJob.stockChanges,
         costChanges: freshJob.costChanges,
+        titleChanges: freshJob.titleChanges,
+        descriptionChanges: freshJob.descriptionChanges,
+        vendorChanges: freshJob.vendorChanges,
+        productTypeChanges: freshJob.productTypeChanges,
+        tagsChanges: freshJob.tagsChanges,
       },
     }).catch(() => {});
   }
@@ -2253,6 +2287,11 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
         priceChanges: job.priceChanges,
         stockChanges: job.stockChanges,
         costChanges: job.costChanges,
+        titleChanges: job.titleChanges,
+        descriptionChanges: job.descriptionChanges,
+        vendorChanges: job.vendorChanges,
+        productTypeChanges: job.productTypeChanges,
+        tagsChanges: job.tagsChanges,
         excludedCount: job.excludedCount,
         errors: errors.length > 0 ? JSON.stringify(errors) : null,
         completedAt: new Date(),
@@ -2291,6 +2330,11 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
       priceChanges: job.priceChanges,
       stockChanges: job.stockChanges,
       costChanges: job.costChanges,
+      titleChanges: job.titleChanges,
+      descriptionChanges: job.descriptionChanges,
+      vendorChanges: job.vendorChanges,
+      productTypeChanges: job.productTypeChanges,
+      tagsChanges: job.tagsChanges,
       errors,
       duration: `${Math.round((Date.now() - new Date(log.startedAt).getTime()) / 1000)}s`,
     });
@@ -2333,6 +2377,11 @@ async function failJob(job: any, message: string): Promise<void> {
     priceChanges: 0,
     stockChanges: 0,
     costChanges: 0,
+    titleChanges: 0,
+    descriptionChanges: 0,
+    vendorChanges: 0,
+    productTypeChanges: 0,
+    tagsChanges: 0,
     errors: [{ sku: "SYSTEM", error: message, lineNumber: 0 }],
     duration: "0s",
   });
@@ -3114,7 +3163,7 @@ async function queryProductsTargeted(
   const failedEanBatches: string[][] = [];
   for (let i = 0; i < uniqueEans.length; i += 15) {
     const batch = uniqueEans.slice(i, i + 15);
-    const query = batch.map((e) => `barcode:'${String(e).replace(/'/g, "")}'`).join(" OR ");
+    const query = batch.map((e) => `"${String(e).replace(/'/g, "")}"`).join(" OR ");
     let succeeded = false;
     for (let attempt = 0; attempt < 3 && !succeeded; attempt++) {
       if (attempt > 0) await new Promise((r) => setTimeout(r, 1000 * attempt));

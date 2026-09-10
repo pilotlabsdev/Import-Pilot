@@ -31,6 +31,11 @@ export interface QueueItem {
   priceChanges?: number;
   stockChanges?: number;
   costChanges?: number;
+  titleChanges?: number;
+  descriptionChanges?: number;
+  vendorChanges?: number;
+  productTypeChanges?: number;
+  tagsChanges?: number;
   errorCount?: number;
   errorDetails?: any[];
   alreadyQueued?: boolean;
@@ -202,7 +207,9 @@ async function processQueueItem(
         shopDomain,
         status: "completed",
         totalProducts: 0, created: 0, updated: 0, unchanged: 0,
-        priceChanges: 0, stockChanges: 0, costChanges: 0, errors: [],
+        priceChanges: 0, stockChanges: 0, costChanges: 0,
+        titleChanges: 0, descriptionChanges: 0, vendorChanges: 0, productTypeChanges: 0, tagsChanges: 0,
+        errors: [],
         duration,
       }).catch(() => {});
 
@@ -259,6 +266,11 @@ async function processQueueItem(
         priceChanges: result.priceChanges,
         stockChanges: result.stockChanges,
         costChanges: result.costChanges,
+        titleChanges: result.titleChanges,
+        descriptionChanges: result.descriptionChanges,
+        vendorChanges: result.vendorChanges,
+        productTypeChanges: result.productTypeChanges,
+        tagsChanges: result.tagsChanges,
         errors: result.errors,
         duration,
       }).catch(() => {});
@@ -282,6 +294,7 @@ async function processQueueItem(
         status: "failed",
         totalProducts: 0, created: 0, updated: 0, unchanged: 0,
         priceChanges: 0, stockChanges: 0, costChanges: 0,
+        titleChanges: 0, descriptionChanges: 0, vendorChanges: 0, productTypeChanges: 0, tagsChanges: 0,
         errors: [{ sku: "SYSTEM", error: error?.message || "systemError.unknown_error", lineNumber: 0 }],
         duration: `${Math.round((Date.now() - startTime) / 1000)}s`,
       }).catch(() => {});
@@ -328,6 +341,7 @@ export async function cancelQueueItem(itemId: string, shopDomain: string): Promi
       status: "cancelled",
       totalProducts: 0, created: 0, updated: 0, unchanged: 0,
       priceChanges: 0, stockChanges: 0, costChanges: 0,
+      titleChanges: 0, descriptionChanges: 0, vendorChanges: 0, productTypeChanges: 0, tagsChanges: 0,
       errors: [{ sku: "SYSTEM", error: "systemError.cancelled_manually" }],
       duration: "0s",
     }).catch(() => {});
@@ -520,7 +534,9 @@ export async function getQueueStatus(shopDomain: string): Promise<{
     select: {
       id: true, configId: true, status: true, triggerType: true,
       startedAt: true, completedAt: true, created: true, updated: true, unchanged: true,
-      totalProducts: true, excludedCount: true, priceChanges: true, stockChanges: true, costChanges: true, errors: true,
+      totalProducts: true, excludedCount: true, priceChanges: true, stockChanges: true, costChanges: true,
+      titleChanges: true, descriptionChanges: true, vendorChanges: true, productTypeChanges: true, tagsChanges: true,
+      errors: true,
     },
   });
 
@@ -564,6 +580,11 @@ export async function getQueueStatus(shopDomain: string): Promise<{
       priceChanges: log.priceChanges || 0,
       stockChanges: log.stockChanges || 0,
       costChanges: log.costChanges || 0,
+      titleChanges: log.titleChanges || 0,
+      descriptionChanges: log.descriptionChanges || 0,
+      vendorChanges: log.vendorChanges || 0,
+      productTypeChanges: log.productTypeChanges || 0,
+      tagsChanges: log.tagsChanges || 0,
       errorCount: errorDetails.length,
       errorDetails,
     };
@@ -606,6 +627,7 @@ export async function getQueueStatus(shopDomain: string): Promise<{
       createdAt: qi.createdAt,
       totalProducts: 0, created: 0, updated: 0, unchanged: 0,
       excludedCount: 0, priceChanges: 0, stockChanges: 0, costChanges: 0,
+      titleChanges: 0, descriptionChanges: 0, vendorChanges: 0, productTypeChanges: 0, tagsChanges: 0,
       errorCount: 1,
       errorDetails: [{ sku: "SYSTEM", error: "systemError.queue_failed_without_log" }],
     });
@@ -648,6 +670,11 @@ export async function getQueueItemProgress(itemId: string): Promise<{
   priceChanges?: number;
   stockChanges?: number;
   costChanges?: number;
+  titleChanges?: number;
+  descriptionChanges?: number;
+  vendorChanges?: number;
+  productTypeChanges?: number;
+  tagsChanges?: number;
 } | null> {
   const item = await prisma.importQueue.findUnique({ where: { id: itemId } });
   if (!item || !item.logId) return null;
@@ -687,6 +714,11 @@ export async function getQueueItemProgress(itemId: string): Promise<{
           priceChanges: true,
           stockChanges: true,
           costChanges: true,
+          titleChanges: true,
+          descriptionChanges: true,
+          vendorChanges: true,
+          productTypeChanges: true,
+          tagsChanges: true,
         },
         orderBy: { createdAt: "desc" },
       }).catch(() => null)
@@ -710,5 +742,10 @@ export async function getQueueItemProgress(itemId: string): Promise<{
     priceChanges: bulkJob?.priceChanges ?? undefined,
     stockChanges: bulkJob?.stockChanges ?? undefined,
     costChanges: bulkJob?.costChanges ?? undefined,
+    titleChanges: bulkJob?.titleChanges ?? undefined,
+    descriptionChanges: bulkJob?.descriptionChanges ?? undefined,
+    vendorChanges: bulkJob?.vendorChanges ?? undefined,
+    productTypeChanges: bulkJob?.productTypeChanges ?? undefined,
+    tagsChanges: bulkJob?.tagsChanges ?? undefined,
   };
 }

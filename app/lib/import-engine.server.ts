@@ -335,6 +335,11 @@ interface ImportResult {
   priceChanges: number;
   stockChanges: number;
   costChanges: number;
+  titleChanges: number;
+  descriptionChanges: number;
+  vendorChanges: number;
+  productTypeChanges: number;
+  tagsChanges: number;
   errors: Array<{ sku: string; error: string; lineNumber?: number }>;
   lastSku: string;
 }
@@ -429,6 +434,11 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
     priceChanges: 0,
     stockChanges: 0,
     costChanges: 0,
+    titleChanges: 0,
+    descriptionChanges: 0,
+    vendorChanges: 0,
+    productTypeChanges: 0,
+    tagsChanges: 0,
     errors: [],
     lastSku: "",
   };
@@ -665,6 +675,11 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
         priceChanges: result.priceChanges,
         stockChanges: result.stockChanges,
         costChanges: result.costChanges,
+        titleChanges: result.titleChanges,
+        descriptionChanges: result.descriptionChanges,
+        vendorChanges: result.vendorChanges,
+        productTypeChanges: result.productTypeChanges,
+        tagsChanges: result.tagsChanges,
         excludedCount: excludedCount + result.excluded,
         errors: cancelled
           ? JSON.stringify([{ sku: "SYSTEM", error: "systemError.cancelled_manually" }])
@@ -1530,6 +1545,23 @@ async function processProduct({
     if (priceChanged) result.priceChanges++;
     if (stockChanged) result.stockChanges++;
     if (costChanged) result.costChanges++;
+
+    // Count title/description/vendor/productType/tags changes
+    const lastTitle = existing.lastTitle ?? null;
+    const lastDescription = existing.lastDescription ?? null;
+    const lastVendor = existing.lastVendor ?? null;
+    const lastProductType = existing.lastProductType ?? null;
+    const lastTags = existing.lastTags ?? null;
+    const titleChanged = updateOpts.has("name") && productInput.title && productInput.title !== lastTitle;
+    const descriptionChanged = updateOpts.has("description") && productInput.descriptionHtml && productInput.descriptionHtml !== lastDescription;
+    const vendorChanged = updateOpts.has("vendor") && productInput.vendor && productInput.vendor !== lastVendor;
+    const productTypeChanged = updateOpts.has("productType") && productInput.productType && productInput.productType !== lastProductType;
+    const tagsChanged = updateOpts.has("tags") && productInput.tags?.length && JSON.stringify(productInput.tags) !== lastTags;
+    if (titleChanged) result.titleChanges++;
+    if (descriptionChanged) result.descriptionChanges++;
+    if (vendorChanged) result.vendorChanges++;
+    if (productTypeChanged) result.productTypeChanges++;
+    if (tagsChanged) result.tagsChanges++;
 
 
     const productPatch: any = { id: existing.shopifyProductId };
