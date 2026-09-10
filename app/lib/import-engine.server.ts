@@ -1272,17 +1272,19 @@ async function processProduct({
   if (shopifyProductType) productInput.productType = shopifyProductType;
 
   // Verify mapping is still valid in Shopify
+  let shopifyLiveTags: string[] | null = null;
   if (existing) {
     try {
       const checkJson = await graphqlWithRetry(admin,
         `#graphql
         query productById($id: ID!) {
-          product(id: $id) { id title }
+          product(id: $id) { id title tags }
         }`,
         { id: existing.shopifyProductId }
       );
       if (checkJson.data?.product?.id) {
         // Product exists — keep mapping
+        shopifyLiveTags = checkJson.data.product.tags ?? null;
       } else if (checkJson.errors?.length) {
         // Don't delete mapping on GraphQL errors
         return;
@@ -1307,6 +1309,14 @@ async function processProduct({
             },
           });
           existing = await prisma.productMapping.findUnique({ where: { id: existing.id } });
+          // Fetch live tags for the new product ID
+          try {
+            const recheck = await graphqlWithRetry(admin,
+              `#graphql query productById($id: ID!) { product(id: $id) { tags } }`,
+              { id: found.product.id }
+            );
+            shopifyLiveTags = recheck.data?.product?.tags ?? null;
+          } catch { /* ignore */ }
         } else {
           await prisma.productMapping.delete({ where: { id: existing.id } });
           existing = null;
@@ -1598,7 +1608,8 @@ async function processProduct({
     const descriptionChanged = updateOpts.has("description") && productInput.descriptionHtml && normalizeHtml(productInput.descriptionHtml) !== normalizeHtml(lastDescription ?? "");
     const vendorChanged = updateOpts.has("vendor") && productInput.vendor && productInput.vendor !== lastVendor;
     const productTypeChanged = updateOpts.has("productType") && productInput.productType && productInput.productType !== lastProductType;
-    const tagsChanged = updateOpts.has("tags") && productInput.tags?.length && JSON.stringify(productInput.tags) !== lastTags;
+    const tagsBaseline = shopifyLiveTags?.length ? JSON.stringify(shopifyLiveTags) : lastTags;
+    const tagsChanged = updateOpts.has("tags") && productInput.tags?.length && JSON.stringify(productInput.tags) !== tagsBaseline;
     if (titleChanged) result.titleChanges++;
     if (descriptionChanged) result.descriptionChanges++;
     if (vendorChanged) result.vendorChanges++;

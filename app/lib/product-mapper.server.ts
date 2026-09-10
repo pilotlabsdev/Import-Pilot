@@ -493,7 +493,9 @@ export function mapCsvRowToProductSetUpdate(
 
   input.productOptions = [{ name: "Title", values: [{ name: "Default Title" }] }];
 
-  delete input.files;
+  if (!opts.has("images")) {
+    delete input.files;
+  }
 
   return input;
 }
