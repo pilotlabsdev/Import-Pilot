@@ -33,6 +33,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
     const payload = JSON.parse(rawBody);
     const shop = payload.shop_domain || "unknown";
+
+    // shop/redact: delete ALL shop data (GDPR, sent 48h after uninstall)
+    if (topicHeader === "shop/redact") {
+      await prisma.$transaction([
+        prisma.importConfig.deleteMany({ where: { shopDomain: shop } }),
+        prisma.productMapping.deleteMany({ where: { shopDomain: shop } }),
+        prisma.importLog.deleteMany({ where: { shopDomain: shop } }),
+        prisma.notificationConfig.deleteMany({ where: { shopDomain: shop } }),
+        prisma.bulkJob.deleteMany({ where: { shopDomain: shop } }),
+        prisma.shopSettings.deleteMany({ where: { shopDomain: shop } }),
+      ]);
+      console.log(`[Webhook] SHOP_REDACT: ${shop} datos eliminados definitivamente`);
+    }
+
     console.log(`[Webhook] Compliance: ${topicHeader} from ${shop} — OK (200)`);
     throw new Response(null, { status: 200 });
   }
@@ -67,18 +81,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         data: { status: "cancelled", finishedAt: new Date() },
       });
       console.log(`[Webhook] APP_UNINSTALLED: ${shop} marcado como inactivo, sesiones y cola eliminadas`);
-      break;
-    }
-    case "SHOP_REDACT": {
-      await prisma.$transaction([
-        prisma.importConfig.deleteMany({ where: { shopDomain: shop } }),
-        prisma.productMapping.deleteMany({ where: { shopDomain: shop } }),
-        prisma.importLog.deleteMany({ where: { shopDomain: shop } }),
-        prisma.notificationConfig.deleteMany({ where: { shopDomain: shop } }),
-        prisma.bulkJob.deleteMany({ where: { shopDomain: shop } }),
-        prisma.shopSettings.deleteMany({ where: { shopDomain: shop } }),
-      ]);
-      console.log(`[Webhook] SHOP_REDACT: ${shop} datos eliminados definitivamente`);
       break;
     }
     case "BULK_OPERATIONS_FINISH": {
