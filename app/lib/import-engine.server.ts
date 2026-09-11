@@ -990,7 +990,10 @@ async function processProduct({
           }`,
           { product: fullPatch }
         );
-        const updateErrors = updateRes.data?.productUpdate?.userErrors || [];
+      const updateErrors = updateRes.data?.productUpdate?.userErrors || [];
+      if (updateErrors.length > 0) {
+        console.error(`[Import] SKU ${sku}: productUpdate errors:`, JSON.stringify(updateErrors));
+      }
         if (updateErrors.length) {
           const notFound = updateErrors.some((e: any) =>
             e.message?.includes("not find") || e.message?.includes("NOT_FOUND") || e.message?.includes("was not found")
@@ -1638,6 +1641,7 @@ async function processProduct({
     }
 
     if (Object.keys(productPatch).length > 1) {
+      console.log(`[Import] SKU ${sku}: productUpdate with keys=${Object.keys(productPatch).join(",")} titleChanged=${titleChanged} descChanged=${descriptionChanged}`);
       const updateRes = await graphqlWithRetry(admin,
         `#graphql
         mutation productUpdate($product: ProductUpdateInput!) {
