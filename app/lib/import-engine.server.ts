@@ -1584,6 +1584,7 @@ async function processProduct({
       existing = null;
     }
   }
+  let descDebugCount = 0;
   if (existing) {
     // === CHANGE DETECTION: compare against live Shopify data (not just last import) ===
     const lastPrice = existing.lastPrice ?? null;
@@ -1624,7 +1625,12 @@ async function processProduct({
     const liveTags = liveProduct?.tags ?? shopifyLiveTags ?? null;
 
     const titleChanged = updateOpts.has("name") && productInput.title && productInput.title !== liveTitle;
-    const descriptionChanged = updateOpts.has("description") && productInput.descriptionHtml && normalizeHtml(productInput.descriptionHtml) !== normalizeHtml(liveDescription ?? "");
+    const csvDescNorm = normalizeHtml(productInput.descriptionHtml ?? "");
+    const liveDescNorm = normalizeHtml(liveDescription ?? "");
+    const descriptionChanged = updateOpts.has("description") && productInput.descriptionHtml && csvDescNorm !== liveDescNorm;
+    if (descriptionChanged && csvDescNorm && liveDescNorm) {
+      console.log(`[Import] SKU ${sku}: DESC MISMATCH csv="${csvDescNorm.slice(0,200)}" shopify="${liveDescNorm.slice(0,200)}"`);
+    }
     const vendorChanged = updateOpts.has("vendor") && productInput.vendor && productInput.vendor !== liveVendor;
     const productTypeChanged = updateOpts.has("productType") && productInput.productType && productInput.productType !== liveProductType;
     const tagsBaseline = liveTags?.length
