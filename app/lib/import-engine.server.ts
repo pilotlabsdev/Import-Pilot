@@ -361,6 +361,7 @@ interface ImportResult {
   vendorChanges: number;
   productTypeChanges: number;
   tagsChanges: number;
+  imageChanges: number;
   errors: Array<{ sku: string; error: string; lineNumber?: number }>;
   lastSku: string;
 }
@@ -460,6 +461,7 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
     vendorChanges: 0,
     productTypeChanges: 0,
     tagsChanges: 0,
+    imageChanges: 0,
     errors: [],
     lastSku: "",
   };
@@ -701,6 +703,7 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
         vendorChanges: result.vendorChanges,
         productTypeChanges: result.productTypeChanges,
         tagsChanges: result.tagsChanges,
+        imageChanges: result.imageChanges,
         excludedCount: excludedCount + result.excluded,
         errors: cancelled
           ? JSON.stringify([{ sku: "SYSTEM", error: "systemError.cancelled_manually" }])
@@ -1742,7 +1745,7 @@ async function processProduct({
     }
 
     // Skip productUpdate/price/stock if nothing changed
-    if (!priceChanged && !stockChanged && !costChanged && !titleChanged && !descriptionChanged && !vendorChanged && !productTypeChanged && !tagsChanged) {
+    if (!priceChanged && !stockChanged && !costChanged && !titleChanged && !descriptionChanged && !vendorChanged && !productTypeChanged && !tagsChanged && !imagesChanged) {
       result.unchanged++;
       return;
     }
@@ -1755,6 +1758,7 @@ async function processProduct({
     if (vendorChanged) result.vendorChanges++;
     if (productTypeChanged) result.productTypeChanges++;
     if (tagsChanged) result.tagsChanges++;
+    if (imagesChanged) result.imageChanges++;
 
     const productPatch: any = { id: existing.shopifyProductId };
     if (updateOpts.has("name")) productPatch.title = productInput.title;

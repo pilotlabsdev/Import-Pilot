@@ -239,7 +239,7 @@ export default function QueuePage() {
                 {recent.length > 0 ? (
                   <DataTable
                     columnContentTypes={["text", "text", "text", "text", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "text", "text", "text"]}
-                    headings={[t("common.supplier"), t("common.source"), t("common.status"), t("common.trigger"), t("common.total"), t("common.created"), t("common.updated"), t("common.unchanged"), t("common.excluded"), t("queue.priceDown"), t("queue.stockDown"), t("queue.costDown"), t("queue.titleDown"), t("queue.descDown"), t("queue.vendorDown"), t("queue.ptDown"), t("queue.tagsDown"), t("common.errors"), t("common.startDate"), t("common.endDate")]}
+                    headings={[t("common.supplier"), t("common.source"), t("common.status"), t("common.trigger"), t("common.total"), t("common.created"), t("common.updated"), t("common.unchanged"), t("common.excluded"), t("queue.priceDown"), t("queue.stockDown"), t("queue.costDown"), t("queue.titleDown"), t("queue.descDown"), t("queue.vendorDown"), t("queue.ptDown"), t("queue.tagsDown"), t("queue.imgDown"), t("common.errors"), t("common.startDate"), t("common.endDate")]}
                     rows={recent.map((item: any) => [
                       item.supplierName || item.configId,
                       <Text key={item.id} as="span" variant="bodySm" truncate>
@@ -262,6 +262,7 @@ export default function QueuePage() {
                       item.vendorChanges ?? "—",
                       item.productTypeChanges ?? "—",
                       item.tagsChanges ?? "—",
+                      item.imageChanges ?? "—",
                       (item.errorCount ?? 0) > 0 ? (
                         <details key={`er-${item.id}`}>
                           <summary style={{ cursor: "pointer", color: "#d82c0d" }}>

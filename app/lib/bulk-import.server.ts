@@ -406,6 +406,7 @@ interface LookupMatch {
   shopifyVendor?: string;
   shopifyProductType?: string;
   shopifyTags?: string[];
+  shopifyImages?: string[];
 }
 
 interface MetaLine {
@@ -433,6 +434,7 @@ interface MetaLine {
   vendorChanged?: boolean;
   productTypeChanged?: boolean;
   tagsChanged?: boolean;
+  imagesChanged?: boolean;
   priceApplied?: boolean;
   stockApplied?: boolean;
   skipPrice?: boolean;
@@ -588,6 +590,7 @@ export async function runBulkImport({
             query ($id: ID!) {
               product(id: $id) {
                 id title vendor productType tags descriptionHtml
+                images(first: 5) { edges { node { url } } }
                 variants(first: 5) {
                   edges {
                     node { id sku barcode inventoryItem { id unitCost { amount } } }
@@ -608,6 +611,9 @@ export async function runBulkImport({
           const productVendor = product.vendor || undefined;
           const productProductType = product.productType || undefined;
           const productTags: string[] | undefined = product.tags?.length > 0 ? product.tags : undefined;
+          const productImages: string[] | undefined = product.images?.edges?.length > 0
+            ? product.images.edges.map((e: any) => e.node.url).filter(Boolean)
+            : undefined;
           for (const vEdge of product.variants?.edges || []) {
             const v = vEdge.node;
             const matchData: LookupMatch = {
@@ -621,6 +627,7 @@ export async function runBulkImport({
               shopifyVendor: productVendor,
               shopifyProductType: productProductType,
               shopifyTags: productTags,
+              shopifyImages: productImages,
             };
             if (v.sku && !targetedMaps.bySku.has(v.sku)) targetedMaps.bySku.set(String(v.sku), matchData);
             if (v.barcode && !targetedMaps.byBarcode.has(String(v.barcode))) targetedMaps.byBarcode.set(String(v.barcode), matchData);
@@ -1349,9 +1356,20 @@ async function prepareAndLaunch(
         tagDebugCount++;
       }
 
+      // Detect image changes: compare CSV image URLs against Shopify's current images
+      const csvImageUrls: string[] = [];
+      if (effectiveOpts.has("images")) {
+        for (let i = 1; i <= 5; i++) { const img = getField(row, columnMaps, `image${i}`); if (img) csvImageUrls.push(img.trim()); }
+      }
+      const shopifyImageUrls = (match.shopifyImages || []).map((u: string) => u.trim()).sort();
+      const sortedCsvImages = [...csvImageUrls].sort();
+      const imagesChanged = effectiveOpts.has("images") && (
+        sortedCsvImages.length !== shopifyImageUrls.length ||
+        sortedCsvImages.some((url: string, idx: number) => url !== shopifyImageUrls[idx])
+      );
+
       // Skip products with NO changes — don't send mutation
-      // Note: csvHasImages excluded because bulk doesn't support image mutations (productInput has no files field)
-      if (!priceChanged && !stockChanged && !costChanged && !titleChanged && !descriptionChanged && !vendorChanged && !productTypeChanged && !tagsChanged) {
+      if (!priceChanged && !stockChanged && !costChanged && !titleChanged && !descriptionChanged && !vendorChanged && !productTypeChanged && !tagsChanged && !imagesChanged) {
         matchedUnchangedCount++;
         unchangedCount++;
         continue;
@@ -1368,6 +1386,7 @@ async function prepareAndLaunch(
       meta.vendorChanged = vendorChanged;
       meta.productTypeChanged = productTypeChanged;
       meta.tagsChanged = tagsChanged;
+      meta.imagesChanged = imagesChanged;
       meta.priceApplied = effectiveOpts.has("price");
       meta.stockApplied = effectiveOpts.has("stock") && stockQty >= 0;
       meta.skipPrice = excludedFields?.includes("price") || false;
@@ -1549,6 +1568,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
   let vendorChanges = 0;
   let ptChanges = 0;
   let tagChanges = 0;
+  let imgChanges = 0;
   let opErrors = 0;
   const transientRetries: Array<{ meta: MetaLine; error: string }> = [];
 
@@ -1610,6 +1630,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
     let vendorChanged = meta.vendorChanged || false;
     let productTypeChanged = meta.productTypeChanged || false;
     let tagsChanged = meta.tagsChanged || false;
+    let imagesChanged = meta.imagesChanged || false;
     if (!actuallyNew && existingMapping) {
       const csvPrice = meta.priceApplied !== false ? meta.regularPrice : undefined;
       const csvCompare = meta.priceApplied !== false ? meta.compareAtPrice : undefined;
@@ -1745,6 +1766,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       if (vendorChanged) vendorChanges++;
       if (productTypeChanged) ptChanges++;
       if (tagsChanged) tagChanges++;
+      if (imagesChanged) imgChanges++;
     }
     } catch (loopErr: any) {
       console.error(`[Bulk] handleMutationOpFinished iteration ${i} CRASH: ${loopErr?.message}\n${loopErr?.stack}`);
@@ -1900,6 +1922,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       vendorChanges: { increment: vendorChanges },
       productTypeChanges: { increment: ptChanges },
       tagsChanges: { increment: tagChanges },
+      imageChanges: { increment: imgChanges },
       errorCount: { increment: opErrors },
     },
   });
@@ -1923,6 +1946,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
         vendorChanges: freshJob.vendorChanges,
         productTypeChanges: freshJob.productTypeChanges,
         tagsChanges: freshJob.tagsChanges,
+        imageChanges: freshJob.imageChanges,
       },
     }).catch(() => {});
   }
@@ -2139,6 +2163,7 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
         vendorChanges: job.vendorChanges,
         productTypeChanges: job.productTypeChanges,
         tagsChanges: job.tagsChanges,
+        imageChanges: job.imageChanges,
         excludedCount: job.excludedCount,
         errors: errors.length > 0 ? JSON.stringify(errors) : null,
         completedAt: new Date(),
@@ -2182,6 +2207,7 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
       vendorChanges: job.vendorChanges,
       productTypeChanges: job.productTypeChanges,
       tagsChanges: job.tagsChanges,
+      imageChanges: job.imageChanges,
       errors,
       duration: `${Math.round((Date.now() - new Date(log.startedAt).getTime()) / 1000)}s`,
     });
@@ -2954,6 +2980,7 @@ async function queryProductsTargeted(
         edges {
           node {
             id title vendor productType tags descriptionHtml
+            images(first: 5) { edges { node { url } } }
             variants(first: 5) {
               edges {
                 node { id sku barcode inventoryItem { id unitCost { amount } } }
@@ -2984,6 +3011,9 @@ async function queryProductsTargeted(
           const productVendor = node.vendor || undefined;
           const productProductType = node.productType || undefined;
           const productTags: string[] | undefined = node.tags?.length > 0 ? node.tags : undefined;
+          const productImages: string[] | undefined = node.images?.edges?.length > 0
+            ? node.images.edges.map((e: any) => e.node.url).filter(Boolean)
+            : undefined;
           for (const vEdge of node.variants?.edges || []) {
             const v = vEdge.node;
             const match: LookupMatch = {
@@ -2997,6 +3027,7 @@ async function queryProductsTargeted(
               shopifyVendor: productVendor,
               shopifyProductType: productProductType,
               shopifyTags: productTags,
+              shopifyImages: productImages,
             };
             if (v.sku) bySku.set(String(v.sku), match);
             if (v.barcode) byBarcode.set(String(v.barcode), match);

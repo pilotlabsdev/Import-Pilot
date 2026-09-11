@@ -389,6 +389,7 @@
   "history.vendorDown": "Proveedor ↓",
   "history.ptDown": "Tipo ↓",
   "history.tagsDown": "Tags ↓",
+  "history.imgDown": "Imágenes ↓",
   
   "queue.title": "Cola de importaciones",
   "queue.inProgress": "En proceso",
@@ -409,6 +410,7 @@
   "queue.vendorDown": "↓ Proveedor",
   "queue.ptDown": "↓ Tipo",
   "queue.tagsDown": "↓ Tags",
+  "queue.imgDown": "↓ Imágenes",
   "queue.andMore": "…y {{count}} más",
   "queue.products": "productos",
   "queue.lastSku": "Último SKU:",
