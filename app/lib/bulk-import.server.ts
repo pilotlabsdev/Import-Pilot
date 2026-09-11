@@ -1194,7 +1194,34 @@ async function prepareAndLaunch(
       return row[m.csvColumn] || row["ean"] || row["EAN"] || "";
     })();
 
+    const exclusion = isExcluded(row, columnMaps, config, getField, { sku, ean });
+    if (exclusion.excluded) {
+      excludedCount++;
+      continue;
+    }
+
+    const costPrice = parseFloat((getField(row, columnMaps, "price") || "0").replace(",", "."));
+
+    const prices = calculatePriceSync(rules, sku, category, costPrice);
+
+    const quantity = parseInt(
+      (() => {
+        const m = columnMaps.find((c) => c.shopifyField === "quantity");
+        if (!m || !m.csvColumn) return m?.defaultValue || "0";
+        return row[m.csvColumn] || m.defaultValue || "0";
+      })()
+    );
+    // Ensure quantity is never negative (Shopify doesn't accept negative stock)
+    const stockQty = Math.max(0, quantity);
+
+    if (config.skipZeroStockCreate && stockQty <= 0) {
+      zeroStockSkippedCount++;
+      excludedCount++;
+      continue;
+    }
+
     // Duplicate detection: check if same EAN exists from another supplier OR already in Shopify
+    // AFTER exclusions — only check products that will actually be imported
     let priorityReplaceMappingId: string | undefined;
     let priorityReplaceConfigId: string | undefined;
     if (ean) {
@@ -1232,32 +1259,6 @@ async function prepareAndLaunch(
           continue;
         }
       }
-    }
-
-    const exclusion = isExcluded(row, columnMaps, config, getField, { sku, ean });
-    if (exclusion.excluded) {
-      excludedCount++;
-      continue;
-    }
-
-    const costPrice = parseFloat((getField(row, columnMaps, "price") || "0").replace(",", "."));
-
-    const prices = calculatePriceSync(rules, sku, category, costPrice);
-
-    const quantity = parseInt(
-      (() => {
-        const m = columnMaps.find((c) => c.shopifyField === "quantity");
-        if (!m || !m.csvColumn) return m?.defaultValue || "0";
-        return row[m.csvColumn] || m.defaultValue || "0";
-      })()
-    );
-    // Ensure quantity is never negative (Shopify doesn't accept negative stock)
-    const stockQty = Math.max(0, quantity);
-
-    if (config.skipZeroStockCreate && stockQty <= 0) {
-      zeroStockSkippedCount++;
-      excludedCount++;
-      continue;
     }
 
     const matchingCategoryMaps = (config.categoryMaps || [])
