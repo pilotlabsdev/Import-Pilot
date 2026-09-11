@@ -1592,18 +1592,7 @@ async function processProduct({
 
     const imagesChanged = updateOpts.has("images") && (productInput.files?.length ?? 0) > 0;
 
-    // Only count as "unchanged" if price/stock/cost/images didn't change
-    // Data fields are always sent (idempotent) but don't count toward "updated"
-    if (!priceChanged && !stockChanged && !costChanged && !weightChanged && !imagesChanged) {
-      result.unchanged++;
-      return;
-    }
-
-    if (priceChanged) result.priceChanges++;
-    if (stockChanged) result.stockChanges++;
-    if (costChanged) result.costChanges++;
-
-    // Count title/description/vendor/productType/tags changes
+    // Count data field changes (title/description/vendor/productType/tags)
     const lastTitle = existing.lastTitle ?? null;
     const lastDescription = existing.lastDescription ?? null;
     const lastVendor = existing.lastVendor ?? null;
@@ -1615,6 +1604,16 @@ async function processProduct({
     const productTypeChanged = updateOpts.has("productType") && productInput.productType && productInput.productType !== lastProductType;
     const tagsBaseline = shopifyLiveTags?.length ? JSON.stringify(shopifyLiveTags) : lastTags;
     const tagsChanged = updateOpts.has("tags") && productInput.tags?.length && JSON.stringify(productInput.tags) !== tagsBaseline;
+
+    // Skip only if truly nothing changed
+    if (!priceChanged && !stockChanged && !costChanged && !weightChanged && !titleChanged && !descriptionChanged && !vendorChanged && !productTypeChanged && !tagsChanged && !imagesChanged) {
+      result.unchanged++;
+      return;
+    }
+
+    if (priceChanged) result.priceChanges++;
+    if (stockChanged) result.stockChanges++;
+    if (costChanged) result.costChanges++;
     if (titleChanged) result.titleChanges++;
     if (descriptionChanged) result.descriptionChanges++;
     if (vendorChanged) result.vendorChanges++;
