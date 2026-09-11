@@ -145,12 +145,29 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       if (newCompare != null && !compareUnchanged) patch.lastComparePrice = newCompare;
       if (newQty != null && !qtyUnchanged) patch.lastQuantity = newQty;
 
+      // Sync text fields so import compares CSV against Shopify's actual values
+      const newTitle = payload.title as string | null;
+      const newDesc = payload.body_html as string | null;
+      const newVendor = payload.vendor as string | null;
+      const newPt = payload.product_type as string | null;
+      const newTags = payload.tags as string | null;
+
+      if (newTitle != null && newTitle !== mapping.lastTitle) patch.lastTitle = newTitle;
+      if (newDesc != null && newDesc !== mapping.lastDescription) patch.lastDescription = newDesc;
+      if (newVendor != null && newVendor !== mapping.lastVendor) patch.lastVendor = newVendor;
+      if (newPt != null && newPt !== mapping.lastProductType) patch.lastProductType = newPt;
+      if (newTags != null) {
+        const sorted = newTags.split(",").map((t: string) => t.trim()).filter(Boolean).sort().join(",");
+        const lastSorted = (mapping.lastTags ?? "").split(",").map((t: string) => t.trim()).filter(Boolean).sort().join(",");
+        if (sorted !== lastSorted) patch.lastTags = newTags;
+      }
+
       if (Object.keys(patch).length > 0) {
         await prisma.productMapping.update({
           where: { id: mapping.id },
           data: patch,
         });
-        console.log(`[Webhook] PRODUCT_UPDATE SKU=${mapping.supplierSku}: ${Object.entries(patch).map(([k, v]) => `${k}=${v}`).join(", ")}`);
+        console.log(`[Webhook] PRODUCT_UPDATE SKU=${mapping.supplierSku}: updated ${Object.keys(patch).join(", ")}`);
       }
       break;
     }
