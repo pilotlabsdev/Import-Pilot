@@ -2610,6 +2610,7 @@ export async function reconcileStaleBulkJobs(): Promise<void> {
       const msg = error?.message || "";
       const isAuth = msg.includes("Token inválido") || msg.includes("Session not found") || msg.includes("Unauthorized") || msg.includes("No se pudo crear admin client");
       const isMissingFiles = msg.includes("ENOENT");
+      const isMutationSchema = msg.includes("cannot contain more than 1 connection") || msg.includes("Field is not defined on");
       console.error(
         `[Bulk] Error reanudando job ${job.id} (fase ${job.phase}):`,
         msg || error
@@ -2620,6 +2621,9 @@ export async function reconcileStaleBulkJobs(): Promise<void> {
       } else if (isMissingFiles) {
         console.error(`[Bulk] Missing files (ephemeral filesystem?) → failing job ${job.id.slice(0,8)}`);
         await failJob(job, `systemError.files_lost_redeploy`);
+      } else if (isMutationSchema) {
+        console.error(`[Bulk] Mutation schema error → failing job ${job.id.slice(0,8)}: ${msg}`);
+        await failJob(job, `systemError.mutation_schema_error`);
       }
       // Non-auth errors: log but continue to next reconcile cycle
     }
