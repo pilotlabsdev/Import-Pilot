@@ -1640,7 +1640,6 @@ async function processProduct({
             `#graphql
             mutation collectionRemove($id: ID!, $productIds: [ID!]!) {
               collectionRemoveProducts(id: $id, productIds: $productIds) {
-                job { id }
                 userErrors { field message }
               }
             }`,
@@ -1652,7 +1651,6 @@ async function processProduct({
             `#graphql
             mutation collectionAdd($id: ID!, $productIds: [ID!]!) {
               collectionAddProducts(id: $id, productIds: $productIds) {
-                job { id }
                 userErrors { field message }
               }
             }`,
@@ -1727,7 +1725,13 @@ async function processProduct({
           query productMedia($id: ID!) {
             product(id: $id) {
               media(first: 50) {
-                edges { node { ... on MediaImage { originalSource { url } alt } } }
+                edges {
+                  node {
+                    ... on MediaImage {
+                      image { url altText }
+                    }
+                  }
+                }
               }
             }
           }`,
@@ -1735,15 +1739,15 @@ async function processProduct({
         );
         const existingUrls = new Set(
           (mediaRes.data?.product?.media?.edges || [])
-            .map((e: any) => e.node?.originalSource?.url || "")
+            .map((e: any) => e.node?.image?.url || "")
             .filter(Boolean)
         );
-        const newFiles = productInput.files.filter((f: any) => !existingUrls.has(f.originalSource));
+        const newFiles = (productInput.files as any[]).filter((f: any) => f.originalSource && !existingUrls.has(f.originalSource));
         if (newFiles.length > 0) {
           imageQueue.push({
             productId: existing.shopifyProductId,
-            files: newFiles.map((f: any) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType })),
-            label: `SKU=${sku} (update images, ${newFiles.length} new)`,
+            files: newFiles.map((f: any) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType || "IMAGE" })),
+            label: `SKU=${sku} (update add ${newFiles.length} images)`,
           });
         }
       } catch (error: any) {
