@@ -1586,6 +1586,9 @@ async function processProduct({
     const costChanged = costPrice > 0 && existing.shopifyInventoryItemId && Math.abs((lastCost ?? 0) - costPrice) > 0.001;
     const weightValue = parseFloat((getField(row, columnMaps, "weight") || "0").replace(",", "."));
     const weightChanged = weightValue > 0 && existing.shopifyInventoryItemId;
+    if (weightValue > 0 && !weightChanged) {
+      console.log(`[Import] SKU ${sku}: weight=${weightValue} but inventoryItemId=${existing.shopifyInventoryItemId} — skipping weight update`);
+    }
 
     const imagesChanged = updateOpts.has("images") && (productInput.files?.length ?? 0) > 0;
 
@@ -1726,6 +1729,7 @@ async function processProduct({
 
     if (weightChanged && existing.shopifyInventoryItemId) {
       try {
+        console.log(`[Import] SKU ${sku}: updating weight=${weightValue} on inventoryItem=${existing.shopifyInventoryItemId}`);
         await graphqlWithRetry(admin,
           `#graphql
           mutation inventoryItemUpdate($id: ID!, $input: InventoryItemInput!) {
