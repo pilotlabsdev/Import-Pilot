@@ -207,6 +207,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return data({ success: true });
   }
 
+  if (intent === "clearAll") {
+    const shopDomain = session.shop;
+    await prisma.duplicateLog.deleteMany({
+      where: { shopDomain },
+    });
+    return data({ success: true });
+  }
+
   if (intent === "unresolve") {
     const id = form.get("id") as string;
     await prisma.duplicateLog.update({
@@ -291,6 +299,18 @@ export default function Duplicates() {
             }
           : undefined
       }
+      secondaryActions={[{
+        content: "Limpiar todo",
+        destructive: true,
+        onAction: () => {
+          if (window.confirm("¿Eliminar todos los registros de duplicados?")) {
+            fetcher.submit(
+              { intent: "clearAll" },
+              { method: "POST" }
+            );
+          }
+        },
+      }]}
     >
       <Layout>
         <Layout.Section>
