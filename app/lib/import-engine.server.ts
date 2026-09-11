@@ -18,10 +18,16 @@ function normalizeHtml(html: string): string {
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
-    .replace(/&#039;/g, "'")
+    .replace(/&#0?39;/g, "'")
+    .replace(/&\w+;/g, "")
     .replace(/[\r\n]+/g, "")
     .replace(/\s+/g, " ")
-    .trim();
+    .trim()
+    .toLowerCase();
+}
+
+function normalizeTags(tags: string[]): string {
+  return JSON.stringify(tags.map((t) => t.trim().toLowerCase()).sort());
 }
 
 interface BarcodeMatch {
@@ -1386,14 +1392,14 @@ async function processProduct({
             lastQuantity: newQty, lastCost: costPrice > 0 ? costPrice : null,
             lastTitle: productInput.title ?? null, lastDescription: productInput.descriptionHtml ?? null,
             lastVendor: productInput.vendor ?? null, lastProductType: productInput.productType ?? null,
-            lastTags: productInput.tags?.length ? JSON.stringify(productInput.tags) : null,
+            lastTags: productInput.tags?.length ? normalizeTags(productInput.tags) : null,
             lastImportSource: sourceKey,
           },
           update: {
             shopifyProductId: foundBarcode.productId, shopifyVariantId: foundBarcode.variantId,
             lastTitle: productInput.title ?? undefined, lastDescription: productInput.descriptionHtml ?? undefined,
             lastVendor: productInput.vendor ?? undefined, lastProductType: productInput.productType ?? undefined,
-            lastTags: productInput.tags?.length ? JSON.stringify(productInput.tags) : undefined,
+            lastTags: productInput.tags?.length ? normalizeTags(productInput.tags) : undefined,
             lastImportSource: sourceKey,
           },
         });
@@ -1621,8 +1627,10 @@ async function processProduct({
     const descriptionChanged = updateOpts.has("description") && productInput.descriptionHtml && normalizeHtml(productInput.descriptionHtml) !== normalizeHtml(liveDescription ?? "");
     const vendorChanged = updateOpts.has("vendor") && productInput.vendor && productInput.vendor !== liveVendor;
     const productTypeChanged = updateOpts.has("productType") && productInput.productType && productInput.productType !== liveProductType;
-    const tagsBaseline = liveTags?.length ? (Array.isArray(liveTags) ? JSON.stringify(liveTags) : JSON.stringify(liveTags.split(", "))) : existing.lastTags ?? null;
-    const tagsChanged = updateOpts.has("tags") && productInput.tags?.length && JSON.stringify(productInput.tags) !== tagsBaseline;
+    const tagsBaseline = liveTags?.length
+      ? (Array.isArray(liveTags) ? normalizeTags(liveTags) : normalizeTags(liveTags.split(",")))
+      : existing.lastTags ?? null;
+    const tagsChanged = updateOpts.has("tags") && productInput.tags?.length && normalizeTags(productInput.tags) !== tagsBaseline;
 
     // === COLLECTIONS: always sync (idempotent) even if nothing else changed ===
     if (updateOpts.has("collections") && productInput.collections?.length) {
@@ -1874,7 +1882,7 @@ async function processProduct({
           lastDescription: productInput.descriptionHtml ?? undefined,
           lastVendor: productInput.vendor ?? undefined,
           lastProductType: productInput.productType ?? undefined,
-          lastTags: productInput.tags?.length ? JSON.stringify(productInput.tags) : undefined,
+          lastTags: productInput.tags?.length ? normalizeTags(productInput.tags) : undefined,
           lastSyncAt: new Date(),
         },
       });
@@ -2041,7 +2049,7 @@ async function processProduct({
           lastDescription: productInput.descriptionHtml ?? null,
           lastVendor: productInput.vendor ?? null,
           lastProductType: productInput.productType ?? null,
-          lastTags: productInput.tags?.length ? JSON.stringify(productInput.tags) : null,
+          lastTags: productInput.tags?.length ? normalizeTags(productInput.tags) : null,
           lastImportSource: sourceKey,
         },
         update: {
@@ -2058,7 +2066,7 @@ async function processProduct({
           lastDescription: productInput.descriptionHtml ?? undefined,
           lastVendor: productInput.vendor ?? undefined,
           lastProductType: productInput.productType ?? undefined,
-          lastTags: productInput.tags?.length ? JSON.stringify(productInput.tags) : undefined,
+          lastTags: productInput.tags?.length ? normalizeTags(productInput.tags) : undefined,
           lastImportSource: sourceKey,
         },
       });
