@@ -1273,7 +1273,8 @@ async function prepareAndLaunch(
     const csvDescription = getField(row, columnMaps, "description") || "";
     const csvVendor = getField(row, columnMaps, "brand") || "";
     const csvProductType = shopifyProductType || getField(row, columnMaps, "category") || "";
-    const csvTags = [categoryTags, getField(row, columnMaps, "tags") || ""].filter(Boolean);
+    const csvTagsRaw = [categoryTags, getField(row, columnMaps, "tags") || ""].filter(Boolean);
+    const csvTags = csvTagsRaw.flatMap((t: string) => t.split(",").map((s: string) => s.trim()).filter(Boolean)).sort();
 
     const meta: MetaLine = {
       sku,
@@ -1335,7 +1336,8 @@ async function prepareAndLaunch(
       const vendorChanged = effectiveOpts.has("vendor") && csvVendor.trim() !== "" && csvVendor.trim() !== vendorBaseline.trim();
 
       const productTypeChanged = effectiveOpts.has("productType") && csvProductType !== ptBaseline;
-      const tagsBaseline = match.shopifyTags?.length ? JSON.stringify(match.shopifyTags) : lastTags;
+      const tagsBaselineRaw = match.shopifyTags?.length ? match.shopifyTags : lastTags ? (typeof lastTags === "string" ? JSON.parse(lastTags) : lastTags) : [];
+      const tagsBaseline = JSON.stringify(Array.isArray(tagsBaselineRaw) ? tagsBaselineRaw.sort() : []);
       const tagsChanged = effectiveOpts.has("tags") && csvTags.length > 0 && JSON.stringify(csvTags) !== tagsBaseline;
 
       // Skip products with NO changes — don't send mutation
