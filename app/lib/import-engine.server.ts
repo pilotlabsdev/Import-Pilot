@@ -1299,9 +1299,7 @@ async function processProduct({
         shopifyLiveTags = checkJson.data.product.tags ?? null;
         // Backfill inventoryItemId if missing in DB
         if (!existing.shopifyInventoryItemId) {
-          const variantNode = checkJson.data.product?.variants?.edges?.[0]?.node;
-          const invItemId = variantNode?.inventoryItem?.id;
-          console.log(`[Import] SKU ${sku}: backfill check — existing.shopifyInventoryItemId=null, variantNode=${JSON.stringify(variantNode)}, invItemId=${invItemId}`);
+          const invItemId = checkJson.data.product?.variants?.edges?.[0]?.node?.inventoryItem?.id;
           if (invItemId) {
             try {
               await prisma.productMapping.update({
@@ -1622,7 +1620,6 @@ async function processProduct({
     const stockChanged = updateOpts.has("stock") && existing.shopifyInventoryItemId && (lastQty === null || lastQty !== newQty);
     const costChanged = costPrice > 0 && existing.shopifyInventoryItemId && Math.abs((lastCost ?? 0) - costPrice) > 0.001;
 
-    console.log(`[Import] SKU ${sku}: DETECTION — shopifyInventoryItemId=${existing.shopifyInventoryItemId} lastQty=${lastQty} newQty=${newQty} lastCost=${lastCost} costPrice=${costPrice} stockChanged=${!!stockChanged} costChanged=${!!costChanged} priceChanged=${!!priceChanged}`);
     const weightValue = parseFloat((getField(row, columnMaps, "weight") || "0").replace(",", "."));
     const shouldSendWeight = weightValue > 0 && existing.shopifyInventoryItemId;
 
@@ -1729,7 +1726,6 @@ async function processProduct({
     }
 
     // Images in update: check existing media, only add if missing
-    console.log(`[Import] SKU ${sku}: pre-images check: updateOpts.has(images)=${updateOpts.has("images")} filesLength=${productInput.files?.length}`);
     if (updateOpts.has("images") && productInput.files?.length) {
       try {
         const mediaRes = await graphqlWithRetry(admin,
@@ -1757,7 +1753,6 @@ async function processProduct({
         const newFiles = existingUrls.size === 0
           ? (productInput.files as any[]).filter((f: any) => f.originalSource)
           : [];
-        console.log(`[Import] SKU ${sku}: images check: productInput.files=${productInput.files.length} existingMedia=${existingUrls.size} newFiles=${newFiles.length}`);
         if (newFiles.length > 0) {
           imageQueue.push({
             productId: existing.shopifyProductId,
@@ -1771,7 +1766,8 @@ async function processProduct({
     }
 
     // Skip productUpdate/price/stock if nothing changed
-    if (!priceChanged && !stockChanged && !costChanged && !titleChanged && !descriptionChanged && !vendorChanged && !productTypeChanged && !tagsChanged && !imagesChanged) {
+    // NOTE: images are handled BEFORE this check (lines 1731-1771), so imagesChanged is NOT included here
+    if (!priceChanged && !stockChanged && !costChanged && !titleChanged && !descriptionChanged && !vendorChanged && !productTypeChanged && !tagsChanged) {
       result.unchanged++;
       return;
     }
