@@ -2920,6 +2920,7 @@ async function preScanCsv(
     if (ean) eanSet.add(ean);
   }
 
+  console.log(`[Bulk] preScanCsv: ${skuSet.size} SKUs, ${eanSet.size} EANs (skuFilter=${!!skuFilter}, catFilter=${!!catFilter})`);
   return { skus: [...skuSet], eans: [...eanSet] };
 }
 
