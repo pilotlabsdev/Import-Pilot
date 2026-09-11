@@ -26,16 +26,14 @@ import shopify from "~/shopify.server";
 function normalizeHtml(html: string): string {
   if (!html) return "";
   return html
-    .replace(/<[^>]*>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#039;/g, "'")
-    .replace(/[\r\n]+/g, "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&\w+;/g, " ")
+    .replace(/&#x?[0-9a-fA-F]+;/g, " ")
+    .replace(/[\u200B\u200C\u200D\u00AD\u2060\uFEFF]/g, " ")
+    .replace(/[^a-záéíóúñüàèìòùäëïöûçñ0-9\s]/gi, " ")
     .replace(/\s+/g, " ")
-    .trim();
+    .trim()
+    .toLowerCase();
 }
 
 /**
@@ -1329,7 +1327,7 @@ async function prepareAndLaunch(
       const csvDescription = getField(row, columnMaps, "description") || "";
       const csvVendor = getField(row, columnMaps, "brand") || "";
       const titleBaseline = match.shopifyTitle ?? lastTitle ?? "";
-      const descBaseline = match.shopifyDescription ?? lastDescription ?? "";
+      const descBaseline = lastDescription ?? "";
       const vendorBaseline = match.shopifyVendor ?? lastVendor ?? "";
       const ptBaseline = match.shopifyProductType ?? lastProductType ?? "";
       const titleChanged = effectiveOpts.has("name") && csvTitle !== titleBaseline;
@@ -1345,14 +1343,15 @@ async function prepareAndLaunch(
       const tagsBaseline = (Array.isArray(tagsBaselineRaw) ? tagsBaselineRaw : [])
         .flatMap((t: string) => (typeof t === "string" ? t.split(",").map((s: string) => s.trim()) : []))
         .filter(Boolean).sort();
-      const tagsChanged = effectiveOpts.has("tags") && csvTags.length > 0 && JSON.stringify(csvTags) !== JSON.stringify(tagsBaseline);
+      const tagsChanged = effectiveOpts.has("tags") && csvTags.length > 0 && JSON.stringify(csvTags.map((t: string) => t.toLowerCase()).sort()) !== JSON.stringify(tagsBaseline.map((t: string) => t.toLowerCase()).sort());
       if (tagsChanged && tagDebugCount < 5) {
         console.log(`[Bulk] TAG DEBUG sku=${sku} csvTags=${JSON.stringify(csvTags)} baseline=${JSON.stringify(tagsBaseline)} shopifyTags=${JSON.stringify(match.shopifyTags)} lastTags=${lastTags}`);
         tagDebugCount++;
       }
 
       // Skip products with NO changes — don't send mutation
-      if (!priceChanged && !stockChanged && !costChanged && !titleChanged && !descriptionChanged && !vendorChanged && !productTypeChanged && !tagsChanged && !csvHasImages) {
+      // Note: csvHasImages excluded because bulk doesn't support image mutations (productInput has no files field)
+      if (!priceChanged && !stockChanged && !costChanged && !titleChanged && !descriptionChanged && !vendorChanged && !productTypeChanged && !tagsChanged) {
         matchedUnchangedCount++;
         unchangedCount++;
         continue;
