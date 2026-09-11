@@ -39,10 +39,26 @@ function statusTone(status: string) {
       return "success";
     case "failed":
       return "critical";
-    default:
+    case "completed_with_errors":
       return "attention";
+    default:
+      return "info";
   }
 }
+
+const STATUS_LABEL_KEY: Record<string, string> = {
+  completed: "common.completed",
+  failed: "common.failed",
+  cancelled: "common.cancelled",
+  running: "common.processing",
+  queued: "queue.queued",
+  completed_with_errors: "import.completedWithErrors",
+};
+
+const TRIGGER_LABEL_KEY: Record<string, string> = {
+  manual: "common.manual",
+  scheduled: "common.scheduled",
+};
 
 export default function Logs() {
   const { logs } = useLoaderData<typeof loader>();
@@ -55,9 +71,9 @@ export default function Logs() {
       new Date(log.startedAt).toLocaleString("es-ES"),
       log.completedAt ? new Date(log.completedAt).toLocaleString("es-ES") : "—",
       <Badge key={`st-${log.id}`} tone={statusTone(log.status)}>
-        {log.status}
+        {t(STATUS_LABEL_KEY[log.status] || log.status)}
       </Badge>,
-      log.triggerType,
+      t(TRIGGER_LABEL_KEY[log.triggerType] || log.triggerType),
       String(log.totalProducts),
       String(log.created),
       String(log.updated),
