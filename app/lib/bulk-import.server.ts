@@ -3016,16 +3016,20 @@ async function queryProductsTargeted(
     }
   `;
   const uniqueEans = [...new Set(eans)].filter((e) => e && !byBarcode.has(e));
+  console.log(`[Bulk] Barcode lookup: ${uniqueEans.length} EANs to check, sample: [${uniqueEans.slice(0, 3).join(", ")}]`);
   const failedEanBatches: string[][] = [];
   for (let i = 0; i < uniqueEans.length; i += 15) {
     const batch = uniqueEans.slice(i, i + 15);
     const query = batch.map((e) => `barcode:${String(e).replace(/'/g, "")}`).join(" OR ");
+    console.log(`[Bulk] Barcode batch query: ${query}`);
     let succeeded = false;
     for (let attempt = 0; attempt < 3 && !succeeded; attempt++) {
       if (attempt > 0) await new Promise((r) => setTimeout(r, 1000 * attempt));
       try {
         const json = await gql(admin, BARCODE_VARIANT_QUERY, { variables: { q: query } }, shopDomain);
-        for (const edge of json.data?.productVariants?.edges || []) {
+        const variantEdges = json.data?.productVariants?.edges || [];
+        console.log(`[Bulk] Barcode batch result: ${variantEdges.length} variants found`);
+        for (const edge of variantEdges) {
           const v = edge.node;
           const prod = v.product || {};
           const match: LookupMatch = {
@@ -3058,6 +3062,7 @@ async function queryProductsTargeted(
     throw new Error(`Lookup incomplete: ${failedEans.length} EAN queries failed after 3 attempts. Import will retry next cycle.`);
   }
 
+  console.log(`[Bulk] Barcode lookup done: byBarcode.size=${byBarcode.size}, bySku.size=${bySku.size}`);
   return { bySku, byBarcode };
 }
 
