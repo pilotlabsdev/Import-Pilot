@@ -1667,6 +1667,7 @@ async function processProduct({
     }
 
     // Images in update: check existing media, only add if missing
+    console.log(`[Import] SKU ${sku}: pre-images check: updateOpts.has(images)=${updateOpts.has("images")} filesLength=${productInput.files?.length}`);
     if (updateOpts.has("images") && productInput.files?.length) {
       try {
         const mediaRes = await graphqlWithRetry(admin,
