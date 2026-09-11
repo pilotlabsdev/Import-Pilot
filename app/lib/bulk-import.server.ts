@@ -2839,7 +2839,7 @@ async function resumeMissingMutationOp(
   inputPath: string
 ): Promise<void> {
   if (kind === "update") {
-    const opId = await stageAndLaunch(admin, LEGACY_UPDATE_MUTATION, inputPath, job.shopDomain);
+    const opId = await stageAndLaunch(admin, PRODUCT_SET_MUTATION, inputPath, job.shopDomain);
     await prisma.bulkJobOp.create({
       data: { jobId: job.id, shopifyOpId: opId, kind, index, status: "launched" },
     });
@@ -2858,8 +2858,8 @@ async function resumePendingMutationOp(
   inputPath: string
 ): Promise<void> {
   if (kind === "update") {
-    // productUpdate es idempotente: relanzar es seguro aunque exista una op fantasma.
-    const opId = await stageAndLaunch(admin, LEGACY_UPDATE_MUTATION, inputPath, job.shopDomain);
+    // productSet es idempotente: relanzar es seguro aunque exista una op fantasma.
+    const opId = await stageAndLaunch(admin, PRODUCT_SET_MUTATION, inputPath, job.shopDomain);
     await prisma.bulkJobOp.update({
       where: { id: op.id },
       data: { shopifyOpId: opId, status: "launched" },
@@ -3003,7 +3003,7 @@ async function resumeOrRebuildCreateOp(
   await fs.writeFile(inputPath, missing.map((m) => m.line).join("\n") + "\n");
   await fs.writeFile(metaPath, missing.map((m) => JSON.stringify(m.meta)).join("\n") + "\n");
 
-  const opId = await stageAndLaunch(admin, LEGACY_CREATE_MUTATION, inputPath, job.shopDomain);
+  const opId = await stageAndLaunch(admin, PRODUCT_SET_MUTATION, inputPath, job.shopDomain);
   if (target.opId) {
     await prisma.bulkJobOp.update({
       where: { id: target.opId },
