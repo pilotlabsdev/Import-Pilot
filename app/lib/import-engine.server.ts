@@ -13,33 +13,17 @@ function normalizeHtml(html: string): string {
   if (!html) return "";
   return html
     .replace(/<[^>]*>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#0?39;/g, "'")
     .replace(/&\w+;/g, " ")
     .replace(/&#x?[0-9a-fA-F]+;/g, " ")
-    .replace(/[\u200B\u200C\u200D\u00AD\u2060\uFEFF\u00A0]/g, " ")
-    .replace(/[^\w\sáéíóúñüàèìòùäëïöûçñ]/gi, " ")
-    .replace(/[\r\n]+/g, "")
+    .replace(/[\u200B\u200C\u200D\u00AD\u2060\uFEFF]/g, " ")
+    .replace(/[^a-záéíóúñüàèìòùäëïöûçñ0-9\s]/gi, " ")
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
 }
 
 function descriptionsMatch(a: string, b: string): boolean {
-  const na = normalizeHtml(a);
-  const nb = normalizeHtml(b);
-  if (na === nb) return true;
-  const wordsA = new Set(na.split(/\s+/).filter(Boolean));
-  const wordsB = new Set(nb.split(/\s+/).filter(Boolean));
-  if (wordsA.size === 0 || wordsB.size === 0) return false;
-  let match = 0;
-  for (const w of wordsA) { if (wordsB.has(w)) match++; }
-  const similarity = match / Math.max(wordsA.size, wordsB.size);
-  return similarity > 0.95;
+  return normalizeHtml(a) === normalizeHtml(b);
 }
 
 function normalizeTags(tags: string[]): string {
