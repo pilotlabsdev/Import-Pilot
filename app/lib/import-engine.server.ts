@@ -1754,6 +1754,7 @@ async function processProduct({
           ? (productInput.files as any[]).filter((f: any) => f.originalSource)
           : [];
         if (newFiles.length > 0) {
+          result.imageChanges++;
           imageQueue.push({
             productId: existing.shopifyProductId,
             files: newFiles.map((f: any) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType || "IMAGE" })),
