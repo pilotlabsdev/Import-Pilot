@@ -1605,7 +1605,70 @@ async function processProduct({
     const tagsBaseline = shopifyLiveTags?.length ? JSON.stringify(shopifyLiveTags) : lastTags;
     const tagsChanged = updateOpts.has("tags") && productInput.tags?.length && JSON.stringify(productInput.tags) !== tagsBaseline;
 
-    // Skip only if truly nothing changed (images always sent idempotently, not counted as "change")
+    // === COLLECTIONS: always sync (idempotent) even if nothing else changed ===
+    if (updateOpts.has("collections") && productInput.collections?.length) {
+      try {
+        const currentCollections: string[] = [];
+        let cursor: string | null = null;
+        let colJson: any;
+        do {
+          colJson = await graphqlWithRetry(admin,
+            `#graphql
+            query productCollections($id: ID!, $first: Int!, $after: String) {
+              product(id: $id) {
+                collections(first: $first, after: $after) {
+                  edges { node { id title } }
+                  pageInfo { hasNextPage endCursor }
+                }
+              }
+            }`,
+            { id: existing.shopifyProductId, first: 50, after: cursor }
+          );
+          const edges = colJson.data?.product?.collections?.edges || [];
+          for (const e of edges) currentCollections.push(e.node.id);
+          cursor = colJson.data?.product?.collections?.pageInfo?.hasNextPage
+            ? colJson.data.product.collections.pageInfo.endCursor
+            : null;
+        } while (cursor);
+
+        const desiredIds = productInput.collections.filter((c: any) => typeof c === "string" && c.startsWith("gid://"));
+        const toRemove = currentCollections.filter((id: string) => !desiredIds.includes(id));
+        const toAdd = desiredIds.filter((id: string) => !currentCollections.includes(id));
+
+        for (const colId of toRemove) {
+          await graphqlWithRetry(admin,
+            `#graphql
+            mutation collectionRemove($id: ID!, $productIds: [ID!]!) {
+              collectionRemoveProducts(id: $id, productIds: $productIds) {
+                job { id }
+                userErrors { field message }
+              }
+            }`,
+            { id: colId, productIds: [existing.shopifyProductId] }
+          );
+        }
+        for (const colId of toAdd) {
+          const addRes = await graphqlWithRetry(admin,
+            `#graphql
+            mutation collectionAdd($id: ID!, $productIds: [ID!]!) {
+              collectionAddProducts(id: $id, productIds: $productIds) {
+                job { id }
+                userErrors { field message }
+              }
+            }`,
+            { id: colId, productIds: [existing.shopifyProductId] }
+          );
+          const addErrors = addRes.data?.collectionAddProducts?.userErrors || [];
+          if (addErrors.length > 0) {
+            console.error(`[Import] SKU ${sku}: collectionAdd errors for ${colId}:`, JSON.stringify(addErrors));
+          }
+        }
+      } catch (error: any) {
+        console.error("[Import] Error actualizando colecciones:", error?.message || error);
+      }
+    }
+
+    // Skip productUpdate/price/stock if nothing changed
     if (!priceChanged && !stockChanged && !costChanged && !titleChanged && !descriptionChanged && !vendorChanged && !productTypeChanged && !tagsChanged) {
       result.unchanged++;
       return;
@@ -1619,7 +1682,6 @@ async function processProduct({
     if (vendorChanged) result.vendorChanges++;
     if (productTypeChanged) result.productTypeChanges++;
     if (tagsChanged) result.tagsChanges++;
-
 
     const productPatch: any = { id: existing.shopifyProductId };
     if (updateOpts.has("name")) productPatch.title = productInput.title;
@@ -1657,15 +1719,37 @@ async function processProduct({
       }
     }
 
-    // Images: skip in update path — images are set during creation only
-    // productCreateMedia ADDS without replacing, causing duplicates
-    // if (imagesChanged && productInput.files) {
-    //   imageQueue.push({
-    //     productId: existing.shopifyProductId,
-    //     files: productInput.files.map((f) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType })),
-    //     label: `SKU=${sku} (update images)`,
-    //   });
-    // }
+    // Images in update: check if product has media, only add if missing
+    if (updateOpts.has("images") && productInput.files?.length) {
+      try {
+        const mediaRes = await graphqlWithRetry(admin,
+          `#graphql
+          query productMedia($id: ID!) {
+            product(id: $id) {
+              media(first: 50) {
+                edges { node { ... on MediaImage { originalSource { url } alt } } }
+              }
+            }
+          }`,
+          { id: existing.shopifyProductId }
+        );
+        const existingUrls = new Set(
+          (mediaRes.data?.product?.media?.edges || [])
+            .map((e: any) => e.node?.originalSource?.url || "")
+            .filter(Boolean)
+        );
+        const newFiles = productInput.files.filter((f: any) => !existingUrls.has(f.originalSource));
+        if (newFiles.length > 0) {
+          imageQueue.push({
+            productId: existing.shopifyProductId,
+            files: newFiles.map((f: any) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType })),
+            label: `SKU=${sku} (update images, ${newFiles.length} new)`,
+          });
+        }
+      } catch (error: any) {
+        console.error("[Import] Error checking images:", error?.message || error);
+      }
+    }
 
     if (priceChanged) {
       const ean = getField(row, columnMaps, "ean");
@@ -1730,6 +1814,7 @@ async function processProduct({
     }
 
     if (shouldSendWeight && existing.shopifyInventoryItemId) {
+      console.log(`[Import] SKU ${sku}: updating weight=${weightValue}`);
       try {
         console.log(`[Import] SKU ${sku}: updating weight=${weightValue} on inventoryItem=${existing.shopifyInventoryItemId}`);
         await graphqlWithRetry(admin,
@@ -1747,72 +1832,6 @@ async function processProduct({
         );
       } catch (error: any) {
         console.error("[Import] Error seteando peso:", error?.message || error);
-      }
-    }
-
-    if (updateOpts.has("collections") && productInput.collections?.length) {
-      console.log(`[Import] SKU ${sku}: updating collections, desired=${JSON.stringify(productInput.collections)}`);
-      try {
-        const currentCollections: string[] = [];
-        let cursor: string | null = null;
-        let colJson: any;
-        do {
-          colJson = await graphqlWithRetry(admin,
-            `#graphql
-            query productCollections($id: ID!, $first: Int!, $after: String) {
-              product(id: $id) {
-                collections(first: $first, after: $after) {
-                  edges { node { id title } }
-                  pageInfo { hasNextPage endCursor }
-                }
-              }
-            }`,
-            { id: existing.shopifyProductId, first: 50, after: cursor }
-          );
-          const edges = colJson.data?.product?.collections?.edges || [];
-          for (const e of edges) currentCollections.push(e.node.id);
-          cursor = colJson.data?.product?.collections?.pageInfo?.hasNextPage
-            ? colJson.data.product.collections.pageInfo.endCursor
-            : null;
-        } while (cursor);
-
-        console.log(`[Import] SKU ${sku}: currentCollections=${JSON.stringify(currentCollections)}`);
-
-        const desiredIds = productInput.collections.filter((c: any) => typeof c === "string" && c.startsWith("gid://"));
-        const toRemove = currentCollections.filter((id: string) => !desiredIds.includes(id));
-        const toAdd = desiredIds.filter((id: string) => !currentCollections.includes(id));
-        console.log(`[Import] SKU ${sku}: toAdd=${JSON.stringify(toAdd)} toRemove=${JSON.stringify(toRemove)}`);
-
-        for (const colId of toRemove) {
-          await graphqlWithRetry(admin,
-            `#graphql
-            mutation collectionRemove($id: ID!, $productIds: [ID!]!) {
-              collectionRemoveProducts(id: $id, productIds: $productIds) {
-                job { id }
-                userErrors { field message }
-              }
-            }`,
-            { id: colId, productIds: [existing.shopifyProductId] }
-          );
-        }
-        for (const colId of toAdd) {
-          const addRes = await graphqlWithRetry(admin,
-            `#graphql
-            mutation collectionAdd($id: ID!, $productIds: [ID!]!) {
-              collectionAddProducts(id: $id, productIds: $productIds) {
-                job { id }
-                userErrors { field message }
-              }
-            }`,
-            { id: colId, productIds: [existing.shopifyProductId] }
-          );
-          const addErrors = addRes.data?.collectionAddProducts?.userErrors || [];
-          if (addErrors.length > 0) {
-            console.error(`[Import] SKU ${sku}: collectionAdd errors for ${colId}:`, JSON.stringify(addErrors));
-          }
-        }
-      } catch (error: any) {
-        console.error("[Import] Error actualizando colecciones:", error);
       }
     }
 
