@@ -1588,10 +1588,7 @@ async function processProduct({
     const stockChanged = updateOpts.has("stock") && existing.shopifyInventoryItemId && (lastQty === null || lastQty !== newQty);
     const costChanged = costPrice > 0 && existing.shopifyInventoryItemId && Math.abs((lastCost ?? 0) - costPrice) > 0.001;
     const weightValue = parseFloat((getField(row, columnMaps, "weight") || "0").replace(",", "."));
-    const weightChanged = weightValue > 0 && existing.shopifyInventoryItemId;
-    if (weightValue > 0 && !weightChanged) {
-      console.log(`[Import] SKU ${sku}: weight=${weightValue} but inventoryItemId=${existing.shopifyInventoryItemId} — skipping weight update`);
-    }
+    const shouldSendWeight = weightValue > 0 && existing.shopifyInventoryItemId;
 
     const imagesChanged = updateOpts.has("images") && (productInput.files?.length ?? 0) > 0;
 
@@ -1609,7 +1606,7 @@ async function processProduct({
     const tagsChanged = updateOpts.has("tags") && productInput.tags?.length && JSON.stringify(productInput.tags) !== tagsBaseline;
 
     // Skip only if truly nothing changed
-    if (!priceChanged && !stockChanged && !costChanged && !weightChanged && !titleChanged && !descriptionChanged && !vendorChanged && !productTypeChanged && !tagsChanged && !imagesChanged) {
+    if (!priceChanged && !stockChanged && !costChanged && !titleChanged && !descriptionChanged && !vendorChanged && !productTypeChanged && !tagsChanged && !imagesChanged) {
       result.unchanged++;
       return;
     }
@@ -1730,7 +1727,7 @@ async function processProduct({
       }
     }
 
-    if (weightChanged && existing.shopifyInventoryItemId) {
+    if (shouldSendWeight && existing.shopifyInventoryItemId) {
       try {
         console.log(`[Import] SKU ${sku}: updating weight=${weightValue} on inventoryItem=${existing.shopifyInventoryItemId}`);
         await graphqlWithRetry(admin,
@@ -1776,11 +1773,11 @@ async function processProduct({
             : null;
         } while (cursor);
 
-        const desiredIds = productInput.collections.filter((c: any) => c.endsWith("Collection"));
+        const desiredIds = productInput.collections.filter((c: any) => typeof c === "string" && c.startsWith("gid://"));
         const toRemove = currentCollections.filter((id: string) => !desiredIds.includes(id));
         const toAdd = desiredIds.filter((id: string) => !currentCollections.includes(id));
 
-        if (toRemove.length) {
+        for (const colId of toRemove) {
           await graphqlWithRetry(admin,
             `#graphql
             mutation collectionRemove($id: ID!, $productIds: [ID!]!) {
@@ -1789,7 +1786,7 @@ async function processProduct({
                 userErrors { field message }
               }
             }`,
-            { id: toRemove[0], productIds: [existing.shopifyProductId] }
+            { id: colId, productIds: [existing.shopifyProductId] }
           );
         }
         for (const colId of toAdd) {
