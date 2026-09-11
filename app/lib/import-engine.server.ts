@@ -1691,7 +1691,9 @@ async function processProduct({
             .map((e: any) => e.node?.image?.url || "")
             .filter(Boolean)
         );
-        const newFiles = (productInput.files as any[]).filter((f: any) => f.originalSource && !existingUrls.has(f.originalSource));
+        const newFiles = existingUrls.size === 0
+          ? (productInput.files as any[]).filter((f: any) => f.originalSource)
+          : [];
         console.log(`[Import] SKU ${sku}: images check: productInput.files=${productInput.files.length} existingMedia=${existingUrls.size} newFiles=${newFiles.length}`);
         if (newFiles.length > 0) {
           imageQueue.push({
