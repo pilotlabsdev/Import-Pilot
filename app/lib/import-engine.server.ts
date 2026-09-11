@@ -1605,8 +1605,8 @@ async function processProduct({
     const tagsBaseline = shopifyLiveTags?.length ? JSON.stringify(shopifyLiveTags) : lastTags;
     const tagsChanged = updateOpts.has("tags") && productInput.tags?.length && JSON.stringify(productInput.tags) !== tagsBaseline;
 
-    // Skip only if truly nothing changed
-    if (!priceChanged && !stockChanged && !costChanged && !titleChanged && !descriptionChanged && !vendorChanged && !productTypeChanged && !tagsChanged && !imagesChanged) {
+    // Skip only if truly nothing changed (images always sent idempotently, not counted as "change")
+    if (!priceChanged && !stockChanged && !costChanged && !titleChanged && !descriptionChanged && !vendorChanged && !productTypeChanged && !tagsChanged) {
       result.unchanged++;
       return;
     }
@@ -1749,6 +1749,7 @@ async function processProduct({
     }
 
     if (updateOpts.has("collections") && productInput.collections?.length) {
+      console.log(`[Import] SKU ${sku}: updating collections, desired=${JSON.stringify(productInput.collections)}`);
       try {
         const currentCollections: string[] = [];
         let cursor: string | null = null;
@@ -1790,7 +1791,7 @@ async function processProduct({
           );
         }
         for (const colId of toAdd) {
-          await graphqlWithRetry(admin,
+          const addRes = await graphqlWithRetry(admin,
             `#graphql
             mutation collectionAdd($id: ID!, $productIds: [ID!]!) {
               collectionAddProducts(id: $id, productIds: $productIds) {
@@ -1800,6 +1801,10 @@ async function processProduct({
             }`,
             { id: colId, productIds: [existing.shopifyProductId] }
           );
+          const addErrors = addRes.data?.collectionAddProducts?.userErrors || [];
+          if (addErrors.length > 0) {
+            console.error(`[Import] SKU ${sku}: collectionAdd errors for ${colId}:`, JSON.stringify(addErrors));
+          }
         }
       } catch (error: any) {
         console.error("[Import] Error actualizando colecciones:", error);
