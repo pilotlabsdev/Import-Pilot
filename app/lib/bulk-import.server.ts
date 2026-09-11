@@ -1060,6 +1060,7 @@ async function prepareAndLaunch(
   const allSkus: string[] = [];
   const errors: Array<{ sku: string; error: string; lineNumber?: number }> = [];
   let duplicateSkippedCount = 0;
+  let tagDebugCount = 0;
   const priorityReplacements: Array<{ mappingId: string; oldConfigId: string; newSku: string; newEan: string }> = [];
 
   // Pre-load existing EAN mappings from OTHER suppliers for duplicate detection
@@ -1336,9 +1337,19 @@ async function prepareAndLaunch(
       const vendorChanged = effectiveOpts.has("vendor") && csvVendor.trim() !== "" && csvVendor.trim() !== vendorBaseline.trim();
 
       const productTypeChanged = effectiveOpts.has("productType") && csvProductType !== ptBaseline;
-      const tagsBaselineRaw = match.shopifyTags?.length ? match.shopifyTags : lastTags ? (typeof lastTags === "string" ? JSON.parse(lastTags) : lastTags) : [];
-      const tagsBaseline = JSON.stringify(Array.isArray(tagsBaselineRaw) ? tagsBaselineRaw.sort() : []);
-      const tagsChanged = effectiveOpts.has("tags") && csvTags.length > 0 && JSON.stringify(csvTags) !== tagsBaseline;
+      const tagsBaselineRaw: string[] = match.shopifyTags?.length
+        ? match.shopifyTags
+        : lastTags
+          ? (typeof lastTags === "string" ? JSON.parse(lastTags) : lastTags) as string[]
+          : [];
+      const tagsBaseline = (Array.isArray(tagsBaselineRaw) ? tagsBaselineRaw : [])
+        .flatMap((t: string) => (typeof t === "string" ? t.split(",").map((s: string) => s.trim()) : []))
+        .filter(Boolean).sort();
+      const tagsChanged = effectiveOpts.has("tags") && csvTags.length > 0 && JSON.stringify(csvTags) !== JSON.stringify(tagsBaseline);
+      if (tagsChanged && tagDebugCount < 5) {
+        console.log(`[Bulk] TAG DEBUG sku=${sku} csvTags=${JSON.stringify(csvTags)} baseline=${JSON.stringify(tagsBaseline)} shopifyTags=${JSON.stringify(match.shopifyTags)} lastTags=${lastTags}`);
+        tagDebugCount++;
+      }
 
       // Skip products with NO changes — don't send mutation
       if (!priceChanged && !stockChanged && !costChanged && !titleChanged && !descriptionChanged && !vendorChanged && !productTypeChanged && !tagsChanged && !csvHasImages) {
@@ -1689,7 +1700,6 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
           if (actErrors?.length > 0) {
             console.error(`[Bulk] SKU ${meta.sku}: inventoryBulkToggleActivation errors:`, JSON.stringify(actErrors));
           } else {
-            console.log(`[Bulk] SKU ${meta.sku}: inventory activated at location`);
           }
         } catch (e: any) {
           console.error(`[Bulk] SKU ${meta.sku}: error activando inventory en ubicacion: ${e?.message}`);
@@ -1831,7 +1841,10 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
                   if (rm.productType && existedBefore.lastProductType !== null && rm.productType !== existedBefore.lastProductType) rePtChanged = true;
                   if (rm.tags && existedBefore.lastTags !== null) {
                     const csvTagsJson = JSON.stringify(rm.tags);
-                    if (csvTagsJson !== existedBefore.lastTags) reTagsChanged = true;
+                    const existingTagsNormalized = (JSON.parse(existedBefore.lastTags || "[]") as string[])
+                      .flatMap((t: string) => t.split(",").map((s: string) => s.trim()))
+                      .filter(Boolean).sort();
+                    if (csvTagsJson !== JSON.stringify(existingTagsNormalized)) reTagsChanged = true;
                   }
                   if (rePriceChanged || reStockChanged || reCostChanged || reTitleChanged || reDescChanged || reVendorChanged || rePtChanged || reTagsChanged) {
                     updatedCount++;
