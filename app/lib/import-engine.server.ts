@@ -29,6 +29,19 @@ function normalizeHtml(html: string): string {
     .toLowerCase();
 }
 
+function descriptionsMatch(a: string, b: string): boolean {
+  const na = normalizeHtml(a);
+  const nb = normalizeHtml(b);
+  if (na === nb) return true;
+  const wordsA = new Set(na.split(/\s+/).filter(Boolean));
+  const wordsB = new Set(nb.split(/\s+/).filter(Boolean));
+  if (wordsA.size === 0 || wordsB.size === 0) return false;
+  let match = 0;
+  for (const w of wordsA) { if (wordsB.has(w)) match++; }
+  const similarity = match / Math.max(wordsA.size, wordsB.size);
+  return similarity > 0.95;
+}
+
 function normalizeTags(tags: string[]): string {
   return JSON.stringify(tags.map((t) => t.trim().toLowerCase()).sort());
 }
@@ -1630,10 +1643,9 @@ async function processProduct({
     const titleChanged = updateOpts.has("name") && productInput.title && productInput.title !== liveTitle;
     const csvDescNorm = normalizeHtml(productInput.descriptionHtml ?? "");
     const liveDescNorm = normalizeHtml(liveDescription ?? "");
-    const descriptionChanged = updateOpts.has("description") && productInput.descriptionHtml && csvDescNorm !== liveDescNorm;
-    if (descriptionChanged && csvDescNorm && liveDescNorm) {
+    const descriptionChanged = updateOpts.has("description") && productInput.descriptionHtml && !descriptionsMatch(productInput.descriptionHtml, liveDescription ?? "");
+    if (descriptionChanged && productInput.descriptionHtml && liveDescription) {
       console.log(`[Import] SKU ${sku}: DESC MISMATCH len=${csvDescNorm.length}/${liveDescNorm.length} csv尾="${csvDescNorm.slice(-20)}" shopify尾="${liveDescNorm.slice(-20)}"`);
-      // Find first difference
       for (let i = 0; i < Math.max(csvDescNorm.length, liveDescNorm.length); i++) {
         if (csvDescNorm[i] !== liveDescNorm[i]) {
           console.log(`[Import] SKU ${sku}: DESC first diff at pos ${i}: csv=${JSON.stringify(csvDescNorm[i])}(${csvDescNorm.charCodeAt(i)}) shopify=${JSON.stringify(liveDescNorm[i])}(${liveDescNorm.charCodeAt(i)})`);
