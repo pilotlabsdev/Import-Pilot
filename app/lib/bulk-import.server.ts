@@ -1067,7 +1067,7 @@ async function prepareAndLaunch(
   // Also preload current supplier's own EANs to avoid self-duplicate false positives
   const selfEanMappings = new Set<string>();
   const shopSettings = await prisma.shopSettings.findUnique({ where: { shopDomain: job.shopDomain } });
-  const duplicatePolicy = shopSettings?.duplicatePolicy || "create_both";
+  const duplicatePolicy = shopSettings?.duplicatePolicy || "skip_existing";
   const matchMode = shopSettings?.matchMode || "overwrite";
 
   {
