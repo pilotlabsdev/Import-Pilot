@@ -3006,7 +3006,7 @@ async function queryProductsTargeted(
   const failedEanBatches: string[][] = [];
   for (let i = 0; i < uniqueEans.length; i += 15) {
     const batch = uniqueEans.slice(i, i + 15);
-    const query = batch.map((e) => `"${String(e).replace(/'/g, "")}"`).join(" OR ");
+    const query = batch.map((e) => `barcode:'${String(e).replace(/'/g, "")}'`).join(" OR ");
     let succeeded = false;
     for (let attempt = 0; attempt < 3 && !succeeded; attempt++) {
       if (attempt > 0) await new Promise((r) => setTimeout(r, 1000 * attempt));
