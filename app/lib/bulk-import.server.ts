@@ -406,6 +406,7 @@ interface LookupMatch {
   shopifyVendor?: string;
   shopifyProductType?: string;
   shopifyTags?: string[];
+  shopifyQuantity?: number;
 }
 
 interface MetaLine {
@@ -590,7 +591,7 @@ export async function runBulkImport({
                 id title vendor productType tags descriptionHtml
                 variants(first: 5) {
                   edges {
-                    node { id sku barcode inventoryItem { id unitCost { amount } } }
+                    node { id sku barcode inventoryItem { id unitCost { amount } inventoryLevels(first: 1) { edges { node { quantity } } } } }
                   }
                 }
               }
@@ -621,6 +622,7 @@ export async function runBulkImport({
               shopifyVendor: productVendor,
               shopifyProductType: productProductType,
               shopifyTags: productTags,
+              shopifyQuantity: (v.inventoryItem?.inventoryLevels?.edges?.[0]?.node?.quantity as number) ?? undefined,
             };
             if (v.sku && !targetedMaps.bySku.has(v.sku)) targetedMaps.bySku.set(String(v.sku), matchData);
             if (v.barcode && !targetedMaps.byBarcode.has(String(v.barcode))) targetedMaps.byBarcode.set(String(v.barcode), matchData);
@@ -1295,7 +1297,7 @@ async function prepareAndLaunch(
       const mapping = bySkuMapping.get(sku);
 
       const lastPrice = mapping?.lastPrice ?? null;
-      const lastQty = mapping?.lastQuantity ?? null;
+      const lastQty = match.shopifyQuantity ?? mapping?.lastQuantity ?? null;
       const lastTitle = mapping?.lastTitle ?? null;
       const lastDescription = mapping?.lastDescription ?? null;
       const lastVendor = mapping?.lastVendor ?? null;
@@ -2956,7 +2958,7 @@ async function queryProductsTargeted(
             id title vendor productType tags descriptionHtml
             variants(first: 5) {
               edges {
-                node { id sku barcode inventoryItem { id unitCost { amount } } }
+                node { id sku barcode inventoryItem { id unitCost { amount } inventoryLevels(first: 1) { edges { node { quantity } } } } }
               }
             }
           }
@@ -2997,6 +2999,7 @@ async function queryProductsTargeted(
               shopifyVendor: productVendor,
               shopifyProductType: productProductType,
               shopifyTags: productTags,
+              shopifyQuantity: (v.inventoryItem?.inventoryLevels?.edges?.[0]?.node?.quantity as number) ?? undefined,
             };
             if (v.sku) bySku.set(String(v.sku), match);
             if (v.barcode) byBarcode.set(String(v.barcode), match);
@@ -3025,7 +3028,7 @@ async function queryProductsTargeted(
           node {
             id sku barcode
             product { id title vendor productType tags descriptionHtml }
-            inventoryItem { id unitCost { amount } }
+            inventoryItem { id unitCost { amount } inventoryLevels(first: 1) { edges { node { quantity } } } }
           }
         }
       }
@@ -3058,6 +3061,7 @@ async function queryProductsTargeted(
             shopifyVendor: prod.vendor || undefined,
             shopifyProductType: prod.productType || undefined,
             shopifyTags: prod.tags?.length > 0 ? prod.tags : undefined,
+            shopifyQuantity: (v.inventoryItem?.inventoryLevels?.edges?.[0]?.node?.quantity as number) ?? undefined,
           };
           if (v.sku && !bySku.has(v.sku)) bySku.set(String(v.sku), match);
           if (v.barcode) byBarcode.set(String(v.barcode), match);
