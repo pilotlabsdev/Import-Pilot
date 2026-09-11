@@ -585,6 +585,7 @@ export async function getQueueStatus(shopDomain: string): Promise<{
       vendorChanges: log.vendorChanges || 0,
       productTypeChanges: log.productTypeChanges || 0,
       tagsChanges: log.tagsChanges || 0,
+      imageChanges: log.imageChanges || 0,
       errorCount: errorDetails.length,
       errorDetails,
     };
