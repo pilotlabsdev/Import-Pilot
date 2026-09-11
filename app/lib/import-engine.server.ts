@@ -1594,7 +1594,7 @@ async function processProduct({
 
     // Only count as "unchanged" if price/stock/cost/images didn't change
     // Data fields are always sent (idempotent) but don't count toward "updated"
-    if (!priceChanged && !stockChanged && !costChanged && !imagesChanged) {
+    if (!priceChanged && !stockChanged && !costChanged && !weightChanged && !imagesChanged) {
       result.unchanged++;
       return;
     }
