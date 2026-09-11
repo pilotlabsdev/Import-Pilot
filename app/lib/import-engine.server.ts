@@ -1808,6 +1808,7 @@ async function processProduct({
 
     const rowSku = getField(row, columnMaps, "sku") || row["sku"] || row["SKU"] || "";
     const rowEan = getField(row, columnMaps, "ean") || row["ean"] || "";
+    const weightValue = parseFloat((getField(row, columnMaps, "weight") || "0").replace(",", "."));
 
     const productSetInput = {
       title: productInput.title,
@@ -1835,6 +1836,7 @@ async function processProduct({
           ...(rowSku ? { sku: rowSku } : {}),
           inventoryPolicy: "DENY",
           inventoryItem: { tracked: true },
+          ...(weightValue > 0 ? { weight: weightValue, weightUnit: "KILOGRAMS" } : {}),
           inventoryQuantities: [
             {
               locationId,

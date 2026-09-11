@@ -340,6 +340,7 @@ export function mapCsvRowToProductSet(
 
   const stockQty = quantity;
   const costNum = costo ? parseFloat(costo.replace(",", ".")) : 0;
+  const weightValue = parseFloat((getField(row, columnMaps, "weight") || "0").replace(",", "."));
 
   return {
     title: name,
@@ -368,6 +369,7 @@ export function mapCsvRowToProductSet(
           ? { compareAtPrice: String(prices.compareAtPrice) }
           : {}),
         barcode: ean,
+        ...(weightValue > 0 ? { weight: weightValue, weightUnit: "KILOGRAMS" } : {}),
         inventoryQuantities: [
           {
             locationId,
@@ -410,6 +412,7 @@ export function mapCsvRowToProductSetUpdate(
   const quantity = getFieldNumber(row, columnMaps, "quantity");
   const stockQty = quantity;
   const costNum = costo ? parseFloat(costo.replace(",", ".")) : 0;
+  const weightValue = parseFloat((getField(row, columnMaps, "weight") || "0").replace(",", "."));
 
   const tags: string[] = [];
   if (defaultTags) {
@@ -493,6 +496,11 @@ export function mapCsvRowToProductSetUpdate(
 
   if (costNum > 0) {
     variant.inventoryItem = { tracked: true, cost: String(costNum) };
+  }
+
+  if (weightValue > 0) {
+    variant.weight = weightValue;
+    variant.weightUnit = "KILOGRAMS";
   }
 
   input.variants = [variant];
