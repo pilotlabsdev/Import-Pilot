@@ -369,7 +369,6 @@ export function mapCsvRowToProductSet(
           ? { compareAtPrice: String(prices.compareAtPrice) }
           : {}),
         barcode: ean,
-        ...(weightValue > 0 ? { weight: weightValue, weightUnit: "KILOGRAMS" } : {}),
         inventoryQuantities: [
           {
             locationId,
@@ -381,6 +380,7 @@ export function mapCsvRowToProductSet(
         inventoryItem: {
           tracked: true,
           ...(costNum > 0 ? { cost: String(costNum) } : {}),
+          ...(weightValue > 0 ? { measurement: { weight: { value: weightValue, unit: "KILOGRAMS" } } } : {}),
         },
       },
     ],
@@ -499,8 +499,8 @@ export function mapCsvRowToProductSetUpdate(
   }
 
   if (weightValue > 0) {
-    variant.weight = weightValue;
-    variant.weightUnit = "KILOGRAMS";
+    if (!variant.inventoryItem) variant.inventoryItem = {};
+    variant.inventoryItem.measurement = { weight: { value: weightValue, unit: "KILOGRAMS" } };
   }
 
   input.variants = [variant];

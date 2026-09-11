@@ -1835,8 +1835,7 @@ async function processProduct({
           ...(rowEan ? { barcode: rowEan } : {}),
           ...(rowSku ? { sku: rowSku } : {}),
           inventoryPolicy: "DENY",
-          inventoryItem: { tracked: true },
-          ...(weightValue > 0 ? { weight: weightValue, weightUnit: "KILOGRAMS" } : {}),
+          inventoryItem: { tracked: true, ...(weightValue > 0 ? { measurement: { weight: { value: weightValue, unit: "KILOGRAMS" } } } : {}) },
           inventoryQuantities: [
             {
               locationId,
