@@ -3001,79 +3001,64 @@ async function queryProductsTargeted(
     throw new Error(`Lookup incomplete: ${failedSkus.length} SKU queries failed after 3 attempts. Import will retry next cycle.`);
   }
 
-  // Query barcodes via bulkOperationRunQuery — fetch ALL variants, filter locally
-  const uniqueEans = [...new Set(eans)].filter((e) => e && !byBarcode.has(e));
-  console.log(`[Bulk] Barcode lookup: ${uniqueEans.length} EANs to check via bulkOperationRunQuery`);
-
-  if (uniqueEans.length > 0) {
-    const BARCODE_BULK_QUERY = `{
-      products {
+  // Query barcodes via productVariants with barcode:VAL OR barcode:VAL
+  const BARCODE_VARIANT_QUERY = `#graphql
+    query ($q: String!) {
+      productVariants(first: 250, query: $q) {
         edges {
           node {
-            id title
-            variants(first: 100) {
-              edges {
-                node { id sku barcode inventoryItem { id unitCost { amount } } }
-              }
-            }
+            id sku barcode
+            product { id title vendor productType tags descriptionHtml }
+            inventoryItem { id unitCost { amount } }
           }
         }
       }
-    }`;
-
-    const op = await runLookupQuery(admin, shopDomain);
-    if (!op.id) throw new Error("Failed to launch barcode lookup bulk operation");
-
-    // Poll for completion (max 3 min)
-    const startWait = Date.now();
-    const maxWaitMs = 3 * 60 * 1000;
-    let opStatus = "RUNNING";
-    while (opStatus === "RUNNING" && Date.now() - startWait < maxWaitMs) {
-      await new Promise((r) => setTimeout(r, 3000));
-      const status = await getBulkOperation(admin, op.id, shopDomain);
-      opStatus = status?.status || "UNKNOWN";
-      if (opStatus === "FAILED") throw new Error(`Barcode bulk operation failed: ${status?.errorCode}`);
     }
-    if (opStatus !== "COMPLETED") {
-      throw new Error(`Barcode bulk operation timed out (status: ${opStatus})`);
-    }
-
-    // Download results
-    const barcodeWorkDir = path.join(os.tmpdir(), "barcode-lookup", shopDomain.replace(/[/\\]/g, "_"));
-    await fs.mkdir(barcodeWorkDir, { recursive: true });
-    const barcodeLookupPath = path.join(barcodeWorkDir, `lookup-${Date.now()}.jsonl`);
-    await downloadOperationResult(admin, op.id, barcodeLookupPath, shopDomain);
-
-    // Parse JSONL and populate byBarcode
-    const eanSet = new Set(uniqueEans);
-    const barcodeLines = await readJsonLines(barcodeLookupPath);
-    let currentProductId = "";
-    let barcodeMatchCount = 0;
-    for (const line of barcodeLines) {
-      if (!line.__parentId) {
-        currentProductId = line.id || "";
-        continue;
+  `;
+  const uniqueEans = [...new Set(eans)].filter((e) => e && !byBarcode.has(e));
+  console.log(`[Bulk] Barcode lookup: ${uniqueEans.length} EANs to check via productVariants`);
+  const failedEanBatches: string[][] = [];
+  for (let i = 0; i < uniqueEans.length; i += 50) {
+    const batch = uniqueEans.slice(i, i + 50);
+    const query = batch.map((e) => `barcode:${String(e).replace(/'/g, "")}`).join(" OR ");
+    let succeeded = false;
+    for (let attempt = 0; attempt < 3 && !succeeded; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 1000 * attempt));
+      try {
+        const json = await gql(admin, BARCODE_VARIANT_QUERY, { variables: { q: query } }, shopDomain);
+        const variantEdges = json.data?.productVariants?.edges || [];
+        console.log(`[Bulk] Barcode batch ${Math.floor(i / 50) + 1}: query=${batch.length} EANs, found=${variantEdges.length} variants`);
+        for (const edge of variantEdges) {
+          const v = edge.node;
+          const prod = v.product || {};
+          const match: LookupMatch = {
+            productId: prod.id || "",
+            variantId: v.id,
+            inventoryItemId: v.inventoryItem?.id || "",
+            shopifyCost: parseFloat(v.inventoryItem?.unitCost?.amount ?? "0") || 0,
+            sku: v.sku || "",
+            shopifyTitle: prod.title || undefined,
+            shopifyDescription: prod.descriptionHtml || undefined,
+            shopifyVendor: prod.vendor || undefined,
+            shopifyProductType: prod.productType || undefined,
+            shopifyTags: prod.tags?.length > 0 ? prod.tags : undefined,
+          };
+          if (v.sku && !bySku.has(v.sku)) bySku.set(String(v.sku), match);
+          if (v.barcode) byBarcode.set(String(v.barcode), match);
+        }
+        succeeded = true;
+      } catch (e: any) {
+        if (attempt === 2) {
+          console.error(`[Bulk] Barcode batch failed (3 attempts): ${batch.slice(0, 3).join(",")}... → ${e?.message}`);
+          failedEanBatches.push(batch);
+        }
       }
-      const barcode = String(line.barcode || "").trim();
-      if (!barcode || !eanSet.has(barcode)) continue;
-      if (byBarcode.has(barcode)) continue;
-
-      byBarcode.set(barcode, {
-        productId: currentProductId,
-        variantId: line.id || "",
-        inventoryItemId: line.inventoryItem?.id || "",
-        shopifyCost: parseFloat(line.inventoryItem?.unitCost?.amount ?? "0") || 0,
-        sku: line.sku || "",
-      });
-      barcodeMatchCount++;
-      eanSet.delete(barcode);
-      if (eanSet.size === 0) break;
     }
-
-    // Cleanup temp file
-    await fs.unlink(barcodeLookupPath).catch(() => {});
-
-    console.log(`[Bulk] Barcode lookup done: ${barcodeMatchCount}/${uniqueEans.length} EANs found, remaining: ${eanSet.size}`);
+  }
+  if (failedEanBatches.length > 0) {
+    const failedEans = failedEanBatches.flat();
+    console.error(`[Bulk] Lookup INCOMPLETO: ${failedEans.length} EANs no se pudieron consultar → import abortado`);
+    throw new Error(`Lookup incomplete: ${failedEans.length} EAN queries failed after 3 attempts. Import will retry next cycle.`);
   }
 
   console.log(`[Bulk] Lookup done: byBarcode.size=${byBarcode.size}, bySku.size=${bySku.size}`);
