@@ -1061,7 +1061,6 @@ async function prepareAndLaunch(
   const errors: Array<{ sku: string; error: string; lineNumber?: number }> = [];
   let duplicateSkippedCount = 0;
   const priorityReplacements: Array<{ mappingId: string; oldConfigId: string; newSku: string; newEan: string }> = [];
-  const unmatchedEans: Array<{ ean: string; sku: string }> = [];
 
   // Pre-load existing EAN mappings from OTHER suppliers for duplicate detection
   const existingEanMappings = new Map<string, { supplierSku: string; configName: string; mappingId: string; configId: string }>();
@@ -1215,12 +1214,9 @@ async function prepareAndLaunch(
           }
           // Current supplier has HIGHER priority
           if (matchMode === "overwrite") {
-            // Overwrite: create new product + delete old (full replacement)
             priorityReplaceMappingId = existingDup.mappingId;
             priorityReplaceConfigId = existingDup.configId;
           }
-          // matchMode === "update": don't set priorityReplaceMappingId
-          // Product will be matched by EAN at maps.byBarcode → update with filters only
         } else {
           // skip_existing
           await logDuplicate(job.shopDomain, ean, { supplierSku: existingDup.supplierSku, configId: existingDup.configId, config: { name: existingDup.configName }, shopifyProductId: "" }, config.id, sku);
@@ -1229,124 +1225,12 @@ async function prepareAndLaunch(
         }
       } else if (maps.byBarcode.has(ean) && !selfEanMappings.has(ean)) {
         // === CASE: Same EAN found in Shopify but not from current supplier ===
-        const matchInfo = maps.byBarcode.get(ean)!;
-        const existingSkuOnProduct = matchInfo.sku || "";
-        const isSameSku = existingSkuOnProduct && existingSkuOnProduct.toLowerCase() === sku.toLowerCase();
-
-        // Search by shopifyProductId OR supplierSku (unique constraint is on supplierSku)
-        let anyMapping = await prisma.productMapping.findFirst({
-          where: { shopDomain: job.shopDomain, shopifyProductId: matchInfo.productId },
-          select: { id: true, configId: true, shopifyProductId: true, supplierSku: true },
-        }).catch(() => null);
-        // Also check by supplierSku in case product was recreated with new ID
-        const bySkuMapping_ = await prisma.productMapping.findFirst({
-          where: { shopDomain: job.shopDomain, supplierSku: sku },
-          select: { id: true, configId: true, shopifyProductId: true, supplierSku: true },
-        }).catch(() => null);
-        // Prefer the mapping that matches the current productId, or fall back to by-sku
-        if (!anyMapping && bySkuMapping_) {
-          anyMapping = bySkuMapping_;
-          // Product exists in Shopify with different ID → update the mapping
-          if (bySkuMapping_.shopifyProductId !== matchInfo.productId) {
-            await prisma.productMapping.update({
-              where: { id: bySkuMapping_.id },
-              data: {
-                shopifyProductId: matchInfo.productId,
-                shopifyVariantId: matchInfo.variantId,
-                shopifyInventoryItemId: matchInfo.inventoryItemId,
-                ean: ean || null,
-              },
-            }).catch(() => {});
-          }
+        if (duplicatePolicy === "skip_existing" || duplicatePolicy === "priority") {
+          const matchInfo = maps.byBarcode.get(ean);
+          await logExternalDuplicate(job.shopDomain, ean, matchInfo?.productId || "", sku, config.id, config.name || "Proveedor");
+          duplicateSkippedCount++;
+          continue;
         }
-
-        if (isSameSku) {
-          // === SUB-CASE: Same EAN + Same SKU ===
-          // Same supplier product (regardless of app-tracked or external)
-          // Adopt if not tracked, then let it flow to normal update path at line ~1130
-          if (!anyMapping) {
-            const adoptTitle = getField(row, columnMaps, "title") || null;
-            const adoptDescription = getField(row, columnMaps, "description") || null;
-            const adoptVendor = getField(row, columnMaps, "brand") || null;
-            const adoptProductType = getField(row, columnMaps, "category") || null;
-            const adopted = await prisma.productMapping.upsert({
-              where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: sku } },
-              create: {
-                shopDomain: job.shopDomain,
-                configId: config.id,
-                supplierSku: sku,
-                shopifyProductId: matchInfo.productId,
-                shopifyVariantId: matchInfo.variantId,
-                shopifyInventoryItemId: matchInfo.inventoryItemId,
-                ean: ean || null,
-                lastPrice: null,
-                lastQuantity: null,
-                lastTitle: adoptTitle, lastDescription: adoptDescription,
-                lastVendor: adoptVendor, lastProductType: adoptProductType,
-                lastTags: null,
-                postProcessStatus: "pending",
-              },
-              update: {
-                shopifyProductId: matchInfo.productId,
-                shopifyVariantId: matchInfo.variantId,
-                shopifyInventoryItemId: matchInfo.inventoryItemId,
-                ean: ean || null,
-                lastTitle: adoptTitle ?? undefined, lastDescription: adoptDescription ?? undefined,
-                lastVendor: adoptVendor ?? undefined, lastProductType: adoptProductType ?? undefined,
-              },
-            }).catch((e: any) => {
-              console.error(`[Bulk] SKU ${sku}: adopt create failed: ${e?.message}`);
-              return null;
-            });
-            if (adopted) {
-              selfEanMappings.add(ean);
-              const adoptPubIds: string[] = [];
-              if (config?.publicationIds) { try { adoptPubIds.push(...JSON.parse(config.publicationIds)); } catch {} }
-              if (adoptPubIds.length === 0 && config?.marketIds) { try { adoptPubIds.push(...JSON.parse(config.marketIds)); } catch {} }
-              if (adoptPubIds.length > 0 && matchInfo.productId) {
-                try {
-                  await gql(admin,
-                    `mutation PublishablePublish($id: ID!, $input: [PublicationInput!]!) { publishablePublish(id: $id, input: $input) { userErrors { field message } } }`,
-                    { variables: { id: matchInfo.productId, input: adoptPubIds.map((pid: string) => ({ publicationId: pid })) } },
-                    job.shopDomain
-                  );
-                  await prisma.productMapping.update({ where: { id: adopted.id }, data: { postProcessStatus: "complete" } }).catch(() => {});
-                } catch (e: any) {
-                  console.error(`[Bulk] SKU ${sku}: adopt channels failed: ${e?.message}`);
-                  await prisma.productMapping.update({ where: { id: adopted.id }, data: { postProcessStatus: "complete" } }).catch(() => {});
-                }
-              } else {
-                await prisma.productMapping.update({ where: { id: adopted.id }, data: { postProcessStatus: "complete" } }).catch(() => {});
-              }
-            }
-            // Add to selfEanMappings so the normal update path picks it up
-            selfEanMappings.add(ean);
-          }
-          // Product will be matched at maps.bySku.get(sku) below → normal update with filters
-        } else {
-          // === SUB-CASE: Same EAN + Different SKU ===
-          // Different supplier or external product
-          if (anyMapping && anyMapping.configId !== config.id) {
-            // Product is tracked by another supplier → apply policy
-            if (duplicatePolicy === "skip_existing" || duplicatePolicy === "priority") {
-              await logExternalDuplicate(job.shopDomain, ean, matchInfo.productId, sku, config.id, config.name || "Proveedor", matchInfo.sku);
-              duplicateSkippedCount++;
-              continue;
-            }
-            // create_both → always create new product (flow through)
-          } else if (!anyMapping) {
-            // External product (no ProductMapping at all)
-            if (duplicatePolicy === "skip_existing" || duplicatePolicy === "priority") {
-              await logExternalDuplicate(job.shopDomain, ean, matchInfo.productId, sku, config.id, config.name || "Proveedor", matchInfo.sku);
-              duplicateSkippedCount++;
-              continue;
-            }
-            // create_both → always create new product (flow through)
-          }
-        }
-      } else if (ean && !existingDup && !inByBarcode) {
-        // EAN not in existingEanMappings AND not in byBarcode → collect for post-loop batch detection
-        unmatchedEans.push({ ean, sku });
       }
     }
 
@@ -1517,132 +1401,7 @@ async function prepareAndLaunch(
   // Checkpoint/resume: streaming complete, clear checkpoint
   await prisma.bulkJob.update({ where: { id: job.id }, data: { resumeFromLine: null } }).catch(() => {});
 
-  // Post-loop batch: detect external duplicates for EANs NOT found in byBarcode
-  // These are products that exist in Shopify but don't have barcode set on any variant.
-  // queryProductsTargeted already tried barcode:'...' and failed; we try query:'...' (broader search).
-  let batchExternalDetected = 0;
-  const externalCsvSkus = new Set<string>(); // CSV SKUs detected as external — remove from create files
-  const missedSameSkuProducts = new Map<string, string>(); // CSV SKU → Shopify productId (same-SKU products missed by queryProductsTargeted)
-  const allSkusSet = new Set(allSkus.map((s) => s.toLowerCase()));
-  if (unmatchedEans.length > 0 && duplicatePolicy !== "create_both") {
-    const uniqueUnmatched = [...new Map(unmatchedEans.map((u) => [u.ean, u])).values()];
-    const TARGETED_QUERY = `#graphql
-      query ($q: String!) {
-        products(first: 5, query: $q) {
-          edges {
-            node {
-              id title
-              variants(first: 1) {
-                edges { node { id sku barcode } }
-              }
-            }
-          }
-        }
-      }
-    `;
-    for (let i = 0; i < uniqueUnmatched.length; i += 10) {
-      const batch = uniqueUnmatched.slice(i, i + 10);
-      for (const { ean, sku: csvSku } of batch) {
-        try {
-          const json = await gql(admin, TARGETED_QUERY, { variables: { q: `"${ean}"` } }, job.shopDomain);
-          const edges = json.data?.products?.edges || [];
-          if (edges.length > 0) {
-            const product = edges[0].node;
-            const shopifyProductId = product.id;
-            const shopifySku = product.variants?.edges?.[0]?.node?.sku || "";
-
-            // If the found product's SKU matches a CSV SKU, it's a same-supplier product
-            // that queryProductsTargeted missed (query failure). NOT an external duplicate.
-            if (shopifySku && allSkusSet.has(shopifySku.toLowerCase())) {
-              missedSameSkuProducts.set(csvSku.toLowerCase(), shopifyProductId);
-              continue;
-            }
-
-            // Check if this product is already tracked by ANY supplier
-            const existingMapping = await prisma.productMapping.findFirst({
-              where: { shopDomain: job.shopDomain, shopifyProductId },
-              select: { id: true, configId: true },
-            }).catch(() => null);
-            if (!existingMapping) {
-              // External product found via broader search — log duplicate with Shopify SKU
-              await logExternalDuplicate(job.shopDomain, ean, shopifyProductId, csvSku, config.id, config.name || "Proveedor", shopifySku);
-              duplicateSkippedCount++;
-              batchExternalDetected++;
-              externalCsvSkus.add(csvSku.toLowerCase());
-            }
-          }
-        } catch (e: any) {
-          console.error(`[Bulk] Post-loop search failed for EAN ${ean}: ${e?.message}`);
-        }
-      }
-    }
-    if (batchExternalDetected > 0) {
-    }
-  }
-
-  // Rewrite create files: remove external products, convert same-SKU to updates (add identifier with product ID)
-  if (externalCsvSkus.size > 0 || missedSameSkuProducts.size > 0) {
-    let removedExternal = 0;
-    let convertedToUpdates = 0;
-    const newCreateFiles: string[] = [];
-    for (const filePath of createFiles) {
-      const metaPath = filePath.replace("-input-", "-meta-");
-      const inputLines = (await fs.readFile(filePath, "utf-8")).split("\n").filter(Boolean);
-      const metaLinesArr = (await fs.readFile(metaPath, "utf-8")).split("\n").filter(Boolean);
-      const keptInput: string[] = [];
-      const keptMeta: string[] = [];
-      for (let j = 0; j < inputLines.length; j++) {
-        const meta = metaLinesArr[j] ? JSON.parse(metaLinesArr[j]) : null;
-        const skuLower = meta?.sku?.toLowerCase();
-        if (!skuLower) {
-          keptInput.push(inputLines[j]);
-          if (metaLinesArr[j]) keptMeta.push(metaLinesArr[j]);
-          continue;
-        }
-        if (externalCsvSkus.has(skuLower)) {
-          removedExternal++;
-          continue;
-        }
-        if (missedSameSkuProducts.has(skuLower)) {
-          // Convert create → update: add identifier + filter input by updateOptions
-          const parsed = JSON.parse(inputLines[j]);
-          const shopifyProductId = missedSameSkuProducts.get(skuLower)!;
-          parsed.identifier = { id: shopifyProductId };
-          // Strip fields not in updateOptions (same logic as mapCsvRowToProductSetUpdate)
-          const inp = parsed.input;
-          if (inp) {
-            delete inp.status; // status only applies to CREATE, not UPDATE
-            if (!updateOpts.has("name")) delete inp.title;
-            if (!updateOpts.has("description")) delete inp.descriptionHtml;
-            if (!updateOpts.has("price")) { delete inp.price; delete inp.compareAtPrice; }
-            if (!updateOpts.has("vendor")) delete inp.vendor;
-            if (!updateOpts.has("productType")) delete inp.productType;
-            if (!updateOpts.has("tags")) delete inp.tags;
-            if (!updateOpts.has("images")) delete inp.files;
-          }
-          keptInput.push(JSON.stringify(parsed));
-          if (metaLinesArr[j]) keptMeta.push(metaLinesArr[j]);
-          convertedToUpdates++;
-          continue;
-        }
-        keptInput.push(inputLines[j]);
-        if (metaLinesArr[j]) keptMeta.push(metaLinesArr[j]);
-      }
-      if (keptInput.length > 0) {
-        await fs.writeFile(filePath, keptInput.join("\n") + "\n");
-        await fs.writeFile(metaPath, keptMeta.join("\n") + "\n");
-        newCreateFiles.push(filePath);
-      }
-    }
-    createFiles.length = 0;
-    createFiles.push(...newCreateFiles);
-    newCreateCount -= (removedExternal + convertedToUpdates);
-    matchedUpdateCount += convertedToUpdates;
-    if (removedExternal > 0 || convertedToUpdates > 0) {
-    }
-  }
-
-  console.log(`[Bulk] PREPARE SUMMARY: total=${totalCount}, filtered=${filteredOutCount}, deduped=${dedupedCount}, excluded=${excludedCount}, duplicates=${duplicateSkippedCount}, zeroStockSkip=${zeroStockSkippedCount}, matchedUpdate=${matchedUpdateCount}, matchedUnchanged=${matchedUnchangedCount}, newCreates=${newCreateCount}, unchangedTotal=${unchangedCount}, batchExternal=${batchExternalDetected}, createFiles=${createFiles.length}, updateFiles=${updateFiles.length}`);
+  console.log(`[Bulk] PREPARE SUMMARY: total=${totalCount}, filtered=${filteredOutCount}, deduped=${dedupedCount}, excluded=${excludedCount}, duplicates=${duplicateSkippedCount}, zeroStockSkip=${zeroStockSkippedCount}, matchedUpdate=${matchedUpdateCount}, matchedUnchanged=${matchedUnchangedCount}, newCreates=${newCreateCount}, unchangedTotal=${unchangedCount}, createFiles=${createFiles.length}, updateFiles=${updateFiles.length}`);
 
   const allSkusPath = path.join(workDir, "all-skus.jsonl");
   await fs.writeFile(allSkusPath, allSkus.map((s) => JSON.stringify(s)).join("\n") + "\n");

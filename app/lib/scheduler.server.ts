@@ -262,6 +262,72 @@ export function startScheduler() {
       );
     }
 
+    // Sweep: pick up any stuck queued items that processNext missed on enqueue
+    void (async () => {
+      try {
+        // First: clean stale blockers that prevent processNext from running
+        const staleBulkJobs = await prisma.bulkJob.findMany({
+          where: { phase: { in: ["lookup", "mutations", "finalizing"] } },
+          select: { id: true, configId: true, logId: true, createdAt: true },
+        });
+        for (const job of staleBulkJobs) {
+          // Check if job is truly stuck: no progress in last 15 minutes
+          const lastOp = await prisma.bulkJobOp.findFirst({
+            where: { jobId: job.id },
+            orderBy: { startedAt: "desc" },
+            select: { startedAt: true, status: true },
+          }).catch(() => null);
+          const lastActivity = lastOp?.startedAt || job.createdAt;
+          if (!lastActivity || Date.now() - lastActivity.getTime() > 15 * 60 * 1000) {
+            console.log(`[Scheduler] Sweep: failing stale BulkJob ${job.id} (no activity >15min)`);
+            await prisma.bulkJob.update({ where: { id: job.id }, data: { phase: "failed" } }).catch(() => {});
+            if (job.logId) {
+              await prisma.importLog.update({
+                where: { id: job.logId },
+                data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "systemError.stale_job_cleanup" }]) },
+              }).catch(() => {});
+            }
+            await prisma.importQueue.updateMany({
+              where: { configId: job.configId, status: "running" },
+              data: { status: "failed", finishedAt: new Date() },
+            }).catch(() => {});
+          }
+        }
+
+        // Clean stale ImportLogs (running with no progress >15min)
+        const staleLogs = await prisma.importLog.findMany({
+          where: { status: "running" },
+          select: { id: true, configId: true, lastProgressAt: true, startedAt: true },
+        });
+        for (const log of staleLogs) {
+          const lastActivity = log.lastProgressAt || log.startedAt;
+          if (lastActivity && Date.now() - lastActivity.getTime() > 15 * 60 * 1000) {
+            console.log(`[Scheduler] Sweep: failing stale ImportLog ${log.id}`);
+            await prisma.importLog.update({
+              where: { id: log.id },
+              data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "systemError.stale_log_cleanup" }]) },
+            }).catch(() => {});
+            await prisma.importQueue.updateMany({
+              where: { configId: log.configId, logId: log.id, status: "running" },
+              data: { status: "failed", finishedAt: new Date() },
+            }).catch(() => {});
+          }
+        }
+
+        // Then: process queued items
+        const shops = await prisma.importQueue.findMany({
+          where: { status: "queued" },
+          select: { shopDomain: true },
+          distinct: ["shopDomain"],
+        });
+        for (const { shopDomain } of shops) {
+          void processNext(shopDomain).catch(() => {});
+        }
+      } catch (e) {
+        // ignore sweep errors
+      }
+    })();
+
     // Clean stale queue items (queued >30min, running with no progress >15min)
     const STALE_QUEUED_MS = 30 * 60 * 1000;
     const STALE_PROGRESS_MS = 15 * 60 * 1000;
