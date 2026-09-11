@@ -1361,12 +1361,8 @@ async function prepareAndLaunch(
       if (effectiveOpts.has("images")) {
         for (let i = 1; i <= 5; i++) { const img = getField(row, columnMaps, `image${i}`); if (img) csvImageUrls.push(img.trim()); }
       }
-      const shopifyImageUrls = (match.shopifyImages || []).map((u: string) => u.trim()).sort();
-      const sortedCsvImages = [...csvImageUrls].sort();
-      const imagesChanged = effectiveOpts.has("images") && (
-        sortedCsvImages.length !== shopifyImageUrls.length ||
-        sortedCsvImages.some((url: string, idx: number) => url !== shopifyImageUrls[idx])
-      );
+      const shopifyImageCount = (match.shopifyImages || []).length;
+      const imagesChanged = effectiveOpts.has("images") && csvImageUrls.length !== shopifyImageCount;
 
       // Skip products with NO changes — don't send mutation
       if (!priceChanged && !stockChanged && !costChanged && !titleChanged && !descriptionChanged && !vendorChanged && !productTypeChanged && !tagsChanged && !imagesChanged) {
