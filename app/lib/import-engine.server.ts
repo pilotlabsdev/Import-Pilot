@@ -1584,6 +1584,8 @@ async function processProduct({
     const priceChanged = updateOpts.has("price") && (lastPrice === null || lastPrice !== prices.regularPrice);
     const stockChanged = updateOpts.has("stock") && existing.shopifyInventoryItemId && (lastQty === null || lastQty !== newQty);
     const costChanged = costPrice > 0 && existing.shopifyInventoryItemId && Math.abs((lastCost ?? 0) - costPrice) > 0.001;
+    const weightValue = parseFloat((getField(row, columnMaps, "weight") || "0").replace(",", "."));
+    const weightChanged = weightValue > 0 && existing.shopifyInventoryItemId;
 
     const imagesChanged = updateOpts.has("images") && (productInput.files?.length ?? 0) > 0;
 
@@ -1719,6 +1721,26 @@ async function processProduct({
         });
       } catch (error: any) {
         console.error("[Import] Error seteando costo:", error?.message || error);
+      }
+    }
+
+    if (weightChanged && existing.shopifyInventoryItemId) {
+      try {
+        await graphqlWithRetry(admin,
+          `#graphql
+          mutation inventoryItemUpdate($id: ID!, $input: InventoryItemInput!) {
+            inventoryItemUpdate(id: $id, input: $input) {
+              inventoryItem { id measurement { weight { value unit } } }
+              userErrors { field message }
+            }
+          }`,
+          {
+            id: existing.shopifyInventoryItemId,
+            input: { measurement: { weight: { value: weightValue, unit: "KILOGRAMS" } } },
+          }
+        );
+      } catch (error: any) {
+        console.error("[Import] Error seteando peso:", error?.message || error);
       }
     }
 
