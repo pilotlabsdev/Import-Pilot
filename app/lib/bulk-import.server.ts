@@ -2904,8 +2904,9 @@ async function preScanCsv(
         if (!m || !m.csvColumn) return m?.defaultValue || "";
         return row[m.csvColumn] || m.defaultValue || "";
       })();
-      if (skuFilter && !skuFilter.has(sku.toLowerCase())) continue;
-      if (catFilter && !catFilter.has(category.toLowerCase())) continue;
+      const skuMatch = skuFilter ? skuFilter.has(sku.toLowerCase()) : true;
+      const catMatch = catFilter ? catFilter.has(category.toLowerCase()) : true;
+      if (!skuMatch && !catMatch) continue;
     }
 
     skuSet.add(sku);
