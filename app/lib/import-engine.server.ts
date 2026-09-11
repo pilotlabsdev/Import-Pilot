@@ -1299,7 +1299,9 @@ async function processProduct({
         shopifyLiveTags = checkJson.data.product.tags ?? null;
         // Backfill inventoryItemId if missing in DB
         if (!existing.shopifyInventoryItemId) {
-          const invItemId = checkJson.data.product?.variants?.edges?.[0]?.node?.inventoryItem?.id;
+          const variantNode = checkJson.data.product?.variants?.edges?.[0]?.node;
+          const invItemId = variantNode?.inventoryItem?.id;
+          console.log(`[Import] SKU ${sku}: backfill check — existing.shopifyInventoryItemId=null, variantNode=${JSON.stringify(variantNode)}, invItemId=${invItemId}`);
           if (invItemId) {
             try {
               await prisma.productMapping.update({
@@ -1308,7 +1310,11 @@ async function processProduct({
               });
               existing = { ...existing, shopifyInventoryItemId: invItemId } as any;
               console.log(`[Import] SKU ${sku}: backfilled shopifyInventoryItemId=${invItemId}`);
-            } catch {}
+            } catch (e: any) {
+              console.log(`[Import] SKU ${sku}: backfill DB update FAILED: ${e?.message}`);
+            }
+          } else {
+            console.log(`[Import] SKU ${sku}: backfill FAILED — invItemId is null/undefined. product.variants edges count=${checkJson.data.product?.variants?.edges?.length}`);
           }
         }
       } else if (checkJson.errors?.length) {
@@ -1611,6 +1617,8 @@ async function processProduct({
     const priceChanged = updateOpts.has("price") && (lastPrice === null || lastPrice !== prices.regularPrice);
     const stockChanged = updateOpts.has("stock") && existing.shopifyInventoryItemId && (lastQty === null || lastQty !== newQty);
     const costChanged = costPrice > 0 && existing.shopifyInventoryItemId && Math.abs((lastCost ?? 0) - costPrice) > 0.001;
+
+    console.log(`[Import] SKU ${sku}: DETECTION — shopifyInventoryItemId=${existing.shopifyInventoryItemId} lastQty=${lastQty} newQty=${newQty} lastCost=${lastCost} costPrice=${costPrice} stockChanged=${!!stockChanged} costChanged=${!!costChanged} priceChanged=${!!priceChanged}`);
     const weightValue = parseFloat((getField(row, columnMaps, "weight") || "0").replace(",", "."));
     const shouldSendWeight = weightValue > 0 && existing.shopifyInventoryItemId;
 
