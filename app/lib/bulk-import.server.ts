@@ -1274,7 +1274,7 @@ async function prepareAndLaunch(
     const csvDescription = getField(row, columnMaps, "description") || "";
     const csvVendor = getField(row, columnMaps, "brand") || "";
     const csvProductType = shopifyProductType || getField(row, columnMaps, "category") || "";
-    const csvTagsRaw = [categoryTags, getField(row, columnMaps, "tags") || ""].filter(Boolean);
+    const csvTagsRaw = [config.defaultTags, categoryTags, getField(row, columnMaps, "tags") || ""].filter(Boolean);
     const csvTags = csvTagsRaw.flatMap((t: string) => t.split(",").map((s: string) => s.trim()).filter(Boolean)).sort();
 
     const meta: MetaLine = {
