@@ -1629,7 +1629,14 @@ async function processProduct({
     const liveDescNorm = normalizeHtml(liveDescription ?? "");
     const descriptionChanged = updateOpts.has("description") && productInput.descriptionHtml && csvDescNorm !== liveDescNorm;
     if (descriptionChanged && csvDescNorm && liveDescNorm) {
-      console.log(`[Import] SKU ${sku}: DESC MISMATCH csv="${csvDescNorm.slice(0,200)}" shopify="${liveDescNorm.slice(0,200)}"`);
+      console.log(`[Import] SKU ${sku}: DESC MISMATCH len=${csvDescNorm.length}/${liveDescNorm.length} csv尾="${csvDescNorm.slice(-20)}" shopify尾="${liveDescNorm.slice(-20)}"`);
+      // Find first difference
+      for (let i = 0; i < Math.max(csvDescNorm.length, liveDescNorm.length); i++) {
+        if (csvDescNorm[i] !== liveDescNorm[i]) {
+          console.log(`[Import] SKU ${sku}: DESC first diff at pos ${i}: csv=${JSON.stringify(csvDescNorm[i])}(${csvDescNorm.charCodeAt(i)}) shopify=${JSON.stringify(liveDescNorm[i])}(${liveDescNorm.charCodeAt(i)})`);
+          break;
+        }
+      }
     }
     const vendorChanged = updateOpts.has("vendor") && productInput.vendor && productInput.vendor !== liveVendor;
     const productTypeChanged = updateOpts.has("productType") && productInput.productType && productInput.productType !== liveProductType;
