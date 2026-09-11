@@ -1657,13 +1657,15 @@ async function processProduct({
       }
     }
 
-    if (imagesChanged && productInput.files) {
-      imageQueue.push({
-        productId: existing.shopifyProductId,
-        files: productInput.files.map((f) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType })),
-        label: `SKU=${sku} (update images)`,
-      });
-    }
+    // Images: skip in update path — images are set during creation only
+    // productCreateMedia ADDS without replacing, causing duplicates
+    // if (imagesChanged && productInput.files) {
+    //   imageQueue.push({
+    //     productId: existing.shopifyProductId,
+    //     files: productInput.files.map((f) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType })),
+    //     label: `SKU=${sku} (update images)`,
+    //   });
+    // }
 
     if (priceChanged) {
       const ean = getField(row, columnMaps, "ean");
@@ -1774,9 +1776,12 @@ async function processProduct({
             : null;
         } while (cursor);
 
+        console.log(`[Import] SKU ${sku}: currentCollections=${JSON.stringify(currentCollections)}`);
+
         const desiredIds = productInput.collections.filter((c: any) => typeof c === "string" && c.startsWith("gid://"));
         const toRemove = currentCollections.filter((id: string) => !desiredIds.includes(id));
         const toAdd = desiredIds.filter((id: string) => !currentCollections.includes(id));
+        console.log(`[Import] SKU ${sku}: toAdd=${JSON.stringify(toAdd)} toRemove=${JSON.stringify(toRemove)}`);
 
         for (const colId of toRemove) {
           await graphqlWithRetry(admin,
