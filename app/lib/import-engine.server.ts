@@ -1290,13 +1290,27 @@ async function processProduct({
       const checkJson = await graphqlWithRetry(admin,
         `#graphql
         query productById($id: ID!) {
-          product(id: $id) { id title tags }
+          product(id: $id) { id title tags variants(first: 1) { edges { node { id inventoryItem { id } } } } }
         }`,
         { id: existing.shopifyProductId }
       );
       if (checkJson.data?.product?.id) {
         // Product exists — keep mapping
         shopifyLiveTags = checkJson.data.product.tags ?? null;
+        // Backfill inventoryItemId if missing in DB
+        if (!existing.shopifyInventoryItemId) {
+          const invItemId = checkJson.data.product?.variants?.edges?.[0]?.node?.inventoryItem?.id;
+          if (invItemId) {
+            try {
+              await prisma.productMapping.update({
+                where: { id: existing.id },
+                data: { shopifyInventoryItemId: invItemId },
+              });
+              existing = { ...existing, shopifyInventoryItemId: invItemId } as any;
+              console.log(`[Import] SKU ${sku}: backfilled shopifyInventoryItemId=${invItemId}`);
+            } catch {}
+          }
+        }
       } else if (checkJson.errors?.length) {
         // Don't delete mapping on GraphQL errors
         return;
