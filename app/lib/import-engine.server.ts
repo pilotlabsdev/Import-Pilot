@@ -1579,7 +1579,7 @@ async function processProduct({
     }
   }
   if (existing) {
-    // === CHANGE DETECTION: compare against last known values ===
+    // === CHANGE DETECTION: compare against live Shopify data (not just last import) ===
     const lastPrice = existing.lastPrice ?? null;
     const lastQty = existing.lastQuantity ?? null;
     const lastCost = existing.lastCost ?? null;
@@ -1592,17 +1592,36 @@ async function processProduct({
 
     const imagesChanged = updateOpts.has("images") && (productInput.files?.length ?? 0) > 0;
 
-    // Count data field changes (title/description/vendor/productType/tags)
-    const lastTitle = existing.lastTitle ?? null;
-    const lastDescription = existing.lastDescription ?? null;
-    const lastVendor = existing.lastVendor ?? null;
-    const lastProductType = existing.lastProductType ?? null;
-    const lastTags = existing.lastTags ?? null;
-    const titleChanged = updateOpts.has("name") && productInput.title && productInput.title !== lastTitle;
-    const descriptionChanged = updateOpts.has("description") && productInput.descriptionHtml && normalizeHtml(productInput.descriptionHtml) !== normalizeHtml(lastDescription ?? "");
-    const vendorChanged = updateOpts.has("vendor") && productInput.vendor && productInput.vendor !== lastVendor;
-    const productTypeChanged = updateOpts.has("productType") && productInput.productType && productInput.productType !== lastProductType;
-    const tagsBaseline = shopifyLiveTags?.length ? JSON.stringify(shopifyLiveTags) : lastTags;
+    // Fetch live product data from Shopify for accurate comparison
+    let liveProduct: any = null;
+    try {
+      const liveRes = await graphqlWithRetry(admin,
+        `#graphql
+        query liveProduct($id: ID!) {
+          product(id: $id) {
+            title
+            descriptionHtml
+            vendor
+            productType
+            tags
+          }
+        }`,
+        { id: existing.shopifyProductId }
+      );
+      liveProduct = liveRes.data?.product;
+    } catch {}
+
+    const liveTitle = liveProduct?.title ?? existing.lastTitle ?? null;
+    const liveDescription = liveProduct?.descriptionHtml ?? existing.lastDescription ?? null;
+    const liveVendor = liveProduct?.vendor ?? existing.lastVendor ?? null;
+    const liveProductType = liveProduct?.productType ?? existing.lastProductType ?? null;
+    const liveTags = liveProduct?.tags ?? shopifyLiveTags ?? null;
+
+    const titleChanged = updateOpts.has("name") && productInput.title && productInput.title !== liveTitle;
+    const descriptionChanged = updateOpts.has("description") && productInput.descriptionHtml && normalizeHtml(productInput.descriptionHtml) !== normalizeHtml(liveDescription ?? "");
+    const vendorChanged = updateOpts.has("vendor") && productInput.vendor && productInput.vendor !== liveVendor;
+    const productTypeChanged = updateOpts.has("productType") && productInput.productType && productInput.productType !== liveProductType;
+    const tagsBaseline = liveTags?.length ? (Array.isArray(liveTags) ? JSON.stringify(liveTags) : JSON.stringify(liveTags.split(", "))) : existing.lastTags ?? null;
     const tagsChanged = updateOpts.has("tags") && productInput.tags?.length && JSON.stringify(productInput.tags) !== tagsBaseline;
 
     // === COLLECTIONS: always sync (idempotent) even if nothing else changed ===
