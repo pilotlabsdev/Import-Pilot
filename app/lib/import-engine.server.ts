@@ -1666,6 +1666,45 @@ async function processProduct({
       }
     }
 
+    // Images in update: check existing media, only add if missing
+    if (updateOpts.has("images") && productInput.files?.length) {
+      try {
+        const mediaRes = await graphqlWithRetry(admin,
+          `#graphql
+          query productMedia($id: ID!) {
+            product(id: $id) {
+              media(first: 50) {
+                edges {
+                  node {
+                    ... on MediaImage {
+                      image { url altText }
+                    }
+                  }
+                }
+              }
+            }
+          }`,
+          { id: existing.shopifyProductId }
+        );
+        const existingUrls = new Set(
+          (mediaRes.data?.product?.media?.edges || [])
+            .map((e: any) => e.node?.image?.url || "")
+            .filter(Boolean)
+        );
+        const newFiles = (productInput.files as any[]).filter((f: any) => f.originalSource && !existingUrls.has(f.originalSource));
+        console.log(`[Import] SKU ${sku}: images check: productInput.files=${productInput.files.length} existingMedia=${existingUrls.size} newFiles=${newFiles.length}`);
+        if (newFiles.length > 0) {
+          imageQueue.push({
+            productId: existing.shopifyProductId,
+            files: newFiles.map((f: any) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType || "IMAGE" })),
+            label: `SKU=${sku} (update add ${newFiles.length} images)`,
+          });
+        }
+      } catch (error: any) {
+        console.error("[Import] Error checking images:", error?.message || error);
+      }
+    }
+
     // Skip productUpdate/price/stock if nothing changed
     if (!priceChanged && !stockChanged && !costChanged && !titleChanged && !descriptionChanged && !vendorChanged && !productTypeChanged && !tagsChanged) {
       result.unchanged++;
@@ -1714,44 +1753,6 @@ async function processProduct({
         await prisma.productMapping.delete({ where: { id: existing.id } });
         result.created++;
         return;
-      }
-    }
-
-    // Images in update: check if product has media, only add if missing
-    if (updateOpts.has("images") && productInput.files?.length) {
-      try {
-        const mediaRes = await graphqlWithRetry(admin,
-          `#graphql
-          query productMedia($id: ID!) {
-            product(id: $id) {
-              media(first: 50) {
-                edges {
-                  node {
-                    ... on MediaImage {
-                      image { url altText }
-                    }
-                  }
-                }
-              }
-            }
-          }`,
-          { id: existing.shopifyProductId }
-        );
-        const existingUrls = new Set(
-          (mediaRes.data?.product?.media?.edges || [])
-            .map((e: any) => e.node?.image?.url || "")
-            .filter(Boolean)
-        );
-        const newFiles = (productInput.files as any[]).filter((f: any) => f.originalSource && !existingUrls.has(f.originalSource));
-        if (newFiles.length > 0) {
-          imageQueue.push({
-            productId: existing.shopifyProductId,
-            files: newFiles.map((f: any) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType || "IMAGE" })),
-            label: `SKU=${sku} (update add ${newFiles.length} images)`,
-          });
-        }
-      } catch (error: any) {
-        console.error("[Import] Error checking images:", error?.message || error);
       }
     }
 
