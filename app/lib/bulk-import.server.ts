@@ -1265,6 +1265,10 @@ async function prepareAndLaunch(
           // Same supplier product (regardless of app-tracked or external)
           // Adopt if not tracked, then let it flow to normal update path at line ~1130
           if (!anyMapping) {
+            const adoptTitle = getField(row, columnMaps, "title") || null;
+            const adoptDescription = getField(row, columnMaps, "description") || null;
+            const adoptVendor = getField(row, columnMaps, "brand") || null;
+            const adoptProductType = getField(row, columnMaps, "category") || null;
             const adopted = await prisma.productMapping.upsert({
               where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: sku } },
               create: {
@@ -1277,9 +1281,9 @@ async function prepareAndLaunch(
                 ean: ean || null,
                 lastPrice: null,
                 lastQuantity: null,
-                lastTitle: meta.title ?? null, lastDescription: meta.description ?? null,
-                lastVendor: meta.vendor ?? null, lastProductType: meta.productType ?? null,
-                lastTags: meta.tags ? JSON.stringify(meta.tags) : null,
+                lastTitle: adoptTitle, lastDescription: adoptDescription,
+                lastVendor: adoptVendor, lastProductType: adoptProductType,
+                lastTags: null,
                 postProcessStatus: "pending",
               },
               update: {
@@ -1287,9 +1291,8 @@ async function prepareAndLaunch(
                 shopifyVariantId: matchInfo.variantId,
                 shopifyInventoryItemId: matchInfo.inventoryItemId,
                 ean: ean || null,
-                lastTitle: meta.title ?? undefined, lastDescription: meta.description ?? undefined,
-                lastVendor: meta.vendor ?? undefined, lastProductType: meta.productType ?? undefined,
-                lastTags: meta.tags ? JSON.stringify(meta.tags) : undefined,
+                lastTitle: adoptTitle ?? undefined, lastDescription: adoptDescription ?? undefined,
+                lastVendor: adoptVendor ?? undefined, lastProductType: adoptProductType ?? undefined,
               },
             }).catch((e: any) => {
               console.error(`[Bulk] SKU ${sku}: adopt create failed: ${e?.message}`);
@@ -1782,6 +1785,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
   const errorWrites: string[] = [];
 
   for (let i = 0; i < resultLines.length; i++) {
+    try {
     const meta = metaLines[i] as MetaLine | undefined;
     const line = resultLines[i] as any;
     if (!meta) continue;
@@ -1970,6 +1974,12 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       if (vendorChanged) vendorChanges++;
       if (productTypeChanged) ptChanges++;
       if (tagsChanged) tagChanges++;
+    }
+    } catch (loopErr: any) {
+      console.error(`[Bulk] handleMutationOpFinished iteration ${i} CRASH: ${loopErr?.message}\n${loopErr?.stack}`);
+      opErrors++;
+      const crashSku = (metaLines[i] as any)?.sku || `unknown-${i}`;
+      errorWrites.push(JSON.stringify({ sku: crashSku, error: `loop_crash: ${loopErr?.message}`, lineNumber: 0 }));
     }
   }
 

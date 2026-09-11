@@ -425,6 +425,14 @@ export function mapCsvRowToProductSetUpdate(
     }
   }
 
+  const csvImages: string[] = [];
+  if (opts.has("images")) {
+    for (let i = 1; i <= 5; i++) {
+      const img = getField(row, columnMaps, `image${i}`);
+      if (img) csvImages.push(img);
+    }
+  }
+
   const input: ProductSetInput = {
     title: name,
     descriptionHtml: description,
@@ -434,7 +442,9 @@ export function mapCsvRowToProductSetUpdate(
     productOptions: [{ name: "Title", values: [{ name: "Default Title" }] }],
     metafields: [],
     seo: { title: name, description: stripHtml(shortDescription) || name },
-    files: [],
+    files: csvImages.length > 0
+      ? csvImages.map((url) => ({ originalSource: url, alt: name, contentType: "IMAGE" as const }))
+      : [],
     variants: [],
     collections: [],
   };
@@ -493,7 +503,7 @@ export function mapCsvRowToProductSetUpdate(
 
   input.productOptions = [{ name: "Title", values: [{ name: "Default Title" }] }];
 
-  if (!opts.has("images")) {
+  if (csvImages.length === 0) {
     delete input.files;
   }
 
