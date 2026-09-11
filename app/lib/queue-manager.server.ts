@@ -535,7 +535,7 @@ export async function getQueueStatus(shopDomain: string): Promise<{
       id: true, configId: true, status: true, triggerType: true,
       startedAt: true, completedAt: true, created: true, updated: true, unchanged: true,
       totalProducts: true, excludedCount: true, priceChanges: true, stockChanges: true, costChanges: true,
-      titleChanges: true, descriptionChanges: true, vendorChanges: true, productTypeChanges: true, tagsChanges: true,
+      titleChanges: true, descriptionChanges: true, vendorChanges: true, productTypeChanges: true, tagsChanges: true, imageChanges: true,
       errors: true,
     },
   });
