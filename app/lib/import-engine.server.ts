@@ -1306,10 +1306,14 @@ async function processProduct({
             try {
               await prisma.productMapping.update({
                 where: { id: existing.id },
-                data: { shopifyInventoryItemId: invItemId },
+                data: {
+                  shopifyInventoryItemId: invItemId,
+                  lastQuantity: null,
+                  lastCost: null,
+                },
               });
-              existing = { ...existing, shopifyInventoryItemId: invItemId } as any;
-              console.log(`[Import] SKU ${sku}: backfilled shopifyInventoryItemId=${invItemId}`);
+              existing = { ...existing, shopifyInventoryItemId: invItemId, lastQuantity: null, lastCost: null } as any;
+              console.log(`[Import] SKU ${sku}: backfilled shopifyInventoryItemId=${invItemId} + reset lastQty/lastCost for re-sync`);
             } catch (e: any) {
               console.log(`[Import] SKU ${sku}: backfill DB update FAILED: ${e?.message}`);
             }
