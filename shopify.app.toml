@@ -18,6 +18,7 @@ api_version = "2026-07"
   "app/uninstalled",
   "bulk_operations/finish",
   "inventory_items/update",
+  "inventory_levels/update",
   "products/delete",
   "products/update"
 ]

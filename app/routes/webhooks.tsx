@@ -249,6 +249,28 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
       break;
     }
+    case "INVENTORY_LEVELS_UPDATE": {
+      // Skip during active bulk imports
+      if (isBulkActive(shop)) break;
+
+      const inventoryItemId = payload.inventory_item_id ? `gid://shopify/InventoryItem/${payload.inventory_item_id}` : null;
+      const newQty = payload.available != null ? parseInt(String(payload.available), 10) : null;
+      if (!inventoryItemId || newQty == null || isNaN(newQty)) break;
+
+      const mapping = await prisma.productMapping.findFirst({
+        where: { shopDomain: shop, shopifyInventoryItemId: inventoryItemId },
+      });
+      if (!mapping) break;
+
+      if (newQty !== mapping.lastQuantity) {
+        await prisma.productMapping.update({
+          where: { id: mapping.id },
+          data: { lastQuantity: newQty },
+        });
+        console.log(`[Webhook] INVENTORY_LEVELS_UPDATE SKU=${mapping.supplierSku}: lastQuantity=${newQty}`);
+      }
+      break;
+    }
     case "APP_SCOPES_UPDATE":
       console.log(`[Webhook] APP_SCOPES_UPDATE: ${shop}`);
       break;
