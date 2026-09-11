@@ -3001,47 +3001,52 @@ async function queryProductsTargeted(
     throw new Error(`Lookup incomplete: ${failedSkus.length} SKU queries failed after 3 attempts. Import will retry next cycle.`);
   }
 
-  // Query by EANs/barcodes (only those NOT already found by SKU query) with retry — MUST complete fully or throw
+  // Query by EANs/barcodes via productVariants (barcode lives on variant, not product)
+  const BARCODE_VARIANT_QUERY = `#graphql
+    query ($q: String!) {
+      productVariants(first: 100, query: $q) {
+        edges {
+          node {
+            id sku barcode
+            product { id title vendor productType tags descriptionHtml }
+            inventoryItem { id unitCost { amount } }
+          }
+        }
+      }
+    }
+  `;
   const uniqueEans = [...new Set(eans)].filter((e) => e && !byBarcode.has(e));
   const failedEanBatches: string[][] = [];
   for (let i = 0; i < uniqueEans.length; i += 15) {
     const batch = uniqueEans.slice(i, i + 15);
-    const query = batch.map((e) => `barcode:'${String(e).replace(/'/g, "")}'`).join(" OR ");
+    const query = batch.map((e) => `barcode:${String(e).replace(/'/g, "")}`).join(" OR ");
     let succeeded = false;
     for (let attempt = 0; attempt < 3 && !succeeded; attempt++) {
       if (attempt > 0) await new Promise((r) => setTimeout(r, 1000 * attempt));
       try {
-        const json = await gql(admin, TARGETED_QUERY, { variables: { q: query } }, shopDomain);
-        for (const edge of json.data?.products?.edges || []) {
-          const node = edge.node;
-          const productId = node.id;
-          const productTitle = node.title || undefined;
-          const productDescription = node.descriptionHtml || undefined;
-          const productVendor = node.vendor || undefined;
-          const productProductType = node.productType || undefined;
-          const productTags: string[] | undefined = node.tags?.length > 0 ? node.tags : undefined;
-          for (const vEdge of node.variants?.edges || []) {
-            const v = vEdge.node;
-            const match: LookupMatch = {
-              productId,
-              variantId: v.id,
-              inventoryItemId: v.inventoryItem?.id || "",
-              shopifyCost: parseFloat(v.inventoryItem?.unitCost?.amount ?? "0") || 0,
-              sku: v.sku || "",
-              shopifyTitle: productTitle,
-              shopifyDescription: productDescription,
-              shopifyVendor: productVendor,
-              shopifyProductType: productProductType,
-              shopifyTags: productTags,
-            };
-            if (v.sku && !bySku.has(v.sku)) bySku.set(String(v.sku), match);
-            if (v.barcode) byBarcode.set(String(v.barcode), match);
-          }
+        const json = await gql(admin, BARCODE_VARIANT_QUERY, { variables: { q: query } }, shopDomain);
+        for (const edge of json.data?.productVariants?.edges || []) {
+          const v = edge.node;
+          const prod = v.product || {};
+          const match: LookupMatch = {
+            productId: prod.id || "",
+            variantId: v.id,
+            inventoryItemId: v.inventoryItem?.id || "",
+            shopifyCost: parseFloat(v.inventoryItem?.unitCost?.amount ?? "0") || 0,
+            sku: v.sku || "",
+            shopifyTitle: prod.title || undefined,
+            shopifyDescription: prod.descriptionHtml || undefined,
+            shopifyVendor: prod.vendor || undefined,
+            shopifyProductType: prod.productType || undefined,
+            shopifyTags: prod.tags?.length > 0 ? prod.tags : undefined,
+          };
+          if (v.sku && !bySku.has(v.sku)) bySku.set(String(v.sku), match);
+          if (v.barcode) byBarcode.set(String(v.barcode), match);
         }
         succeeded = true;
       } catch (e: any) {
         if (attempt === 2) {
-          console.error(`[Bulk] Targeted barcode query batch failed (3 attempts): ${batch.join(",")} → ${e?.message}`);
+          console.error(`[Bulk] Targeted barcode variant query batch failed (3 attempts): ${batch.join(",")} → ${e?.message}`);
           failedEanBatches.push(batch);
         }
       }
