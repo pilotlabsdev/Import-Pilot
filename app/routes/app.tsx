@@ -14,6 +14,15 @@ import { CrispChat } from "~/components/CrispChat";
 import { requireSubscription, getSubscriptionInfo } from "~/lib/billing.server";
 import { ReconnectingOverlay, triggerReconnect } from "~/components/ReconnectingOverlay";
 
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`[App Loader] Timeout ${label}: ${ms}ms`)), ms)
+    ),
+  ]);
+}
+
 function handleNavClick(e: React.MouseEvent<HTMLAnchorElement>) {
   stopTutorial();
 }
@@ -26,16 +35,16 @@ function ClientOnly({ children }: { children: React.ReactNode }) {
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await safeAuthenticate(request);
+  const { session } = await withTimeout(safeAuthenticate(request), 15000, "safeAuthenticate");
   const shopDomain = session.shop;
 
   const url = new URL(request.url);
   const isBillingPage = url.pathname === "/app/billing";
 
   try {
-    const hasPlan = isBillingPage ? true : await requireSubscription(shopDomain);
+    const hasPlan = isBillingPage ? true : await withTimeout(requireSubscription(shopDomain), 8000, "requireSubscription");
 
-    const [unresolvedCount, queueCount, subscription] = await Promise.all([
+    const [unresolvedCount, queueCount, subscription] = await withTimeout(Promise.all([
       hasPlan ? prisma.duplicateLog.count({
         where: { shopDomain, resolved: false },
       }) : Promise.resolve(0),
@@ -63,7 +72,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         return activeConfigIds.size;
       })() : Promise.resolve(0),
       getSubscriptionInfo(shopDomain),
-    ]);
+    ]), 10000, "loader Promise.all");
 
     const planLabel = subscription.isDeveloper ? "Dev" :
       subscription.isTrial ? `${subscription.planHandle} (trial)` :
@@ -78,7 +87,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       hasPlan,
     };
   } catch (error: any) {
-    console.error(`[App Loader] DB error, returning defaults: ${error?.message}`);
+    console.error(`[App Loader] Error (returning defaults): ${error?.message}`);
     return {
       apiKey: process.env.SHOPIFY_API_KEY || "",
       shopDomain,
