@@ -141,6 +141,7 @@ export default function App() {
         }
         return res;
       } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") throw err;
         const url = typeof args[0] === "string" ? args[0] : args[0] instanceof URL ? args[0].toString() : (args[0] as any)?.url || "";
         if ((url.includes(".data") || url.includes("/app")) && Date.now() - lastReconnect > DEBOUNCE_MS) {
           lastReconnect = Date.now();
