@@ -12,6 +12,15 @@ if (process.env.NODE_ENV !== "production") {
   global.prisma = prisma;
 }
 
+// Keepalive: ping DB every 5 min to prevent PgBouncer from closing idle connections
+if (process.env.NODE_ENV === "production") {
+  setInterval(async () => {
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+    } catch {}
+  }, 5 * 60 * 1000);
+}
+
 export { prisma };
 
 const TOKEN_EXPIRY_WARNING_MS = 10 * 60 * 1000; // 10 minutes before expiry
