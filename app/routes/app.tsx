@@ -105,7 +105,7 @@ export default function App() {
     );
   }
 
-  // Listen for fetch failures and trigger reconnect on auth errors
+  // Listen for fetch failures and trigger reconnect on auth/infra errors
   // Debounced: only trigger once per 10s to prevent reload loops
   useEffect(() => {
     let lastReconnect = 0;
@@ -116,10 +116,17 @@ export default function App() {
         const res = await origFetch(...args);
         if ((res.status === 401 || res.status === 502) && Date.now() - lastReconnect > DEBOUNCE_MS) {
           lastReconnect = Date.now();
+          console.warn(`[Network] HTTP ${res.status} detected. Triggering reconnect...`);
           triggerReconnect();
         }
         return res;
       } catch (err) {
+        const url = typeof args[0] === "string" ? args[0] : args[0] instanceof URL ? args[0].toString() : (args[0] as any)?.url || "";
+        if ((url.includes(".data") || url.includes("/app")) && Date.now() - lastReconnect > DEBOUNCE_MS) {
+          lastReconnect = Date.now();
+          console.warn(`[Network] Fetch failed for ${url}. Triggering reconnect...`);
+          triggerReconnect();
+        }
         throw err;
       }
     };
