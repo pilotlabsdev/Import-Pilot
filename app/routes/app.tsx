@@ -32,51 +32,62 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
   const isBillingPage = url.pathname === "/app/billing";
 
-  const hasPlan = isBillingPage ? true : await requireSubscription(shopDomain);
+  try {
+    const hasPlan = isBillingPage ? true : await requireSubscription(shopDomain);
 
-  const [unresolvedCount, queueCount, subscription] = await Promise.all([
-    hasPlan ? prisma.duplicateLog.count({
-      where: { shopDomain, resolved: false },
-    }) : Promise.resolve(0),
-    hasPlan ? (async () => {
-      // Count unique suppliers with active imports (queue, orphan logs, or bulk jobs)
-      const activeConfigIds = new Set<string>();
+    const [unresolvedCount, queueCount, subscription] = await Promise.all([
+      hasPlan ? prisma.duplicateLog.count({
+        where: { shopDomain, resolved: false },
+      }) : Promise.resolve(0),
+      hasPlan ? (async () => {
+        const activeConfigIds = new Set<string>();
 
-      const qItems = await prisma.importQueue.findMany({
-        where: { shopDomain, status: { in: ["queued", "running"] } },
-        select: { configId: true },
-      });
-      for (const q of qItems) activeConfigIds.add(q.configId);
+        const qItems = await prisma.importQueue.findMany({
+          where: { shopDomain, status: { in: ["queued", "running"] } },
+          select: { configId: true },
+        });
+        for (const q of qItems) activeConfigIds.add(q.configId);
 
-      const runningLogs = await prisma.importLog.findMany({
-        where: { shopDomain, status: "running" },
-        select: { configId: true },
-      });
-      for (const l of runningLogs) activeConfigIds.add(l.configId);
+        const runningLogs = await prisma.importLog.findMany({
+          where: { shopDomain, status: "running" },
+          select: { configId: true },
+        });
+        for (const l of runningLogs) activeConfigIds.add(l.configId);
 
-      const activeJobs = await prisma.bulkJob.findMany({
-        where: { shopDomain, phase: { in: ["lookup", "mutations", "finalizing"] } },
-        select: { configId: true },
-      });
-      for (const j of activeJobs) activeConfigIds.add(j.configId);
+        const activeJobs = await prisma.bulkJob.findMany({
+          where: { shopDomain, phase: { in: ["lookup", "mutations", "finalizing"] } },
+          select: { configId: true },
+        });
+        for (const j of activeJobs) activeConfigIds.add(j.configId);
 
-      return activeConfigIds.size;
-    })() : Promise.resolve(0),
-    getSubscriptionInfo(shopDomain),
-  ]);
+        return activeConfigIds.size;
+      })() : Promise.resolve(0),
+      getSubscriptionInfo(shopDomain),
+    ]);
 
-  const planLabel = subscription.isDeveloper ? "Dev" :
-    subscription.isTrial ? `${subscription.planHandle} (trial)` :
-    subscription.hasActiveSubscription ? subscription.planHandle : null;
+    const planLabel = subscription.isDeveloper ? "Dev" :
+      subscription.isTrial ? `${subscription.planHandle} (trial)` :
+      subscription.hasActiveSubscription ? subscription.planHandle : null;
 
-  return {
-    apiKey: process.env.SHOPIFY_API_KEY || "",
-    shopDomain,
-    unresolvedCount,
-    queueCount,
-    planLabel,
-    hasPlan,
-  };
+    return {
+      apiKey: process.env.SHOPIFY_API_KEY || "",
+      shopDomain,
+      unresolvedCount,
+      queueCount,
+      planLabel,
+      hasPlan,
+    };
+  } catch (error: any) {
+    console.error(`[App Loader] DB error, returning defaults: ${error?.message}`);
+    return {
+      apiKey: process.env.SHOPIFY_API_KEY || "",
+      shopDomain,
+      unresolvedCount: 0,
+      queueCount: 0,
+      planLabel: null,
+      hasPlan: isBillingPage ? true : false,
+    };
+  }
 };
 
 export default function App() {
