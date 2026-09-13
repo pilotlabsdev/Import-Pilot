@@ -151,7 +151,28 @@ export default function App() {
         throw err;
       }
     };
-    return () => { window.fetch = origFetch; };
+
+    // Detect Shopify FEC 421 errors (Frontend Controller) via PerformanceObserver
+    // These cause infinite spinner — force reload to recover
+    let fecFailures = 0;
+    const FEC_THRESHOLD = 3;
+    const perfObserver = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        const resource = entry as PerformanceResourceTiming;
+        if (resource.name.includes(".well-known/shopify/fec/") && (resource as any).responseStatus === 421) {
+          fecFailures++;
+          console.warn(`[FEC] 421 error detected (${fecFailures}/${FEC_THRESHOLD})`);
+          if (fecFailures >= FEC_THRESHOLD && Date.now() - lastReconnect > DEBOUNCE_MS) {
+            lastReconnect = Date.now();
+            console.warn("[FEC] Threshold reached. Triggering reconnect...");
+            triggerReconnect();
+          }
+        }
+      }
+    });
+    try { perfObserver.observe({ type: "resource", buffered: true }); } catch {}
+
+    return () => { window.fetch = origFetch; perfObserver.disconnect(); };
   }, []);
 
   return (
