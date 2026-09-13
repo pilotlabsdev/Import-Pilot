@@ -25,31 +25,28 @@ export async function getLocationId(admin: any, shopDomain?: string, configId?: 
     }
   }
 
-  // Fallback: get Shopify's default location (first active location)
+  // Fallback: get Shopify's primary/default location
+  // `location` (no args) returns the shop's primary location per Shopify docs
   const response = await admin.graphql(
     `#graphql
     query {
-      locations(first: 1, includeInactive: false) {
-        edges {
-          node {
-            id
-            name
-            isActive
-          }
-        }
+      location {
+        id
+        name
+        isActive
       }
     }`
   );
 
   const json = await response.json();
-  const locations = json.data?.locations?.edges || [];
+  const location = json.data?.location;
 
-  if (locations.length === 0) {
-    throw new Error("No hay ubicaciones activas en Shopify");
+  if (!location?.id) {
+    throw new Error("No hay ubicación primaria en Shopify");
   }
 
-  const locationId = locations[0].node.id;
-  const locationName = locations[0].node.name;
+  const locationId = location.id;
+  const locationName = location.name;
 
   // Persist to the specific config or base config
   const targetConfigId = configId || (shopDomain ? (await getOrCreateConfig(shopDomain)).id : null);
