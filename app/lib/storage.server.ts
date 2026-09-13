@@ -95,6 +95,19 @@ export async function resolveFileUrl(value: string): Promise<string> {
   if (isBucketKey(value)) {
     return getPresignedUrl(value);
   }
+  // Normalize Google Drive URLs to direct download format
+  const gdFileMatch = value.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (gdFileMatch) {
+    return `https://drive.google.com/uc?export=download&id=${gdFileMatch[1]}&confirm=t`;
+  }
+  const gdOpenMatch = value.match(/drive\.google\.com\/open\?id=([a-zA-Z0-9_-]+)/);
+  if (gdOpenMatch) {
+    return `https://drive.google.com/uc?export=download&id=${gdOpenMatch[1]}&confirm=t`;
+  }
+  // Add confirm=t to existing Google Drive download URLs
+  if (value.includes("drive.google.com") && value.includes("export=download") && !value.includes("confirm=")) {
+    return `${value}&confirm=t`;
+  }
   return value;
 }
 

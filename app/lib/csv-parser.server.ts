@@ -112,6 +112,10 @@ export async function* streamCSV(
   delimiter: string = "|",
   maxRetries: number = 3
 ): AsyncGenerator<{ headers: string[]; row: ProductRow; lineNumber: number }> {
+  // Normalize Google Drive URLs to bypass viewer/consent page
+  if (url.includes("drive.google.com") && url.includes("export=download") && !url.includes("confirm=")) {
+    url = `${url}&confirm=t`;
+  }
   let lastError: Error | null = null;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
@@ -356,6 +360,10 @@ export async function* streamExcel(
   url: string,
   maxRetries: number = 3
 ): AsyncGenerator<{ headers: string[]; row: ProductRow; lineNumber: number }> {
+  // Normalize Google Drive URLs to bypass viewer/consent page
+  if (url.includes("drive.google.com") && url.includes("export=download") && !url.includes("confirm=")) {
+    url = `${url}&confirm=t`;
+  }
   let lastError: Error | null = null;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
@@ -627,7 +635,11 @@ export async function fetchCSVHeaders(
   }
 
   let effectiveUrl = url;
-  if (isExcelUrl(url)) {
+  // Normalize Google Drive URLs to bypass viewer/consent page
+  if (effectiveUrl.includes("drive.google.com") && effectiveUrl.includes("export=download") && !effectiveUrl.includes("confirm=")) {
+    effectiveUrl = `${effectiveUrl}&confirm=t`;
+  }
+  if (isExcelUrl(effectiveUrl)) {
     const response = await fetch(effectiveUrl);
     if (!response.ok) throw new Error(`Error descargando Excel: ${response.status}`);
 

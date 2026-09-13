@@ -15,6 +15,7 @@ import {
   TextField,
 } from "@shopify/polaris";
 import { prisma, getConfigById, getEffectiveUrl, getSourceKey } from "~/lib/db.server";
+import { resolveFileUrl } from "~/lib/storage.server";
 import { safeAuthenticate } from "~/shopify.server";
 import { fetchCSVHeaders } from "~/lib/csv-parser.server";
 import { getCachedHeaders } from "~/lib/csv-cache.server";
@@ -38,7 +39,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     let csvHeaders: string[] = [];
     try {
       const url = getEffectiveUrl(config);
-      if (url) csvHeaders = await getCachedHeaders(config.id, url, config.csvDelimiter || "auto");
+      if (url) csvHeaders = await getCachedHeaders(config.id, await resolveFileUrl(url), config.csvDelimiter || "auto");
     } catch {}
     const headerSet = new Set(csvHeaders);
 
