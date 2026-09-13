@@ -3260,10 +3260,24 @@ async function stageAndLaunch(admin: any, mutation: string, inputPath: string, s
 async function readJsonLines(filePath: string): Promise<any[]> {
   try {
     const content = await fs.readFile(filePath, "utf-8");
-    return content
-      .split("\n")
-      .filter((l) => l.trim())
-      .map((l) => JSON.parse(l));
+    const results: any[] = [];
+    let skipped = 0;
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        results.push(JSON.parse(trimmed));
+      } catch {
+        skipped++;
+        if (skipped <= 3) {
+          console.warn(`[readJsonLines] Skipped invalid JSON line in ${filePath}: ${trimmed.substring(0, 120)}`);
+        }
+      }
+    }
+    if (skipped > 0) {
+      console.warn(`[readJsonLines] ${skipped} invalid line(s) skipped in ${filePath}`);
+    }
+    return results;
   } catch {
     return [];
   }
