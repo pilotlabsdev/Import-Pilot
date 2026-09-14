@@ -271,6 +271,17 @@ export function startScheduler() {
           select: { id: true, configId: true, logId: true, createdAt: true },
         });
         for (const job of staleBulkJobs) {
+          // "finalizing" phase = actively running finalizeBulkImport → never mark as stale
+          if (job.phase === "finalizing") continue;
+
+          // "mutations" phase: only mark stale if NO ops are active (launched/processing)
+          if (job.phase === "mutations") {
+            const activeOps = await prisma.bulkJobOp.count({
+              where: { jobId: job.id, status: { in: ["launched", "processing"] } },
+            }).catch(() => 0);
+            if (activeOps > 0) continue;
+          }
+
           // Check if job is truly stuck: no progress in last 15 minutes
           const lastOp = await prisma.bulkJobOp.findFirst({
             where: { jobId: job.id },
@@ -279,7 +290,7 @@ export function startScheduler() {
           }).catch(() => null);
           const lastActivity = lastOp?.startedAt || job.createdAt;
           if (!lastActivity || Date.now() - lastActivity.getTime() > 15 * 60 * 1000) {
-            console.log(`[Scheduler] Sweep: failing stale BulkJob ${job.id} (no activity >15min)`);
+            console.log(`[Scheduler] Sweep: failing stale BulkJob ${job.id} (phase=${job.phase}, no activity >15min)`);
             await prisma.bulkJob.update({ where: { id: job.id }, data: { phase: "failed" } }).catch(() => {});
             if (job.logId) {
               await prisma.importLog.update({

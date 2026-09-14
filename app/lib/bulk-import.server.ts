@@ -1745,7 +1745,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       if (allPubIds.length > 0) {
         try {
           const pubInput = allPubIds.map((publicationId: string) => ({ publicationId }));
-          await gql(admin,
+          const pubRes = await withRetry(() => gql(admin,
             `#graphql
             mutation PublishablePublish($id: ID!, $input: [PublicationInput!]!) {
               publishablePublish(id: $id, input: $input) {
@@ -1754,7 +1754,11 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
             }`,
             { variables: { id: product.id, input: pubInput } },
             job.shopDomain
-          );
+          ), `channels-${meta.sku}`);
+          const pubErrors = pubRes.data?.publishablePublish?.userErrors || [];
+          if (pubErrors.length > 0) {
+            console.error(`[Bulk] SKU ${meta.sku}: publish userErrors:`, JSON.stringify(pubErrors));
+          }
         } catch (error: any) {
           console.error(`[Bulk] SKU ${meta.sku}: error publicando: ${error?.message}`);
         }
@@ -1994,11 +1998,8 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
     await prisma.bulkJob.update({ where: { id: job.id }, data: { phase: "done" } });
     return;
   }
-  if (log.status !== "running") {
-    await prisma.bulkJob.update({ where: { id: job.id }, data: { phase: "done" } });
-    clearBulkActive(job.shopDomain);
-    return;
-  }
+  // Allow finalize to complete even if log was overwritten to "failed" by stale_job_cleanup
+  // Finalize will write the real counts and correct status at the end
 
   try {
   const config = await prisma.importConfig.findUnique({ where: { id: job.configId } });
