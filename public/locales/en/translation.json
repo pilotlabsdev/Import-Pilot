@@ -430,6 +430,7 @@
   "billing.verificationFailedDetail": "We could not verify your payment. Please try again or contact support.",
   "billing.paymentError": "Could not process billing",
   "billing.paymentErrorDetail": "We could not set up billing for your store. You can start your free trial and subscribe later.",
+  "billing.cancelFailed": "Failed to cancel subscription. Please contact support.",
   
   "duplicates.title": "Detected Duplicates",
   "duplicates.suppliers": "Suppliers",

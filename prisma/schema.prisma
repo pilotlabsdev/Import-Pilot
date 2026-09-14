@@ -362,6 +362,7 @@ model AppSubscription {
   planHandle      String   @default("basic-monthly") // basic-monthly | basic-annual | etc.
   billingType     String   @default("monthly") // monthly | annual
   status          String   @default("active") // active | cancelled | frozen | trial
+  shopifySubscriptionId String?  // gid://shopify/AppSubscription/12345
   trialEndsAt     DateTime?
   hasUsedTrial    Boolean  @default(false) // Para prevenir abuso de trial
   createdAt       DateTime @default(now())

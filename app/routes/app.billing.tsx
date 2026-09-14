@@ -51,13 +51,24 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     if (chargeId && !currentSubscription.isDeveloper) {
       try {
-        const { hasActivePayment } = await billing.check({
+        const { hasActivePayment, appSubscriptions } = await billing.check({
           plans: [planHandle as any],
         });
         if (!hasActivePayment) {
           console.log(`[Billing] Loader: charge ${chargeId} not approved for ${shopDomain}`);
           return redirect("/app/billing?error=payment_failed");
         }
+        // Save the Shopify subscription ID
+        const shopifySubId = appSubscriptions?.[0]?.id || null;
+        const trialDaysRemaining = calculateCarryoverTrialDays(currentSubscription);
+        const newTrialDays = calculateTrialDays(shopDomain, currentSubscription, trialDaysRemaining > 0 ? trialDaysRemaining : 14);
+        const billingType = planHandle.endsWith("-annual") ? "annual" : "monthly";
+        const isTrial = newTrialDays > 0;
+        const status = isTrial ? "trial" : "active";
+        const trialEndsAt = isTrial ? new Date(Date.now() + newTrialDays * 24 * 60 * 60 * 1000) : undefined;
+        await upsertSubscription(shopDomain, planHandle, status, trialEndsAt, billingType, shopifySubId || undefined);
+        await enforcePlanLimits(shopDomain);
+        return redirect("/app/billing");
       } catch (error: any) {
         console.log(`[Billing] Loader: billing.check failed for ${shopDomain}:`, error?.message);
         return redirect("/app/billing?error=verification_failed");
@@ -148,6 +159,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const subscription = await getSubscriptionInfo(shopDomain);
     if (subscription.isDeveloper) {
       return { success: false, error: "billing.devStoreNotice" };
+    }
+
+    // Cancel on Shopify if we have the subscription ID
+    if (subscription.shopifySubscriptionId) {
+      try {
+        await billing.cancel({
+          subscriptionId: subscription.shopifySubscriptionId,
+          isTest: false,
+          prorate: true,
+        });
+        console.log(`[Billing] Cancelled Shopify subscription ${subscription.shopifySubscriptionId} for ${shopDomain}`);
+      } catch (error: any) {
+        console.error(`[Billing] Failed to cancel Shopify subscription for ${shopDomain}:`, error?.message);
+        return { success: false, error: "billing.cancelFailed" };
+      }
+    } else {
+      console.warn(`[Billing] No shopifySubscriptionId for ${shopDomain} — skipping Shopify cancel`);
     }
 
     await upsertSubscription(shopDomain, subscription.planHandle, "cancelled");

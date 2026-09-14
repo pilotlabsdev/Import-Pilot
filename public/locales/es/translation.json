@@ -458,6 +458,7 @@
   "billing.verificationFailedDetail": "No pudimos verificar tu pago. Intenta de nuevo o contacta a soporte.",
   "billing.paymentError": "No se pudo procesar la facturación",
   "billing.paymentErrorDetail": "No pudimos configurar la facturación para tu tienda. Puedes iniciar tu prueba gratuita y suscribirte después.",
+  "billing.cancelFailed": "No se pudo cancelar la suscripción. Por favor contacta soporte.",
   
   "duplicates.title": "Duplicados Detectados",
   "duplicates.suppliers": "Proveedores",

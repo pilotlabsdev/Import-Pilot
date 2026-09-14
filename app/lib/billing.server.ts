@@ -13,6 +13,7 @@ export interface SubscriptionInfo {
   hasUsedTrial: boolean;
   trialDaysRemaining: number;
   paymentFailed: boolean;
+  shopifySubscriptionId: string | null;
 }
 
 export async function getSubscriptionInfo(
@@ -36,6 +37,7 @@ export async function getSubscriptionInfo(
       hasUsedTrial: false,
       trialDaysRemaining: 0,
       paymentFailed: false,
+      shopifySubscriptionId: null,
     };
   }
 
@@ -64,6 +66,7 @@ export async function getSubscriptionInfo(
     hasUsedTrial: subscription.hasUsedTrial,
     trialDaysRemaining,
     paymentFailed: subscription.status === "payment_failed",
+    shopifySubscriptionId: subscription.shopifySubscriptionId || null,
   };
 }
 
@@ -88,7 +91,8 @@ export async function upsertSubscription(
   planHandle: string,
   status: string = "active",
   trialEndsAt?: Date,
-  billingType: string = "monthly"
+  billingType: string = "monthly",
+  shopifySubscriptionId?: string
 ) {
   const existing = await prisma.appSubscription.findUnique({
     where: { shopDomain },
@@ -105,6 +109,7 @@ export async function upsertSubscription(
       status,
       trialEndsAt: trialEndsAt || null,
       hasUsedTrial,
+      shopifySubscriptionId: shopifySubscriptionId || null,
     },
     update: {
       planHandle,
@@ -112,6 +117,7 @@ export async function upsertSubscription(
       status,
       trialEndsAt: trialEndsAt || null,
       hasUsedTrial,
+      ...(shopifySubscriptionId ? { shopifySubscriptionId } : {}),
     },
   });
 }
