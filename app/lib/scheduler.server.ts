@@ -268,38 +268,44 @@ export function startScheduler() {
         // First: clean stale blockers that prevent processNext from running
         const staleBulkJobs = await prisma.bulkJob.findMany({
           where: { phase: { in: ["lookup", "mutations", "finalizing"] } },
-          select: { id: true, configId: true, logId: true, createdAt: true },
+          select: { id: true, configId: true, logId: true, createdAt: true, updatedAt: true, phase: true },
         });
         for (const job of staleBulkJobs) {
           // "finalizing" phase = actively running finalizeBulkImport → never mark as stale
           if (job.phase === "finalizing") continue;
 
+          // SAFETY: If the job was created less than 10 minutes ago, always skip
+          // This gives prepareAndLaunch time to stream CSV and create ops
+          if (Date.now() - job.createdAt.getTime() < 10 * 60 * 1000) continue;
+
           // "mutations" phase: only mark stale if NO ops are active (launched/processing)
           if (job.phase === "mutations") {
             const activeOps = await prisma.bulkJobOp.count({
               where: { jobId: job.id, status: { in: ["launched", "processing"] } },
-            }).catch(() => 0);
+            }).catch(() => -1);
+            if (activeOps < 0) continue; // DB error → skip this cycle
             if (activeOps > 0) continue;
 
             // All ops terminal (processed/failed) → job transitioning to finalizing, not stuck
             const totalOps = await prisma.bulkJobOp.count({
               where: { jobId: job.id },
-            }).catch(() => 0);
+            }).catch(() => -1);
             const processedOps = await prisma.bulkJobOp.count({
               where: { jobId: job.id, status: { in: ["processed", "failed"] } },
-            }).catch(() => 0);
+            }).catch(() => -1);
+            if (totalOps < 0 || processedOps < 0) continue; // DB error → skip
             if (totalOps > 0 && processedOps >= totalOps) continue;
           }
 
-          // Check if job is truly stuck: no progress in last 15 minutes
+          // Check if job is truly stuck: no progress in last 30 minutes
           const lastOp = await prisma.bulkJobOp.findFirst({
             where: { jobId: job.id },
             orderBy: { startedAt: "desc" },
             select: { startedAt: true, status: true },
           }).catch(() => null);
-          const lastActivity = lastOp?.startedAt || job.createdAt;
-          if (!lastActivity || Date.now() - lastActivity.getTime() > 15 * 60 * 1000) {
-            console.log(`[Scheduler] Sweep: failing stale BulkJob ${job.id} (phase=${job.phase}, no activity >15min)`);
+          const lastActivity = lastOp?.startedAt || job.updatedAt;
+          if (!lastActivity || Date.now() - lastActivity.getTime() > 30 * 60 * 1000) {
+            console.log(`[Scheduler] Sweep: failing stale BulkJob ${job.id} (phase=${job.phase}, no activity >30min)`);
             await prisma.bulkJob.update({ where: { id: job.id }, data: { phase: "failed" } }).catch(() => {});
             if (job.logId) {
               await prisma.importLog.update({

@@ -456,6 +456,8 @@
   "billing.paymentFailedDetail": "No se pudo procesar tu pago. Actualiza tu método de pago o contacta a soporte de Shopify.",
   "billing.verificationFailed": "Verificación de pago fallida",
   "billing.verificationFailedDetail": "No pudimos verificar tu pago. Intenta de nuevo o contacta a soporte.",
+  "billing.paymentError": "No se pudo procesar la facturación",
+  "billing.paymentErrorDetail": "No pudimos configurar la facturación para tu tienda. Puedes iniciar tu prueba gratuita y suscribirte después.",
   
   "duplicates.title": "Duplicados Detectados",
   "duplicates.suppliers": "Proveedores",

@@ -172,6 +172,8 @@ export default function BillingPage() {
   const [isAnnual, setIsAnnual] = useState(false);
   const { t } = useTranslation();
 
+  const isLoading = fetcher.state !== "idle";
+
   useEffect(() => {
     if (fetcher.data?.success) {
       revalidate();
@@ -194,6 +196,11 @@ export default function BillingPage() {
         {subscription.paymentFailed && (
           <Banner tone="critical" title={t("billing.paymentFailed")}>
             <p>{t("billing.paymentFailedDetail")}</p>
+          </Banner>
+        )}
+        {fetcher.data?.error === "billing.paymentError" && (
+          <Banner tone="critical" title={t("billing.paymentError")}>
+            <p>{t("billing.paymentErrorDetail")}</p>
           </Banner>
         )}
         {subscription.hasActiveSubscription && (
@@ -237,7 +244,7 @@ export default function BillingPage() {
                   <fetcher.Form method="post" style={{ display: "inline" }}>
                     <input type="hidden" name="intent" value="subscribe" />
                     <input type="hidden" name="planHandle" value={subscription.planHandle.replace("-monthly", "-annual")} />
-                    <Button submit size="slim" variant="primary">
+                    <Button submit size="slim" variant="primary" loading={isLoading}>
                       {t("billing.switchAnnual")}
                     </Button>
                   </fetcher.Form>
@@ -246,7 +253,7 @@ export default function BillingPage() {
                   <fetcher.Form method="post" style={{ display: "inline" }}>
                     <input type="hidden" name="intent" value="subscribe" />
                     <input type="hidden" name="planHandle" value={subscription.planHandle.replace("-annual", "-monthly")} />
-                    <Button submit size="slim">
+                    <Button submit size="slim" loading={isLoading}>
                       {t("billing.switchMonthly")}
                     </Button>
                   </fetcher.Form>
@@ -364,6 +371,7 @@ export default function BillingPage() {
                               submit
                               variant="primary"
                               size="slim"
+                              loading={isLoading}
                             >
                               {t("billing.selectPlan", { planName: plan.name })}
                             </Button>

@@ -1742,6 +1742,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       if (allPubIds.length === 0 && config?.marketIds) {
         try { allPubIds.push(...JSON.parse(config.marketIds)); } catch {}
       }
+      let channelsDeferred = false;
       if (allPubIds.length > 0) {
         try {
           const pubInput = allPubIds.map((publicationId: string) => ({ publicationId }));
@@ -1757,17 +1758,29 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
           ), `channels-${meta.sku}`);
           const pubErrors = pubRes.data?.publishablePublish?.userErrors || [];
           if (pubErrors.length > 0) {
-            console.error(`[Bulk] SKU ${meta.sku}: publish userErrors:`, JSON.stringify(pubErrors));
+            const isNotFound = pubErrors.some((e: any) => e.message?.includes("does not exist"));
+            if (isNotFound) {
+              console.error(`[Bulk] SKU ${meta.sku}: product ${product.id} not found for publish — deferring to retryPostProcess`);
+              await prisma.productMapping.update({
+                where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: meta.sku } },
+                data: { postProcessStatus: "pending", postProcessError: "deferred_channels_not_found" },
+              }).catch(() => {});
+              channelsDeferred = true;
+            } else {
+              console.error(`[Bulk] SKU ${meta.sku}: publish userErrors:`, JSON.stringify(pubErrors));
+            }
           }
         } catch (error: any) {
           console.error(`[Bulk] SKU ${meta.sku}: error publicando: ${error?.message}`);
         }
       }
 
-      await prisma.productMapping.update({
-        where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: meta.sku } },
-        data: { postProcessStatus: "complete", postProcessError: null },
-      }).catch(() => {});
+      if (!channelsDeferred) {
+        await prisma.productMapping.update({
+          where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: meta.sku } },
+          data: { postProcessStatus: "complete", postProcessError: null },
+        }).catch(() => {});
+      }
     } else {
       updatedCount++;
       if (priceChanged) priceChanges++;
@@ -2138,6 +2151,66 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
     }
 
 
+    // Activate channels for products that were deferred (publishablePublish failed with "does not exist")
+    // These products exist in Shopify but weren't published to channels yet
+    try {
+      const deferredMappings = await prisma.productMapping.findMany({
+        where: {
+          shopDomain: job.shopDomain,
+          configId: job.configId,
+          postProcessStatus: "pending",
+        },
+      });
+      if (deferredMappings.length > 0) {
+        const allPubIds: string[] = [];
+        if (config?.publicationIds) {
+          try { allPubIds.push(...JSON.parse(config.publicationIds)); } catch {}
+        }
+        if (allPubIds.length === 0 && config?.marketIds) {
+          try { allPubIds.push(...JSON.parse(config.marketIds)); } catch {}
+        }
+        if (allPubIds.length > 0) {
+          let channelsActivated = 0;
+          for (const mapping of deferredMappings) {
+            try {
+              const pubInput = allPubIds.map((pid: string) => ({ publicationId: pid }));
+              const res = await withRetry(() => gql(admin,
+                `#graphql
+                mutation PublishablePublish($id: ID!, $input: [PublicationInput!]!) {
+                  publishablePublish(id: $id, input: $input) { userErrors { field message } }
+                }`,
+                { variables: { id: mapping.shopifyProductId, input: pubInput } },
+                job.shopDomain
+              ), `finalize-channels-${mapping.supplierSku}`);
+              const errs = res.data?.publishablePublish?.userErrors || [];
+              if (errs.length === 0) {
+                channelsActivated++;
+                await prisma.productMapping.update({
+                  where: { id: mapping.id },
+                  data: { postProcessStatus: "complete", postProcessError: null },
+                }).catch(() => {});
+              } else {
+                console.error(`[Bulk] Finalize channels SKU ${mapping.supplierSku}: userErrors:`, JSON.stringify(errs));
+                await prisma.productMapping.update({
+                  where: { id: mapping.id },
+                  data: { postProcessStatus: "error_permanent", postProcessError: `finalize_channels: ${errs.map((e: any) => e.message).join("; ")}` },
+                }).catch(() => {});
+              }
+            } catch (e: any) {
+              console.error(`[Bulk] Finalize channels SKU ${mapping.supplierSku}: ${e?.message}`);
+              await prisma.productMapping.update({
+                where: { id: mapping.id },
+                data: { postProcessRetries: { increment: 1 }, postProcessError: `finalize_channels: ${e?.message}` },
+              }).catch(() => {});
+            }
+          }
+          console.log(`[Bulk] Finalize: activated channels for ${channelsActivated}/${deferredMappings.length} deferred products`);
+        }
+      }
+    } catch (e: any) {
+      console.error(`[Bulk] Finalize channel activation error: ${e?.message}`);
+    }
+
     // Process priority replacements: delete old mapping
     if (manifest.priorityReplacementsPath) {
       try {
@@ -2381,6 +2454,11 @@ export async function reconcileStaleBulkJobs(): Promise<void> {
     const ageMs = Date.now() - new Date(job.updatedAt).getTime();
     if (ageMs < 60_000) continue;
 
+    // SAFETY: If the job was created less than 10 minutes ago, always skip
+    // This gives prepareAndLaunch time to stream CSV and create mutation ops
+    const totalAgeMs = Date.now() - new Date(job.createdAt).getTime();
+    if (totalAgeMs < 10 * 60 * 1000) continue;
+
     // LOOKUP PHASE: timeout basado en actividad
     // No lookupOpId después de 15 min → la query nunca se lanzó o falló silenciosamente
     if (job.phase === "lookup" && !job.lookupOpId && ageMs > 15 * 60 * 1000) {
@@ -2405,9 +2483,9 @@ export async function reconcileStaleBulkJobs(): Promise<void> {
       continue;
     }
 
-    // 0 ops completadas después de 45 min de inactividad → algo fue mal
-    // (updatedAt solo cambia cuando una op completa, así que si ageMs > 45min, no ha habido progreso)
-    if (job.phase === "mutations" && job.manifestPath && (job.mutationOpsDone || 0) === 0 && ageMs > 45 * 60 * 1000) {
+    // 0 ops completadas después de 90 min de inactividad → algo fue mal
+    // (updatedAt solo cambia cuando una op completa, así que si ageMs > 90min, no ha habido progreso)
+    if (job.phase === "mutations" && job.manifestPath && (job.mutationOpsDone || 0) === 0 && ageMs > 90 * 60 * 1000) {
       console.error(`[Bulk] Job ${job.id.slice(0,8)} stuck in mutations phase with 0 ops done after ${Math.round(ageMs/60000)}min → failing`);
       await failJob(job, "systemError.mutations_no_progress");
       continue;
@@ -2450,7 +2528,7 @@ export async function reconcileStaleBulkJobs(): Promise<void> {
   }
 }
 
-const STALE_PROCESSING_MS = 10 * 60 * 1000;
+const STALE_PROCESSING_MS = 30 * 60 * 1000;
 
 // Limpia jobs bulk terminados (done/failed) más antiguos que la retención:
 // borra sus ops de la BD, las filas de BulkJob y los directorios de trabajo del disco.
