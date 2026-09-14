@@ -2512,7 +2512,7 @@ async function reconcileLookupPhase(job: any): Promise<void> {
     // Targeted approach: lookup runs inline (no shopifyOpId).
     // If status is "launched", runBulkImport is still streaming the CSV — don't interfere.
     if (lookupRow && lookupRow.status === "launched") {
-      console.error(`[Bulk] reconcileLookupPhase: BLOCKED re-run for job ${job.id.slice(0,8)} — lookup status="launched", runBulkImport is handling it`);
+      console.log(`[Bulk] reconcileLookupPhase: BLOCKED re-run for job ${job.id.slice(0,8)} — lookup status="launched", runBulkImport is handling it`);
       return;
     }
     // Targeted approach: lookup completed inline but prepareAndLaunch didn't finish.
