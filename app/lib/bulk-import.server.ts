@@ -1123,7 +1123,7 @@ async function prepareAndLaunch(
   };
 
   const pushCreate = async (inputObj: any, meta: MetaLine) => {
-    const line = JSON.stringify({ identifier: { sku: meta.sku }, input: inputObj });
+    const line = JSON.stringify({ input: inputObj });
     createLines.push(line);
     createMetas.push(meta);
     createBytes += Buffer.byteLength(line);
