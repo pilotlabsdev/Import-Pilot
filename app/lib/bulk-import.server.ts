@@ -668,9 +668,11 @@ export async function runBulkImport({
 
   const rules = await getActivePriceRules(job.shopDomain, job.configId);
 
-  // Mark lookup as done, prepareAndLaunch will set phase to mutations
+  // Mark lookup as "launched" (NOT "processed") to prevent reconcileLookupPhase
+  // from re-running prepareAndLaunch while we're still streaming the CSV.
+  // The status is updated to "processed" AFTER prepareAndLaunch completes below.
   await prisma.bulkJobOp.create({
-    data: { jobId: job.id, kind: "lookup", index: 0, status: "processed" },
+    data: { jobId: job.id, kind: "lookup", index: 0, status: "launched" },
   });
 
   await prepareAndLaunch(job, fullConfig, admin, columnMaps, rules, targetedMaps, bySkuMapping, filterType, filterSkus, filterCategories, locationId, sourceKey);
@@ -1532,7 +1534,14 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
 
   const config = await prisma.importConfig.findUnique({ where: { id: job.configId } });
   const sourceKey = config ? getSourceKey(config) : null;
-  const manifest = JSON.parse(await fs.readFile(job.manifestPath, "utf-8"));
+  let manifest: any;
+  try {
+    manifest = JSON.parse(await fs.readFile(job.manifestPath, "utf-8"));
+  } catch (e: any) {
+    console.error(`[Bulk] handleMutationOpFinished: manifest not readable at ${job.manifestPath}: ${e?.message}`);
+    await prisma.bulkJobOp.update({ where: { id: op.id }, data: { status: "failed" } });
+    return;
+  }
   const workDir = job.workDir;
 
   const resultPath = path.join(workDir, `${op.kind}-result-${op.index}.jsonl`);
@@ -2495,7 +2504,12 @@ async function reconcileLookupPhase(job: any): Promise<void> {
     job.ops.find((o: any) => o.kind === "lookup");
 
   if (!lookupRow || !lookupRow.shopifyOpId) {
-    // Targeted approach: lookup completed inline (no shopifyOpId) but prepareAndLaunch didn't finish.
+    // Targeted approach: lookup runs inline (no shopifyOpId).
+    // If status is "launched", runBulkImport is still streaming the CSV — don't interfere.
+    if (lookupRow && lookupRow.status === "launched") {
+      return;
+    }
+    // Targeted approach: lookup completed inline but prepareAndLaunch didn't finish.
     // Re-run the entire import from scratch (idempotent).
     if (lookupRow && lookupRow.status === "processed") {
       // Guard: if prepareAndLaunch already created mutation ops, don't re-run it
