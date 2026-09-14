@@ -40,9 +40,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const url = new URL(request.url);
   const isBillingPage = url.pathname === "/app/billing";
+  const isTutorialPage = url.pathname.startsWith("/app/tutorial");
 
   try {
-    const hasPlan = isBillingPage ? true : await withTimeout(requireSubscription(shopDomain), 8000, "requireSubscription");
+    const hasPlan = (isBillingPage || isTutorialPage) ? true : await withTimeout(requireSubscription(shopDomain), 8000, "requireSubscription");
 
     const [unresolvedCount, queueCount, subscription] = await withTimeout(Promise.all([
       hasPlan ? prisma.duplicateLog.count({
@@ -94,7 +95,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       unresolvedCount: 0,
       queueCount: 0,
       planLabel: null,
-      hasPlan: isBillingPage ? true : false,
+      hasPlan: (isBillingPage || isTutorialPage) ? true : false,
     };
   }
 };
