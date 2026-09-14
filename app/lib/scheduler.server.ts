@@ -280,6 +280,15 @@ export function startScheduler() {
               where: { jobId: job.id, status: { in: ["launched", "processing"] } },
             }).catch(() => 0);
             if (activeOps > 0) continue;
+
+            // All ops terminal (processed/failed) → job transitioning to finalizing, not stuck
+            const totalOps = await prisma.bulkJobOp.count({
+              where: { jobId: job.id },
+            }).catch(() => 0);
+            const processedOps = await prisma.bulkJobOp.count({
+              where: { jobId: job.id, status: { in: ["processed", "failed"] } },
+            }).catch(() => 0);
+            if (totalOps > 0 && processedOps >= totalOps) continue;
           }
 
           // Check if job is truly stuck: no progress in last 15 minutes
