@@ -117,16 +117,9 @@ export default function App() {
     };
   }, [hasPlan, revalidate]);
 
-  if (!hasPlan) {
-    return (
-      <AppProvider apiKey={apiKey}>
-        <Outlet />
-      </AppProvider>
-    );
-  }
-
   // Listen for fetch failures and trigger reconnect on auth/infra errors
   // Debounced: only trigger once per 10s to prevent reload loops
+  // MUST be before the early return to respect React hooks rules
   useEffect(() => {
     let lastReconnect = 0;
     const DEBOUNCE_MS = 10000;
@@ -174,6 +167,14 @@ export default function App() {
 
     return () => { window.fetch = origFetch; perfObserver.disconnect(); };
   }, []);
+
+  if (!hasPlan) {
+    return (
+      <AppProvider apiKey={apiKey}>
+        <Outlet />
+      </AppProvider>
+    );
+  }
 
   return (
     <AppProvider apiKey={apiKey}>
