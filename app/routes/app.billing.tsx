@@ -173,6 +173,7 @@ export default function BillingPage() {
   const { t } = useTranslation();
 
   const isLoading = fetcher.state !== "idle";
+  const loadingPlan = fetcher.formData?.get("planHandle") as string | null;
 
   useEffect(() => {
     if (fetcher.data?.success) {
@@ -244,7 +245,7 @@ export default function BillingPage() {
                   <fetcher.Form method="post" style={{ display: "inline" }}>
                     <input type="hidden" name="intent" value="subscribe" />
                     <input type="hidden" name="planHandle" value={subscription.planHandle.replace("-monthly", "-annual")} />
-                    <Button submit size="slim" variant="primary" loading={isLoading}>
+                    <Button submit size="slim" variant="primary" loading={loadingPlan === subscription.planHandle.replace("-monthly", "-annual")}>
                       {t("billing.switchAnnual")}
                     </Button>
                   </fetcher.Form>
@@ -253,7 +254,7 @@ export default function BillingPage() {
                   <fetcher.Form method="post" style={{ display: "inline" }}>
                     <input type="hidden" name="intent" value="subscribe" />
                     <input type="hidden" name="planHandle" value={subscription.planHandle.replace("-annual", "-monthly")} />
-                    <Button submit size="slim" loading={isLoading}>
+                    <Button submit size="slim" loading={loadingPlan === subscription.planHandle.replace("-annual", "-monthly")}>
                       {t("billing.switchMonthly")}
                     </Button>
                   </fetcher.Form>
@@ -371,7 +372,7 @@ export default function BillingPage() {
                               submit
                               variant="primary"
                               size="slim"
-                              loading={isLoading}
+                              loading={loadingPlan === plan.handle}
                             >
                               {t("billing.selectPlan", { planName: plan.name })}
                             </Button>
