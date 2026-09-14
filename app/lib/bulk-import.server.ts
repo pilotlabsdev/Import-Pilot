@@ -547,6 +547,13 @@ export async function runBulkImport({
     },
   });
 
+  // Create lookup op IMMEDIATELY so reconcileLookupPhase can't mistake this for a crashed job.
+  // Status "launched" = runBulkImport is handling everything inline — reconcile must not interfere.
+  // Will be updated to "processed" after prepareAndLaunch completes.
+  await prisma.bulkJobOp.create({
+    data: { jobId: job.id, kind: "lookup", index: 0, status: "launched" },
+  });
+
   setBulkActive(shopDomain);
 
   // --- Targeted lookup: pre-scan CSV → query only SKUs+EANs from the file ---
@@ -667,13 +674,6 @@ export async function runBulkImport({
   }
 
   const rules = await getActivePriceRules(job.shopDomain, job.configId);
-
-  // Mark lookup as "launched" (NOT "processed") to prevent reconcileLookupPhase
-  // from re-running prepareAndLaunch while we're still streaming the CSV.
-  // The status is updated to "processed" AFTER prepareAndLaunch completes below.
-  await prisma.bulkJobOp.create({
-    data: { jobId: job.id, kind: "lookup", index: 0, status: "launched" },
-  });
 
   await prepareAndLaunch(job, fullConfig, admin, columnMaps, rules, targetedMaps, bySkuMapping, filterType, filterSkus, filterCategories, locationId, sourceKey);
 
@@ -2507,6 +2507,7 @@ async function reconcileLookupPhase(job: any): Promise<void> {
     // Targeted approach: lookup runs inline (no shopifyOpId).
     // If status is "launched", runBulkImport is still streaming the CSV — don't interfere.
     if (lookupRow && lookupRow.status === "launched") {
+      console.error(`[Bulk] reconcileLookupPhase: BLOCKED re-run for job ${job.id.slice(0,8)} — lookup status="launched", runBulkImport is handling it`);
       return;
     }
     // Targeted approach: lookup completed inline but prepareAndLaunch didn't finish.
@@ -2556,6 +2557,8 @@ async function reconcileLookupPhase(job: any): Promise<void> {
       return;
     }
     // Crash justo después de crear el job, antes de lanzar/registrar la lookup.
+    // This should be unreachable now that lookup op is created immediately after job creation.
+    console.error(`[Bulk] reconcileLookupPhase: lookupRow=${!!lookupRow}, status=${lookupRow?.status}, shopifyOpId=${lookupRow?.shopifyOpId} — unexpected state for job ${job.id}`);
     const op = await runLookupQuery(admin, job.shopDomain);
     if (!op.id) {
       await failJob(job, "systemError.resume_lookup_failed");
