@@ -59,7 +59,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     console.warn(`[Webhook] HMAC validation failed: ${err?.message || err}`);
     throw new Response(null, { status: 401 });
   }
-  console.log(`[Webhook] Received: topic=${topic}, shop=${shop}, session=${session ? "present" : "null"}`);
+  // Only log important webhooks (skip high-frequency PRODUCTS_UPDATE/INVENTORY webhooks to prevent Railway rate limit)
+  const highFreqTopics = new Set(["PRODUCTS_UPDATE", "INVENTORY_LEVELS_UPDATE"]);
+  if (!highFreqTopics.has(topic.toUpperCase())) {
+    console.log(`[Webhook] Received: topic=${topic}, shop=${shop}`);
+  }
 
   if (!session) {
     console.warn(`[Webhook] No session for ${shop}, returning 410`);
@@ -86,12 +90,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     case "BULK_OPERATIONS_FINISH": {
       const opId = payload.admin_graphql_api_id as string;
       const opStatus = (payload.status as string) || "unknown";
-      console.log(`[Webhook] BULK_OPERATIONS_FINISH: opId=${opId}, status=${opStatus}, shop=${shop}`);
       if (opId) {
-        // Deduplicate sessions before getting admin client
         const bestSession = await ensureSingleSession(shop);
-        const isExpired = bestSession?.expires ? new Date(bestSession.expires) < new Date() : true;
-        console.log(`[Webhook] Session for bulk finish: shop=${shop}, sessionExpired=${isExpired}, accessToken=${bestSession?.accessToken ? "present" : "MISSING"}`);
 
         if (!bestSession) {
           console.error(`[Webhook] No session for ${shop} after dedup, returning 410`);
@@ -100,7 +100,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
         try {
           const { admin } = await shopify.unauthenticated.admin(shop);
-          console.log(`[Webhook] Admin client created for bulk finish: shop=${shop}`);
           void handleBulkOperationFinish({
             admin,
             opId,
@@ -111,8 +110,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         } catch (e: any) {
           console.error(`[Webhook] No se pudo crear admin client para ${shop}:`, e?.message || e);
         }
-      } else {
-        console.log(`[Webhook] BULK_OPERATIONS_FINISH sin opId`);
       }
       break;
     }
