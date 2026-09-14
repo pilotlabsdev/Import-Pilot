@@ -1123,7 +1123,10 @@ async function prepareAndLaunch(
   };
 
   const pushCreate = async (inputObj: any, meta: MetaLine) => {
-    const line = JSON.stringify({ input: inputObj });
+    const handle = meta.sku ? `ip-${meta.sku.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}` : undefined;
+    const payload: any = { input: inputObj };
+    if (handle) payload.identifier = { handle };
+    const line = JSON.stringify(payload);
     createLines.push(line);
     createMetas.push(meta);
     createBytes += Buffer.byteLength(line);
@@ -1796,7 +1799,8 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       const stillPending: typeof transientRetries = [];
       for (const { meta: rm } of transientRetries) {
         try {
-          const identifier = rm.productId ? { id: rm.productId } : { sku: rm.sku };
+          const handle = rm.sku ? `ip-${rm.sku.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}` : undefined;
+          const identifier = rm.productId ? { id: rm.productId } : handle ? { handle } : undefined;
           const input: any = { title: rm.sku };
           if (rm.regularPrice > 0) input.price = String(rm.regularPrice);
           if (rm.compareAtPrice && rm.compareAtPrice > 0) input.compareAtPrice = String(rm.compareAtPrice);

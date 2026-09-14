@@ -344,6 +344,7 @@ export function mapCsvRowToProductSet(
 
   return {
     title: name,
+    handle: sku ? `ip-${sku.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}` : undefined,
     descriptionHtml: description,
     productType: shopifyProductType || category,
     vendor: brand,
