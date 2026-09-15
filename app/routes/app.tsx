@@ -1,5 +1,5 @@
 import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { Outlet, useLoaderData, useRouteError, isRouteErrorResponse, Scripts } from "react-router";
+import { Outlet, useLoaderData, useRouteError, isRouteErrorResponse } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { NavMenu } from "@shopify/app-bridge-react";
@@ -224,47 +224,15 @@ export function ErrorBoundary() {
 
   console.error(`[App ErrorBoundary] status=${status} error=${errorText}`);
 
-  // Auth redirects (302) are handled by safeAuthenticate — let them through
-  if (status === 302 || status === 301) {
-    return (
-      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "60vh" }}>
-        <div style={{ textAlign: "center", color: "#6d7175" }}>
-          <div style={{ width: "24px", height: "24px", border: "3px solid #ddd", borderTopColor: "#006fbb", borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 12px" }} />
-          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-          <p>Redireccionando...</p>
-        </div>
-      </div>
-    );
-  }
-
-  // For ALL other errors (400, 401, 403, 404, 500, unknown):
-  // Show the error with a reload button instead of hiding it behind infinite spinner
+  // All errors auto-recover: redirect to /app after short delay
   return (
     <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "60vh" }}>
-      <div style={{ textAlign: "center", color: "#202223", maxWidth: "480px", padding: "20px" }}>
-        <h2 style={{ fontSize: "16px", fontWeight: 600, marginBottom: 8 }}>
-          {status === 404 ? "No encontrado" : status >= 500 ? "Error del servidor" : "Algo salió mal"}
-        </h2>
-        <p style={{ fontSize: "13px", color: "#6d7175", marginBottom: 16, wordBreak: "break-word" }}>
-          {status === 404
-            ? "El recurso que buscas no existe o no tienes acceso."
-            : errorText}
-        </p>
-        <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
-          <button
-            onClick={() => window.location.reload()}
-            style={{ padding: "8px 16px", borderRadius: "4px", border: "none", background: "#006fbb", color: "white", cursor: "pointer", fontSize: "14px" }}
-          >
-            Reintentar
-          </button>
-          <button
-            onClick={() => { window.location.href = "/app"; }}
-            style={{ padding: "8px 16px", borderRadius: "4px", border: "1px solid #ddd", background: "white", color: "#202223", cursor: "pointer", fontSize: "14px" }}
-          >
-            Ir al inicio
-          </button>
-        </div>
+      <div style={{ textAlign: "center", color: "#6d7175" }}>
+        <div style={{ width: "24px", height: "24px", border: "3px solid #ddd", borderTopColor: "#006fbb", borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 12px" }} />
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        <p style={{ fontSize: "14px" }}>Cargando...</p>
       </div>
+      <script dangerouslySetInnerHTML={{ __html: `setTimeout(function(){ window.location.href = "/app"; }, 2000);` }} />
     </div>
   );
 }
