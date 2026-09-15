@@ -132,36 +132,24 @@ export default function App() {
 export function ErrorBoundary() {
   const error = useRouteError();
 
-  // React Router v7 wraps thrown Response in RouteErrorResponse — check both
   const rrStatus = isRouteErrorResponse(error) ? error.status : 0;
   const rawStatus = error instanceof Response ? error.status : 0;
   const status = rrStatus || rawStatus;
 
-  // Auth errors (302 redirect, 401 unauthorized) are handled by safeAuthenticate
-  // and the library's authenticate.admin(). Only show error page for real server errors.
-  const isServerError = status >= 500 || status === 0;
+  const errorText = isRouteErrorResponse(error)
+    ? `${error.status} ${error.statusText}: ${JSON.stringify(error.data)}`
+    : error instanceof Response
+    ? `${error.status} ${error.statusText || "Response"}`
+    : error instanceof Error
+    ? `${error.name}: ${error.message}`
+    : String(error);
 
-  if (!isServerError) {
-    // Auth or redirect errors: let the browser follow the redirect naturally.
-    // Return minimal HTML so App Bridge can re-initialize.
-    return (
-      <html lang="en">
-        <head>
-          <meta charSet="utf-8" />
-          <meta name="viewport" content="width=device-width,initial-scale=1" />
-          <title>Import Pilot</title>
-        </head>
-        <body style={{ fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif", display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh", margin: 0, background: "#f6f6f7" }}>
-          <div style={{ textAlign: "center", padding: "40px", background: "white", borderRadius: "8px", boxShadow: "0 1px 3px rgba(0,0,0,0.1)", maxWidth: "400px" }}>
-            <div style={{ width: 32, height: 32, border: "3px solid #006fbb", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 16px" }} />
-            <h2 style={{ fontSize: "16px", fontWeight: 600, marginBottom: 8, color: "#202223" }}>Cargando...</h2>
-          </div>
-          <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-          <Scripts />
-        </body>
-      </html>
-    );
-  }
+  console.error(`[Root ErrorBoundary] status=${status} error=${errorText}`);
+
+  // Only 302/301 redirects get the "redirecting" spinner — everything else shows the real error
+  const isRedirect = status === 302 || status === 301;
+  const title = isRedirect ? "Redireccionando..." : status === 404 ? "No encontrado" : status >= 500 ? "Error del servidor" : "Algo salió mal";
+  const detail = isRedirect ? "Siguiendo redirección..." : errorText;
 
   return (
     <html lang="en">
@@ -171,16 +159,28 @@ export function ErrorBoundary() {
         <title>Import Pilot</title>
       </head>
       <body style={{ fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif", display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh", margin: 0, background: "#f6f6f7" }}>
-        <div style={{ textAlign: "center", padding: "40px", background: "white", borderRadius: "8px", boxShadow: "0 1px 3px rgba(0,0,0,0.1)", maxWidth: "400px" }}>
-          <h2 style={{ fontSize: "16px", fontWeight: 600, marginBottom: 8, color: "#202223" }}>Algo salio mal</h2>
-          <p style={{ fontSize: "14px", color: "#6d7175", marginBottom: 20 }}>Error del servidor. Intenta de nuevo.</p>
-          <button
-            onClick={() => window.location.reload()}
-            style={{ padding: "8px 20px", borderRadius: "4px", border: "none", background: "#006fbb", color: "white", cursor: "pointer", fontSize: "14px", fontWeight: 500 }}
-          >
-            Reconectar
-          </button>
+        <div style={{ textAlign: "center", padding: "40px", background: "white", borderRadius: "8px", boxShadow: "0 1px 3px rgba(0,0,0,0.1)", maxWidth: "480px" }}>
+          {isRedirect && <div style={{ width: 32, height: 32, border: "3px solid #006fbb", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 16px" }} />}
+          <h2 style={{ fontSize: "16px", fontWeight: 600, marginBottom: 8, color: "#202223" }}>{title}</h2>
+          <p style={{ fontSize: "13px", color: "#6d7175", marginBottom: 20, wordBreak: "break-word" }}>{detail}</p>
+          {!isRedirect && (
+            <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+              <button
+                onClick={() => window.location.reload()}
+                style={{ padding: "8px 20px", borderRadius: "4px", border: "none", background: "#006fbb", color: "white", cursor: "pointer", fontSize: "14px", fontWeight: 500 }}
+              >
+                Reintentar
+              </button>
+              <button
+                onClick={() => { window.location.href = "/app"; }}
+                style={{ padding: "8px 20px", borderRadius: "4px", border: "1px solid #ddd", background: "white", color: "#202223", cursor: "pointer", fontSize: "14px", fontWeight: 500 }}
+              >
+                Ir al inicio
+              </button>
+            </div>
+          )}
         </div>
+        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
         <Scripts />
       </body>
     </html>
