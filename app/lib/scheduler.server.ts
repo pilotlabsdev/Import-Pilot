@@ -320,15 +320,22 @@ export function startScheduler() {
           }
         }
 
-        // Clean stale ImportLogs (running with no progress >15min)
+        // Clean stale ImportLogs (running with no progress >30min)
+        // Skip if there's an active BulkJob — bulk imports can take longer
         const staleLogs = await prisma.importLog.findMany({
           where: { status: "running" },
           select: { id: true, configId: true, lastProgressAt: true, startedAt: true },
         });
         for (const log of staleLogs) {
           const lastActivity = log.lastProgressAt || log.startedAt;
-          if (lastActivity && Date.now() - lastActivity.getTime() > 15 * 60 * 1000) {
-            console.log(`[Scheduler] Sweep: failing stale ImportLog ${log.id}`);
+          if (lastActivity && Date.now() - lastActivity.getTime() > 30 * 60 * 1000) {
+            const hasActiveBulkJob = await prisma.bulkJob.findFirst({
+              where: { configId: log.configId, phase: { in: ["lookup", "mutations", "finalizing"] } },
+              select: { id: true },
+            }).catch(() => null);
+            if (hasActiveBulkJob) continue;
+
+            console.log(`[Scheduler] Sweep: failing stale ImportLog ${log.id} (no activity >30min, no active bulkJob)`);
             await prisma.importLog.update({
               where: { id: log.id },
               data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "systemError.stale_log_cleanup" }]) },
