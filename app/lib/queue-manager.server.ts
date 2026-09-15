@@ -372,6 +372,7 @@ export async function getQueueStatus(shopDomain: string): Promise<{
     } | null;
   }>;
 }> {
+  // Batch query 1-2: queue items (parallel)
   const [active, queued] = await Promise.all([
     prisma.importQueue.findMany({
       where: { shopDomain, status: "running" },
@@ -383,7 +384,7 @@ export async function getQueueStatus(shopDomain: string): Promise<{
     }),
   ]);
 
-  // Find scheduler-active imports for this shop
+  const activeConfigIds = new Set(active.map((a) => a.configId));
   const schedulerActive: Array<{
     configId: string;
     supplierName: string | null;
@@ -394,36 +395,72 @@ export async function getQueueStatus(shopDomain: string): Promise<{
     bulkJobId?: string | null;
     progress: any;
   }> = [];
-  const seenConfigIds = new Set<string>();
 
-  // From running ImportLogs not in queue (survives restart, edge cases)
-  const activeConfigIds = new Set(active.map((a) => a.configId));
-  const runningLogs = await prisma.importLog.findMany({
-    where: { shopDomain, status: "running" },
-    orderBy: { startedAt: "desc" },
-    select: {
-      id: true, configId: true, totalProducts: true, created: true, updated: true,
-      unchanged: true, excludedCount: true, errors: true, lastSku: true, triggerType: true,
-    },
-  });
+  // Batch query 3-5: running logs + active bulkJobs (all parallel, no more N+1)
+  const [runningLogs, activeBulkJobs] = await Promise.all([
+    prisma.importLog.findMany({
+      where: { shopDomain, status: "running" },
+      orderBy: { startedAt: "desc" },
+      select: {
+        id: true, configId: true, totalProducts: true, created: true, updated: true,
+        unchanged: true, excludedCount: true, errors: true, lastSku: true, triggerType: true,
+      },
+    }),
+    prisma.bulkJob.findMany({
+      where: { shopDomain, phase: { in: ["lookup", "mutations", "finalizing"] } },
+      select: { id: true, configId: true, logId: true, phase: true, totalCount: true, createCount: true, updateCount: true, unchangedCount: true, excludedCount: true, mutationOpsDone: true, totalMutationOps: true },
+    }),
+  ]);
+
+  // Build set of configIds with active bulkJobs — replaces N+1 findFirst per log
+  const bulkJobByConfig = new Map(activeBulkJobs.map((bj) => [bj.configId, bj]));
+
+  // Collect all configIds needed for batch fetch
+  const allNeededConfigIds = new Set<string>();
+  for (const log of runningLogs) {
+    if (activeConfigIds.has(log.configId)) continue;
+    if (bulkJobByConfig.has(log.configId)) continue;
+    allNeededConfigIds.add(log.configId);
+  }
+  for (const bj of activeBulkJobs) {
+    if (activeConfigIds.has(bj.configId)) continue;
+    allNeededConfigIds.add(bj.configId);
+  }
+
+  // Collect all logIds needed for bulkJob progress
+  const bulkJobLogIds = activeBulkJobs.filter((bj) => bj.logId).map((bj) => bj.logId!);
+
+  // Batch query 6-7: all configs + all bulkJob logs (parallel)
+  const [batchConfigs, bulkJobLogs] = await Promise.all([
+    allNeededConfigIds.size > 0
+      ? prisma.importConfig.findMany({
+          where: { id: { in: [...allNeededConfigIds] } },
+          select: { id: true, name: true, csvUrl: true, importMode: true, dataSource: true, localFilePath: true },
+        })
+      : Promise.resolve([]),
+    bulkJobLogIds.length > 0
+      ? prisma.importLog.findMany({
+          where: { id: { in: bulkJobLogIds } },
+          select: {
+            id: true, totalProducts: true, created: true, updated: true,
+            unchanged: true, excludedCount: true, errors: true, lastSku: true, status: true,
+          },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const configMap = new Map(batchConfigs.map((c) => [c.id, c]));
+  const bulkJobLogMap = new Map(bulkJobLogs.map((l) => [l.id, l]));
+
+  // --- Loop 1: running logs (no queries inside — all from Maps) ---
+  const seenConfigIds = new Set<string>();
   for (const log of runningLogs) {
     if (seenConfigIds.has(log.configId)) continue;
     if (activeConfigIds.has(log.configId)) continue;
-
-    // Skip if there's an active BulkJob for this config (bulk is still processing)
-    const hasActiveBulkJob = await prisma.bulkJob.findFirst({
-      where: { configId: log.configId, phase: { in: ["lookup", "mutations", "finalizing"] } },
-      select: { id: true },
-    }).catch(() => null);
-    if (hasActiveBulkJob) continue;
+    if (bulkJobByConfig.has(log.configId)) continue;
 
     seenConfigIds.add(log.configId);
-    const config = await prisma.importConfig.findUnique({
-      where: { id: log.configId },
-      select: { id: true, name: true, csvUrl: true, importMode: true, dataSource: true, localFilePath: true },
-    });
-
-    // Show even if config was deleted — otherwise it's invisible
+    const config = configMap.get(log.configId);
     const sourceLabel = !config
       ? "Configuración eliminada"
       : config.dataSource === "file"
@@ -450,22 +487,12 @@ export async function getQueueStatus(shopDomain: string): Promise<{
     });
   }
 
-  // 2. From active BulkJobs (bulk mode - async, continues after scheduler releases)
-  const activeBulkJobs = await prisma.bulkJob.findMany({
-    where: { shopDomain, phase: { in: ["lookup", "mutations", "finalizing"] } },
-    select: { id: true, configId: true, logId: true, phase: true, totalCount: true, createCount: true, updateCount: true, unchangedCount: true, excludedCount: true, mutationOpsDone: true, totalMutationOps: true },
-  });
-
+  // --- Loop 2: active bulkJobs (no queries inside — all from Maps) ---
   for (const bulkJob of activeBulkJobs) {
     if (schedulerActive.some((s) => s.configId === bulkJob.configId)) continue;
     if (activeConfigIds.has(bulkJob.configId)) continue;
 
-    const config = await prisma.importConfig.findUnique({
-      where: { id: bulkJob.configId },
-      select: { id: true, name: true, csvUrl: true, importMode: true, dataSource: true, localFilePath: true },
-    });
-
-    // Show BulkJob even if config was deleted — otherwise it's invisible and unkillable
+    const config = configMap.get(bulkJob.configId);
     const sourceLabel = !config
       ? "Configuración eliminada"
       : config.dataSource === "file"
@@ -474,19 +501,12 @@ export async function getQueueStatus(shopDomain: string): Promise<{
 
     let progress = null;
     if (bulkJob.logId) {
-      const log = await prisma.importLog.findUnique({
-        where: { id: bulkJob.logId },
-        select: {
-          id: true, totalProducts: true, created: true, updated: true,
-          unchanged: true, excludedCount: true, errors: true, lastSku: true, status: true,
-        },
-      });
+      const log = bulkJobLogMap.get(bulkJob.logId);
       if (log) {
         const errorCount = log.errors ? (JSON.parse(log.errors) as any[]).length : 0;
         const total = bulkJob.totalCount || log.totalProducts || 0;
         const counterDone = (bulkJob.createCount || 0) + (bulkJob.updateCount || 0) + (bulkJob.unchangedCount || 0) + (bulkJob.excludedCount || 0);
 
-        // Estimate progress from ops when per-product counters haven't updated yet
         let processedProducts = counterDone;
         if (counterDone <= (bulkJob.excludedCount || 0) && bulkJob.totalMutationOps > 0 && (bulkJob.mutationOpsDone || 0) > 0 && total > 0) {
           const excluded = bulkJob.excludedCount || 0;
@@ -546,10 +566,10 @@ export async function getQueueStatus(shopDomain: string): Promise<{
         select: { id: true, name: true, csvUrl: true, dataSource: true, localFilePath: true, importMode: true },
       })
     : [];
-  const configMap = new Map(recentLogConfigs.map((c) => [c.id, c]));
+  const recentConfigMap = new Map(recentLogConfigs.map((c) => [c.id, c]));
 
   const allRecent: QueueItem[] = recentLogs.map((log) => {
-    const cfg = configMap.get(log.configId);
+    const cfg = recentConfigMap.get(log.configId);
     const sourceLabel = cfg?.dataSource === "file"
       ? cfg.localFilePath?.split(/[/\\]/).pop() || "Archivo local"
       : cfg?.csvUrl || "URL";
