@@ -1417,6 +1417,10 @@ async function prepareAndLaunch(
         config.defaultTags || undefined,
         categoryTags || undefined
       );
+      // In "update" mode, preserve the existing Shopify SKU — don't send the file's SKU
+      if (matchMode === "update" && inputObj.variants?.[0]) {
+        delete inputObj.variants[0].sku;
+      }
       meta.images = inputObj.files?.map((f: any) => f.originalSource) || [];
       await pushUpdate(inputObj, meta, { id: match.productId });
     } else {
