@@ -806,65 +806,79 @@ async function processProduct({
 
       // overwrite: update ALL fields; update: only update fields in updateOpts
       if (matchMode0 === "overwrite") {
-        const fullPatch: any = {
-          id: existing.shopifyProductId,
-          title: productInput2.title,
-          descriptionHtml: productInput2.descriptionHtml,
-          productType: productInput2.productType,
-          vendor: productInput2.vendor,
-          tags: productInput2.tags,
-          metafields: productInput2.metafields,
-          seo: productInput2.seo,
-        };
-        const updateRes = await graphqlWithRetry(admin,
-          `#graphql
-          mutation productUpdate($product: ProductUpdateInput!) {
-            productUpdate(product: $product) { product { id } userErrors { field message } }
-          }`,
-          { product: fullPatch }
-        );
-        if (updateRes.data?.productUpdate?.userErrors?.length) {
-          const updateErrors = updateRes.data.productUpdate.userErrors;
-          const notFound = updateErrors.some((e: any) =>
-            e.message?.includes("not find") || e.message?.includes("NOT_FOUND") || e.message?.includes("was not found")
+        try {
+          const fullPatch: any = {
+            id: existing.shopifyProductId,
+            title: productInput2.title,
+            descriptionHtml: productInput2.descriptionHtml,
+            productType: productInput2.productType,
+            vendor: productInput2.vendor,
+            tags: productInput2.tags,
+            metafields: productInput2.metafields,
+            seo: productInput2.seo,
+          };
+          const updateRes = await graphqlWithRetry(admin,
+            `#graphql
+            mutation productUpdate($product: ProductUpdateInput!) {
+              productUpdate(product: $product) { product { id } userErrors { field message } }
+            }`,
+            { product: fullPatch }
           );
-          if (notFound) {
-            return;
+          if (updateRes.data?.productUpdate?.userErrors?.length) {
+            const updateErrors = updateRes.data.productUpdate.userErrors;
+            const notFound = updateErrors.some((e: any) =>
+              e.message?.includes("not find") || e.message?.includes("NOT_FOUND") || e.message?.includes("was not found")
+            );
+            if (notFound) {
+              return;
+            }
+            console.error(`[Import] Priority replace: productUpdate errors:`, JSON.stringify(updateErrors));
           }
-          console.error(`[Import] Priority replace: productUpdate errors:`, JSON.stringify(updateErrors));
+        } catch (e: any) {
+          console.error(`[Import] Priority replace (inter): productUpdate failed for ${existing.shopifyProductId}:`, e?.message);
         }
       }
 
       // Update variant: SKU + price + compareAt + barcode
-      const variantRes2 = await graphqlWithRetry(admin,
-        `#graphql
-        query { product(id: "${existing.shopifyProductId}") {
-          variants(first: 1) { edges { node { id inventoryItem { id } } } }
-        }}`,
-        {}
-      );
-      const variantId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.id;
-      const invItemId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.inventoryItem?.id;
+      let variantId2: string | undefined;
+      let invItemId2: string | undefined;
       const rowEanForReplace = getField(row, columnMaps, "ean") || row["ean"] || "";
-      if (variantId2) {
-        const variantPatch: any = {
-          id: variantId2,
-          price: prices2.regularPrice.toString(),
-          compareAtPrice: (prices2.compareAtPrice ?? 0) > 0 ? prices2.compareAtPrice!.toString() : null,
-        };
-        if (rowEanForReplace) variantPatch.barcode = rowEanForReplace;
-        await graphqlWithRetry(admin,
+      try {
+        const variantRes2 = await graphqlWithRetry(admin,
           `#graphql
-          mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-            productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-              productVariants { id } userErrors { field message }
-            }
-          }`,
-          {
-            productId: existing.shopifyProductId,
-            variants: [variantPatch],
-          }
+          query { product(id: "${existing.shopifyProductId}") {
+            variants(first: 1) { edges { node { id inventoryItem { id } } } }
+          }}`,
+          {}
         );
+        variantId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.id;
+        invItemId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.inventoryItem?.id;
+      } catch (e: any) {
+        console.error(`[Import] Priority replace (inter): variants query failed for ${existing.shopifyProductId}:`, e?.message);
+      }
+      if (variantId2) {
+        try {
+          const variantPatch: any = {
+            id: variantId2,
+            price: prices2.regularPrice.toString(),
+            compareAtPrice: (prices2.compareAtPrice ?? 0) > 0 ? prices2.compareAtPrice!.toString() : null,
+          };
+          if (rowEanForReplace) variantPatch.barcode = rowEanForReplace;
+          await graphqlWithRetry(admin,
+            `#graphql
+            mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+              productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+                productVariants { id } userErrors { field message }
+              }
+            }`,
+            {
+              productId: existing.shopifyProductId,
+              variants: [variantPatch],
+            }
+          );
+        } catch (e: any) {
+          console.error(`[Import] Priority replace (inter): variantBulkUpdate failed for ${existing.shopifyProductId}:`, e?.message);
+        }
         if (sku && variantId2 && matchMode0 === "overwrite") {
           try {
             await updateVariantSku(admin, existing.shopifyProductId, variantId2, sku);
@@ -989,50 +1003,60 @@ async function processProduct({
 
         // overwrite: update ALL fields; update: only update fields in updateOpts
         if (matchMode2 === "overwrite") {
-          const fullPatch: any = {
-            id: dupCheck.existingShopifyProductId,
-            title: productInput2.title,
-            descriptionHtml: productInput2.descriptionHtml,
-            productType: productInput2.productType,
-            vendor: productInput2.vendor,
-            tags: productInput2.tags,
-            metafields: productInput2.metafields,
-            seo: productInput2.seo,
-          };
-          const updateRes = await graphqlWithRetry(admin,
-            `#graphql
-            mutation productUpdate($product: ProductUpdateInput!) {
-              productUpdate(product: $product) { product { id } userErrors { field message } }
-            }`,
-            { product: fullPatch }
-          );
-        const updateErrors = updateRes.data?.productUpdate?.userErrors || [];
-        if (updateErrors.length > 0) {
-          console.error(`[Import] SKU ${sku}: productUpdate errors:`, JSON.stringify(updateErrors));
-        }
-          if (updateErrors.length) {
-            const notFound = updateErrors.some((e: any) =>
-              e.message?.includes("not find") || e.message?.includes("NOT_FOUND") || e.message?.includes("was not found")
+          try {
+            const fullPatch: any = {
+              id: dupCheck.existingShopifyProductId,
+              title: productInput2.title,
+              descriptionHtml: productInput2.descriptionHtml,
+              productType: productInput2.productType,
+              vendor: productInput2.vendor,
+              tags: productInput2.tags,
+              metafields: productInput2.metafields,
+              seo: productInput2.seo,
+            };
+            const updateRes = await graphqlWithRetry(admin,
+              `#graphql
+              mutation productUpdate($product: ProductUpdateInput!) {
+                productUpdate(product: $product) { product { id } userErrors { field message } }
+              }`,
+              { product: fullPatch }
             );
-            if (notFound) {
-              return;
+            const updateErrors = updateRes.data?.productUpdate?.userErrors || [];
+            if (updateErrors.length > 0) {
+              console.error(`[Import] SKU ${sku}: productUpdate errors:`, JSON.stringify(updateErrors));
             }
-            console.error(`[Import] Priority replace: productUpdate errors:`, JSON.stringify(updateErrors));
-          } else {
-            console.log(`[Import] Priority replace: productUpdate OK for ${dupCheck.existingShopifyProductId}`);
+            if (updateErrors.length) {
+              const notFound = updateErrors.some((e: any) =>
+                e.message?.includes("not find") || e.message?.includes("NOT_FOUND") || e.message?.includes("was not found")
+              );
+              if (notFound) {
+                return;
+              }
+              console.error(`[Import] Priority replace: productUpdate errors:`, JSON.stringify(updateErrors));
+            } else {
+              console.log(`[Import] Priority replace: productUpdate OK for ${dupCheck.existingShopifyProductId}`);
+            }
+          } catch (e: any) {
+            console.error(`[Import] Priority replace (EAN): productUpdate failed for ${dupCheck.existingShopifyProductId}:`, e?.message);
           }
         }
 
         // Update variant: SKU + price + compareAt + barcode
-        const variantRes2 = await graphqlWithRetry(admin,
-          `#graphql
-          query { product(id: "${dupCheck.existingShopifyProductId}") {
-            variants(first: 1) { edges { node { id inventoryItem { id } } } }
-          }}`,
-          {}
-        );
-        const variantId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.id;
-        const invItemId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.inventoryItem?.id;
+        let variantId2: string | undefined;
+        let invItemId2: string | undefined;
+        try {
+          const variantRes2 = await graphqlWithRetry(admin,
+            `#graphql
+            query { product(id: "${dupCheck.existingShopifyProductId}") {
+              variants(first: 1) { edges { node { id inventoryItem { id } } } }
+            }}`,
+            {}
+          );
+          variantId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.id;
+          invItemId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.inventoryItem?.id;
+        } catch (e: any) {
+          console.error(`[Import] Priority replace (EAN): variants query failed for ${dupCheck.existingShopifyProductId}:`, e?.message);
+        }
         if (variantId2) {
           try {
             const variantPatch: any = {
@@ -1199,43 +1223,57 @@ async function processProduct({
 
               // overwrite: update ALL fields; update: only update fields in updateOpts
               if (matchMode3 === "overwrite") {
-                const fullPatch: any = {
-                  id: foundBarcode.productId,
-                  title: productInput2.title,
-                  descriptionHtml: productInput2.descriptionHtml,
-                  productType: productInput2.productType,
-                  vendor: productInput2.vendor,
-                  tags: productInput2.tags,
-                  metafields: productInput2.metafields,
-                  seo: productInput2.seo,
-                };
-                const updateRes = await graphqlWithRetry(admin,
-                  `#graphql mutation productUpdate($product: ProductUpdateInput!) { productUpdate(product: $product) { product { id } userErrors { field message } } }`,
-                  { product: fullPatch }
-                );
-                if (updateRes.data?.productUpdate?.userErrors?.length) {
-                  console.error(`[Import] Priority replace (external): productUpdate errors:`, JSON.stringify(updateRes.data.productUpdate.userErrors));
+                try {
+                  const fullPatch: any = {
+                    id: foundBarcode.productId,
+                    title: productInput2.title,
+                    descriptionHtml: productInput2.descriptionHtml,
+                    productType: productInput2.productType,
+                    vendor: productInput2.vendor,
+                    tags: productInput2.tags,
+                    metafields: productInput2.metafields,
+                    seo: productInput2.seo,
+                  };
+                  const updateRes = await graphqlWithRetry(admin,
+                    `#graphql mutation productUpdate($product: ProductUpdateInput!) { productUpdate(product: $product) { product { id } userErrors { field message } } }`,
+                    { product: fullPatch }
+                  );
+                  if (updateRes.data?.productUpdate?.userErrors?.length) {
+                    console.error(`[Import] Priority replace (external): productUpdate errors:`, JSON.stringify(updateRes.data.productUpdate.userErrors));
+                  }
+                } catch (e: any) {
+                  console.error(`[Import] Priority replace (external): productUpdate failed for ${foundBarcode.productId}:`, e?.message);
                 }
               }
 
               // Update variant
-              const variantRes2 = await graphqlWithRetry(admin,
-                `#graphql query { product(id: "${foundBarcode.productId}") { variants(first: 1) { edges { node { id inventoryItem { id } } } } } }`,
-                {}
-              );
-              const variantId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.id;
-              const invItemId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.inventoryItem?.id;
-              if (variantId2) {
-                const variantPatch: any = {
-                  id: variantId2,
-                  price: prices2.regularPrice.toString(),
-                  compareAtPrice: (prices2.compareAtPrice ?? 0) > 0 ? prices2.compareAtPrice!.toString() : null,
-                };
-                if (rowEan) variantPatch.barcode = rowEan;
-                await graphqlWithRetry(admin,
-                  `#graphql mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) { productVariantsBulkUpdate(productId: $productId, variants: $variants) { productVariants { id } userErrors { field message } } }`,
-                  { productId: foundBarcode.productId, variants: [variantPatch] }
+              let variantId2: string | undefined;
+              let invItemId2: string | undefined;
+              try {
+                const variantRes2 = await graphqlWithRetry(admin,
+                  `#graphql query { product(id: "${foundBarcode.productId}") { variants(first: 1) { edges { node { id inventoryItem { id } } } } } }`,
+                  {}
                 );
+                variantId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.id;
+                invItemId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.inventoryItem?.id;
+              } catch (e: any) {
+                console.error(`[Import] Priority replace (external): variants query failed for ${foundBarcode.productId}:`, e?.message);
+              }
+              if (variantId2) {
+                try {
+                  const variantPatch: any = {
+                    id: variantId2,
+                    price: prices2.regularPrice.toString(),
+                    compareAtPrice: (prices2.compareAtPrice ?? 0) > 0 ? prices2.compareAtPrice!.toString() : null,
+                  };
+                  if (rowEan) variantPatch.barcode = rowEan;
+                  await graphqlWithRetry(admin,
+                    `#graphql mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) { productVariantsBulkUpdate(productId: $productId, variants: $variants) { productVariants { id } userErrors { field message } } }`,
+                    { productId: foundBarcode.productId, variants: [variantPatch] }
+                  );
+                } catch (e: any) {
+                  console.error(`[Import] Priority replace (external): variantBulkUpdate failed for ${foundBarcode.productId}:`, e?.message);
+                }
                 if (sku && matchMode3 === "overwrite") {
                   try { await updateVariantSku(admin, foundBarcode.productId, variantId2, sku); } catch (e: any) { console.error(`[Import] Priority replace (external): SKU error:`, e?.message); }
                 }
@@ -1474,65 +1512,79 @@ async function processProduct({
 
     // overwrite: update ALL fields; update: only update price/stock/images
     if (matchModePR === "overwrite") {
-      const fullPatch: any = {
-        id: priorityReplaceTarget.shopifyProductId,
-        title: productInput2.title,
-        descriptionHtml: productInput2.descriptionHtml,
-        productType: productInput2.productType,
-        vendor: productInput2.vendor,
-        tags: productInput2.tags,
-        metafields: productInput2.metafields,
-        seo: productInput2.seo,
-      };
-      const updateRes = await graphqlWithRetry(admin,
-        `#graphql
-        mutation productUpdate($product: ProductUpdateInput!) {
-          productUpdate(product: $product) { product { id } userErrors { field message } }
-        }`,
-        { product: fullPatch }
-      );
-      if (updateRes.data?.productUpdate?.userErrors?.length) {
-        const updateErrors = updateRes.data.productUpdate.userErrors;
-        const notFound = updateErrors.some((e: any) =>
-          e.message?.includes("not find") || e.message?.includes("NOT_FOUND") || e.message?.includes("was not found")
+      try {
+        const fullPatch: any = {
+          id: priorityReplaceTarget.shopifyProductId,
+          title: productInput2.title,
+          descriptionHtml: productInput2.descriptionHtml,
+          productType: productInput2.productType,
+          vendor: productInput2.vendor,
+          tags: productInput2.tags,
+          metafields: productInput2.metafields,
+          seo: productInput2.seo,
+        };
+        const updateRes = await graphqlWithRetry(admin,
+          `#graphql
+          mutation productUpdate($product: ProductUpdateInput!) {
+            productUpdate(product: $product) { product { id } userErrors { field message } }
+          }`,
+          { product: fullPatch }
         );
-        if (notFound) {
-          return;
+        if (updateRes.data?.productUpdate?.userErrors?.length) {
+          const updateErrors = updateRes.data.productUpdate.userErrors;
+          const notFound = updateErrors.some((e: any) =>
+            e.message?.includes("not find") || e.message?.includes("NOT_FOUND") || e.message?.includes("was not found")
+          );
+          if (notFound) {
+            return;
+          }
+          console.error(`[Import] Priority replace: productUpdate errors:`, JSON.stringify(updateErrors));
         }
-        console.error(`[Import] Priority replace: productUpdate errors:`, JSON.stringify(updateErrors));
+      } catch (e: any) {
+        console.error(`[Import] Priority replace: productUpdate failed for ${priorityReplaceTarget.shopifyProductId}:`, e?.message);
       }
     }
 
     // Update variant: SKU + price + compareAt + barcode
-    const variantRes2 = await graphqlWithRetry(admin,
-      `#graphql
-      query { product(id: "${priorityReplaceTarget.shopifyProductId}") {
-        variants(first: 1) { edges { node { id inventoryItem { id } } } }
-      }}`,
-      {}
-    );
-    const variantId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.id;
-    const invItemId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.inventoryItem?.id;
+    let variantId2: string | undefined;
+    let invItemId2: string | undefined;
     const rowEanForReplace = getField(row, columnMaps, "ean") || row["ean"] || "";
-    if (variantId2) {
-      const variantPatch: any = {
-        id: variantId2,
-        price: prices2.regularPrice.toString(),
-        compareAtPrice: (prices2.compareAtPrice ?? 0) > 0 ? prices2.compareAtPrice!.toString() : null,
-      };
-      if (rowEanForReplace) variantPatch.barcode = rowEanForReplace;
-      await graphqlWithRetry(admin,
+    try {
+      const variantRes2 = await graphqlWithRetry(admin,
         `#graphql
-        mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-          productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-            productVariants { id } userErrors { field message }
-          }
-        }`,
-        {
-          productId: priorityReplaceTarget.shopifyProductId,
-          variants: [variantPatch],
-        }
+        query { product(id: "${priorityReplaceTarget.shopifyProductId}") {
+          variants(first: 1) { edges { node { id inventoryItem { id } } } }
+        }}`,
+        {}
       );
+      variantId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.id;
+      invItemId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.inventoryItem?.id;
+    } catch (e: any) {
+      console.error(`[Import] Priority replace: variants query failed for ${priorityReplaceTarget.shopifyProductId}:`, e?.message);
+    }
+    if (variantId2) {
+      try {
+        const variantPatch: any = {
+          id: variantId2,
+          price: prices2.regularPrice.toString(),
+          compareAtPrice: (prices2.compareAtPrice ?? 0) > 0 ? prices2.compareAtPrice!.toString() : null,
+        };
+        if (rowEanForReplace) variantPatch.barcode = rowEanForReplace;
+        await graphqlWithRetry(admin,
+          `#graphql
+          mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+            productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+              productVariants { id } userErrors { field message }
+            }
+          }`,
+          {
+            productId: priorityReplaceTarget.shopifyProductId,
+            variants: [variantPatch],
+          }
+        );
+      } catch (e: any) {
+        console.error(`[Import] Priority replace: variantBulkUpdate failed for ${priorityReplaceTarget.shopifyProductId}:`, e?.message);
+      }
       if (sku && matchModePR === "overwrite") {
         try {
           await updateVariantSku(admin, priorityReplaceTarget.shopifyProductId, variantId2, sku);

@@ -82,7 +82,18 @@ export async function rateLimitedGraphql(
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         const res = await admin.graphql(query, { variables: vars });
-        const json = await res.json();
+        let json: any;
+        try {
+          json = await res.json();
+        } catch (parseError: any) {
+          if (attempt < maxRetries) {
+            const wait = attempt * 3000;
+            console.warn(`[RateLimit] JSON parse failed (attempt ${attempt}/${maxRetries}): ${parseError?.message}. Retrying in ${wait}ms...`);
+            await sleep(wait);
+            continue;
+          }
+          throw new Error(`Shopify API returned invalid JSON after ${maxRetries} attempts: ${parseError?.message}`);
+        }
         const gqlErrors = json.errors || [];
         const isThrottled = gqlErrors.some((e: any) =>
           e.message?.includes("Throttled") ||
@@ -110,11 +121,10 @@ export async function rateLimitedGraphql(
         }
         return json;
       } catch (error: any) {
-        const msg = error?.message || error?.toString() || "";
-        const statusCode = error?.response?.status || error?.status || 0;
+        const msg = String(error?.message || error?.toString() || "").toLowerCase();
+        const statusCode = Number(error?.response?.status || error?.status || 0);
         const isThrottled = statusCode === 429 ||
-          msg.includes("Throttled") ||
-          msg.includes("THROTTLED") ||
+          msg.includes("throttled") ||
           msg.includes("too_many_requests") ||
           msg.includes("rate limit");
         if (isThrottled && attempt < maxRetries) {
@@ -123,8 +133,8 @@ export async function rateLimitedGraphql(
           continue;
         }
         const isUnauthorized = statusCode === 401 ||
-          msg.includes("Unauthorized") ||
-          msg.includes("Session not found") ||
+          msg.includes("unauthorized") ||
+          msg.includes("session not found") ||
           msg.includes("invalid_token");
         if (isUnauthorized && attempt < maxRetries) {
           const wait = attempt * 3000;

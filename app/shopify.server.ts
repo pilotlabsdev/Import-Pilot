@@ -176,8 +176,16 @@ export async function safeAuthenticate(request: Request) {
   try {
     return await authenticate.admin(request);
   } catch (res: any) {
-    if (res instanceof Response && res.status === 401) {
-      throw redirect("/");
+    if (res instanceof Response) {
+      // Follow any redirect (302/307 OAuth redirects, 401 session expiry, etc.)
+      const location = res.headers.get("Location");
+      if (location) {
+        throw res;
+      }
+      // 401 without Location — redirect to / to trigger App Bridge session refresh
+      if (res.status === 401) {
+        throw redirect("/");
+      }
     }
     throw res;
   }

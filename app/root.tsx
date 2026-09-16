@@ -136,6 +136,28 @@ export function ErrorBoundary() {
   const rawStatus = error instanceof Response ? error.status : 0;
   const status = rrStatus || rawStatus;
 
+  // OAuth redirect Responses — follow the redirect instead of rendering error page
+  const redirectUrl = isRouteErrorResponse(error)
+    ? (error.data instanceof Response ? error.data.headers.get("Location") : null)
+    : error instanceof Response
+    ? error.headers.get("Location")
+    : null;
+  if (redirectUrl) {
+    console.log(`[Root ErrorBoundary] Redirect detected → ${redirectUrl}`);
+    return (
+      <html lang="en">
+        <head>
+          <meta charSet="utf-8" />
+          <meta name="viewport" content="width=device-width,initial-scale=1" />
+          <title>Import Pilot</title>
+        </head>
+        <body>
+          <script dangerouslySetInnerHTML={{ __html: `window.location.href = ${JSON.stringify(redirectUrl)};` }} />
+        </body>
+      </html>
+    );
+  }
+
   const errorText = isRouteErrorResponse(error)
     ? `${error.status} ${error.statusText}: ${JSON.stringify(error.data)}`
     : error instanceof Response

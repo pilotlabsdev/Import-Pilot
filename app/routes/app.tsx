@@ -214,6 +214,24 @@ export function ErrorBoundary() {
   const rawStatus = error instanceof Response ? error.status : 0;
   const status = rrStatus || rawStatus;
 
+  // OAuth redirect Responses (302/307/200 with Location header) — follow the redirect instead of rendering
+  const redirectUrl = isRouteErrorResponse(error)
+    ? (error.data instanceof Response ? error.data.headers.get("Location") : null)
+    : error instanceof Response
+    ? error.headers.get("Location")
+    : null;
+  if (redirectUrl) {
+    console.log(`[App ErrorBoundary] Redirect detected → ${redirectUrl}`);
+    return (
+      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "60vh" }}>
+        <div style={{ textAlign: "center", color: "#6d7175" }}>
+          <p style={{ fontSize: "14px" }}>Redirigiendo...</p>
+        </div>
+        <script dangerouslySetInnerHTML={{ __html: `window.location.href = ${JSON.stringify(redirectUrl)};` }} />
+      </div>
+    );
+  }
+
   const errorText = isRouteErrorResponse(error)
     ? `${error.status} ${error.statusText}: ${JSON.stringify(error.data)}`
     : error instanceof Response
