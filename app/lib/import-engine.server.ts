@@ -787,7 +787,7 @@ async function processProduct({
     const otherConfig = await prisma.importConfig.findUnique({ where: { id: existing.configId } });
     const otherSupplierName = otherConfig?.name || "desconocido";
     if (dupPolicy0 === "priority") {
-      // Execute full replace (same logic as priorityReplaceTarget below)
+      // Execute replace (overwrite or update based on matchMode)
       const prices2 = await calculatePrices(shopDomain, sku, category, costPrice, config.id);
       const categoryMap2 = config.categoryMaps?.filter(
         (cm: any) => cm.csvCategory === category && cm.isActive
@@ -802,33 +802,37 @@ async function processProduct({
       );
       if (shopifyProductType2) productInput2.productType = shopifyProductType2;
 
-      // Full overwrite: update ALL fields on the existing product
-      const fullPatch: any = {
-        id: existing.shopifyProductId,
-        title: productInput2.title,
-        descriptionHtml: productInput2.descriptionHtml,
-        productType: productInput2.productType,
-        vendor: productInput2.vendor,
-        tags: productInput2.tags,
-        metafields: productInput2.metafields,
-        seo: productInput2.seo,
-      };
-      const updateRes = await graphqlWithRetry(admin,
-        `#graphql
-        mutation productUpdate($product: ProductUpdateInput!) {
-          productUpdate(product: $product) { product { id } userErrors { field message } }
-        }`,
-        { product: fullPatch }
-      );
-      if (updateRes.data?.productUpdate?.userErrors?.length) {
-        const updateErrors = updateRes.data.productUpdate.userErrors;
-        const notFound = updateErrors.some((e: any) =>
-          e.message?.includes("not find") || e.message?.includes("NOT_FOUND") || e.message?.includes("was not found")
+      const matchMode0 = shopSettings0?.matchMode || "overwrite";
+
+      // overwrite: update ALL fields; update: only update fields in updateOpts
+      if (matchMode0 === "overwrite") {
+        const fullPatch: any = {
+          id: existing.shopifyProductId,
+          title: productInput2.title,
+          descriptionHtml: productInput2.descriptionHtml,
+          productType: productInput2.productType,
+          vendor: productInput2.vendor,
+          tags: productInput2.tags,
+          metafields: productInput2.metafields,
+          seo: productInput2.seo,
+        };
+        const updateRes = await graphqlWithRetry(admin,
+          `#graphql
+          mutation productUpdate($product: ProductUpdateInput!) {
+            productUpdate(product: $product) { product { id } userErrors { field message } }
+          }`,
+          { product: fullPatch }
         );
-        if (notFound) {
-          return;
+        if (updateRes.data?.productUpdate?.userErrors?.length) {
+          const updateErrors = updateRes.data.productUpdate.userErrors;
+          const notFound = updateErrors.some((e: any) =>
+            e.message?.includes("not find") || e.message?.includes("NOT_FOUND") || e.message?.includes("was not found")
+          );
+          if (notFound) {
+            return;
+          }
+          console.error(`[Import] Priority replace: productUpdate errors:`, JSON.stringify(updateErrors));
         }
-        console.error(`[Import] Priority replace: productUpdate errors:`, JSON.stringify(updateErrors));
       }
 
       // Update variant: SKU + price + compareAt + barcode
@@ -861,7 +865,7 @@ async function processProduct({
             variants: [variantPatch],
           }
         );
-        if (sku && variantId2) {
+        if (sku && variantId2 && matchMode0 === "overwrite") {
           try {
             await updateVariantSku(admin, existing.shopifyProductId, variantId2, sku);
           } catch (e: any) {
@@ -981,38 +985,42 @@ async function processProduct({
         );
         if (shopifyProductType2) productInput2.productType = shopifyProductType2;
 
-        // Full overwrite: update ALL fields on the existing product
-        const fullPatch: any = {
-          id: dupCheck.existingShopifyProductId,
-          title: productInput2.title,
-          descriptionHtml: productInput2.descriptionHtml,
-          productType: productInput2.productType,
-          vendor: productInput2.vendor,
-          tags: productInput2.tags,
-          metafields: productInput2.metafields,
-          seo: productInput2.seo,
-        };
-        const updateRes = await graphqlWithRetry(admin,
-          `#graphql
-          mutation productUpdate($product: ProductUpdateInput!) {
-            productUpdate(product: $product) { product { id } userErrors { field message } }
-          }`,
-          { product: fullPatch }
-        );
-      const updateErrors = updateRes.data?.productUpdate?.userErrors || [];
-      if (updateErrors.length > 0) {
-        console.error(`[Import] SKU ${sku}: productUpdate errors:`, JSON.stringify(updateErrors));
-      }
-        if (updateErrors.length) {
-          const notFound = updateErrors.some((e: any) =>
-            e.message?.includes("not find") || e.message?.includes("NOT_FOUND") || e.message?.includes("was not found")
+        const matchMode2 = shopSettings?.matchMode || "overwrite";
+
+        // overwrite: update ALL fields; update: only update fields in updateOpts
+        if (matchMode2 === "overwrite") {
+          const fullPatch: any = {
+            id: dupCheck.existingShopifyProductId,
+            title: productInput2.title,
+            descriptionHtml: productInput2.descriptionHtml,
+            productType: productInput2.productType,
+            vendor: productInput2.vendor,
+            tags: productInput2.tags,
+            metafields: productInput2.metafields,
+            seo: productInput2.seo,
+          };
+          const updateRes = await graphqlWithRetry(admin,
+            `#graphql
+            mutation productUpdate($product: ProductUpdateInput!) {
+              productUpdate(product: $product) { product { id } userErrors { field message } }
+            }`,
+            { product: fullPatch }
           );
-          if (notFound) {
-            return;
+        const updateErrors = updateRes.data?.productUpdate?.userErrors || [];
+        if (updateErrors.length > 0) {
+          console.error(`[Import] SKU ${sku}: productUpdate errors:`, JSON.stringify(updateErrors));
+        }
+          if (updateErrors.length) {
+            const notFound = updateErrors.some((e: any) =>
+              e.message?.includes("not find") || e.message?.includes("NOT_FOUND") || e.message?.includes("was not found")
+            );
+            if (notFound) {
+              return;
+            }
+            console.error(`[Import] Priority replace: productUpdate errors:`, JSON.stringify(updateErrors));
+          } else {
+            console.log(`[Import] Priority replace: productUpdate OK for ${dupCheck.existingShopifyProductId}`);
           }
-          console.error(`[Import] Priority replace: productUpdate errors:`, JSON.stringify(updateErrors));
-        } else {
-          console.log(`[Import] Priority replace: productUpdate OK for ${dupCheck.existingShopifyProductId}`);
         }
 
         // Update variant: SKU + price + compareAt + barcode
@@ -1049,7 +1057,7 @@ async function processProduct({
               console.error(`[Import] Priority replace: variantUpdate errors:`, JSON.stringify(variantUpdateRes.data.productVariantsBulkUpdate.userErrors));
             } else {
             }
-            if (sku) {
+            if (sku && matchMode2 === "overwrite") {
               try {
                 await updateVariantSku(admin, dupCheck.existingShopifyProductId, variantId2, sku);
               } catch (e: any) {
@@ -1101,18 +1109,20 @@ async function processProduct({
           });
         }
 
-        // Update mapping: delete old (other supplier) + any existing for this SKU, then create new
-        try {
-          await prisma.productMapping.delete({ where: { id: dupCheck.existingMappingId } });
-        } catch (e: any) {
-          console.error(`[Import] Priority replace: error deleting old mapping:`, e?.message);
-        }
-        // Delete any existing mapping for this SKU from current supplier (unique constraint)
-        if (existing && existing.configId === config.id) {
+        // Update mapping: delete old (other supplier) for overwrite, or just reassign for update
+        if (matchMode2 === "overwrite") {
           try {
-            await prisma.productMapping.delete({ where: { id: existing.id } });
+            await prisma.productMapping.delete({ where: { id: dupCheck.existingMappingId } });
           } catch (e: any) {
-            console.error(`[Import] Priority replace: error deleting existing mapping:`, e?.message);
+            console.error(`[Import] Priority replace: error deleting old mapping:`, e?.message);
+          }
+          // Delete any existing mapping for this SKU from current supplier (unique constraint)
+          if (existing && existing.configId === config.id) {
+            try {
+              await prisma.productMapping.delete({ where: { id: existing.id } });
+            } catch (e: any) {
+              console.error(`[Import] Priority replace: error deleting existing mapping:`, e?.message);
+            }
           }
         }
         try {
@@ -1185,23 +1195,27 @@ async function processProduct({
               );
               if (shopifyProductType2) productInput2.productType = shopifyProductType2;
 
-              // Full overwrite: update ALL fields
-              const fullPatch: any = {
-                id: foundBarcode.productId,
-                title: productInput2.title,
-                descriptionHtml: productInput2.descriptionHtml,
-                productType: productInput2.productType,
-                vendor: productInput2.vendor,
-                tags: productInput2.tags,
-                metafields: productInput2.metafields,
-                seo: productInput2.seo,
-              };
-              const updateRes = await graphqlWithRetry(admin,
-                `#graphql mutation productUpdate($product: ProductUpdateInput!) { productUpdate(product: $product) { product { id } userErrors { field message } } }`,
-                { product: fullPatch }
-              );
-              if (updateRes.data?.productUpdate?.userErrors?.length) {
-                console.error(`[Import] Priority replace (external): productUpdate errors:`, JSON.stringify(updateRes.data.productUpdate.userErrors));
+              const matchMode3 = shopSettings?.matchMode || "overwrite";
+
+              // overwrite: update ALL fields; update: only update fields in updateOpts
+              if (matchMode3 === "overwrite") {
+                const fullPatch: any = {
+                  id: foundBarcode.productId,
+                  title: productInput2.title,
+                  descriptionHtml: productInput2.descriptionHtml,
+                  productType: productInput2.productType,
+                  vendor: productInput2.vendor,
+                  tags: productInput2.tags,
+                  metafields: productInput2.metafields,
+                  seo: productInput2.seo,
+                };
+                const updateRes = await graphqlWithRetry(admin,
+                  `#graphql mutation productUpdate($product: ProductUpdateInput!) { productUpdate(product: $product) { product { id } userErrors { field message } } }`,
+                  { product: fullPatch }
+                );
+                if (updateRes.data?.productUpdate?.userErrors?.length) {
+                  console.error(`[Import] Priority replace (external): productUpdate errors:`, JSON.stringify(updateRes.data.productUpdate.userErrors));
+                }
               }
 
               // Update variant
@@ -1222,7 +1236,7 @@ async function processProduct({
                   `#graphql mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) { productVariantsBulkUpdate(productId: $productId, variants: $variants) { productVariants { id } userErrors { field message } } }`,
                   { productId: foundBarcode.productId, variants: [variantPatch] }
                 );
-                if (sku) {
+                if (sku && matchMode3 === "overwrite") {
                   try { await updateVariantSku(admin, foundBarcode.productId, variantId2, sku); } catch (e: any) { console.error(`[Import] Priority replace (external): SKU error:`, e?.message); }
                 }
               }
