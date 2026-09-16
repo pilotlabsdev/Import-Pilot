@@ -2368,6 +2368,7 @@ async function failJob(job: any, message: string): Promise<void> {
     vendorChanges: 0,
     productTypeChanges: 0,
     tagsChanges: 0,
+    imageChanges: 0,
     errors: [{ sku: "SYSTEM", error: message, lineNumber: 0 }],
     duration: "0s",
   });

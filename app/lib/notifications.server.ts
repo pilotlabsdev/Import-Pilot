@@ -15,6 +15,7 @@ interface NotificationPayload {
   vendorChanges: number;
   productTypeChanges: number;
   tagsChanges: number;
+  imageChanges: number;
   errors: Array<{ sku: string; error: string; lineNumber?: number }>;
   duration: string;
 }

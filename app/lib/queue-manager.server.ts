@@ -208,7 +208,7 @@ async function processQueueItem(
         status: "completed",
         totalProducts: 0, created: 0, updated: 0, unchanged: 0,
         priceChanges: 0, stockChanges: 0, costChanges: 0,
-        titleChanges: 0, descriptionChanges: 0, vendorChanges: 0, productTypeChanges: 0, tagsChanges: 0,
+        titleChanges: 0, descriptionChanges: 0, vendorChanges: 0, productTypeChanges: 0, tagsChanges: 0, imageChanges: 0,
         errors: [],
         duration,
       }).catch(() => {});
@@ -271,6 +271,7 @@ async function processQueueItem(
         vendorChanges: result.vendorChanges,
         productTypeChanges: result.productTypeChanges,
         tagsChanges: result.tagsChanges,
+        imageChanges: result.imageChanges,
         errors: result.errors,
         duration,
       }).catch(() => {});
@@ -294,7 +295,7 @@ async function processQueueItem(
         status: "failed",
         totalProducts: 0, created: 0, updated: 0, unchanged: 0,
         priceChanges: 0, stockChanges: 0, costChanges: 0,
-        titleChanges: 0, descriptionChanges: 0, vendorChanges: 0, productTypeChanges: 0, tagsChanges: 0,
+        titleChanges: 0, descriptionChanges: 0, vendorChanges: 0, productTypeChanges: 0, tagsChanges: 0, imageChanges: 0,
         errors: [{ sku: "SYSTEM", error: error?.message || "systemError.unknown_error", lineNumber: 0 }],
         duration: `${Math.round((Date.now() - startTime) / 1000)}s`,
       }).catch(() => {});
@@ -341,7 +342,7 @@ export async function cancelQueueItem(itemId: string, shopDomain: string): Promi
       status: "cancelled",
       totalProducts: 0, created: 0, updated: 0, unchanged: 0,
       priceChanges: 0, stockChanges: 0, costChanges: 0,
-      titleChanges: 0, descriptionChanges: 0, vendorChanges: 0, productTypeChanges: 0, tagsChanges: 0,
+      titleChanges: 0, descriptionChanges: 0, vendorChanges: 0, productTypeChanges: 0, tagsChanges: 0, imageChanges: 0,
       errors: [{ sku: "SYSTEM", error: "systemError.cancelled_manually" }],
       duration: "0s",
     }).catch(() => {});
