@@ -404,12 +404,18 @@ export async function getQueueStatus(shopDomain: string): Promise<{
       orderBy: { startedAt: "desc" },
       select: {
         id: true, configId: true, totalProducts: true, created: true, updated: true,
-        unchanged: true, excludedCount: true, errors: true, lastSku: true, triggerType: true,
+        unchanged: true, excludedCount: true, errors: true, lastSku: true, triggerType: true, status: true,
       },
     }),
     prisma.bulkJob.findMany({
       where: { shopDomain, phase: { in: ["lookup", "mutations", "finalizing"] } },
-      select: { id: true, configId: true, logId: true, phase: true, totalCount: true, createCount: true, updateCount: true, unchangedCount: true, excludedCount: true, mutationOpsDone: true, totalMutationOps: true },
+      select: {
+        id: true, configId: true, logId: true, phase: true, totalCount: true, createCount: true,
+        updateCount: true, unchangedCount: true, excludedCount: true, mutationOpsDone: true, totalMutationOps: true,
+        priceChanges: true, stockChanges: true, costChanges: true,
+        titleChanges: true, descriptionChanges: true, vendorChanges: true,
+        productTypeChanges: true, tagsChanges: true,
+      },
     }),
   ]);
 
@@ -657,8 +663,51 @@ export async function getQueueStatus(shopDomain: string): Promise<{
 
   allRecent.sort((a, b) => ((b.finishedAt || b.createdAt)?.getTime?.() || 0) - ((a.finishedAt || a.createdAt)?.getTime?.() || 0));
 
+  // Build progress maps from already-fetched data (no extra queries)
+  const logByLogId = new Map(runningLogs.map((l) => [l.id, l]));
+  const bulkJobByLogId = new Map(activeBulkJobs.filter((bj) => bj.logId).map((bj) => [bj.logId!, bj]));
+
+  const activeWithProgress = active.map((item) => {
+    if (!item.logId) return item;
+    const log = logByLogId.get(item.logId);
+    if (!log) return item;
+
+    const processed = (log.created || 0) + (log.updated || 0) + (log.unchanged || 0) + (log.excludedCount || 0);
+    const errorCount = log.errors ? (JSON.parse(log.errors) as any[]).length : 0;
+    const bulkJob = bulkJobByLogId.get(item.logId);
+
+    const progress: any = {
+      totalProducts: bulkJob?.totalCount || log.totalProducts || 0,
+      processedProducts: bulkJob?.mutationOpsDone && bulkJob.totalMutationOps
+        ? Math.round((bulkJob.mutationOpsDone / bulkJob.totalMutationOps) * (bulkJob.totalCount || 0))
+        : processed,
+      lastSku: log.lastSku || "",
+      status: log.status,
+      errors: errorCount,
+    };
+    if (bulkJob) {
+      progress.phase = bulkJob.phase;
+      progress.totalMutationOps = bulkJob.totalMutationOps || undefined;
+      progress.mutationOpsDone = bulkJob.mutationOpsDone || undefined;
+      progress.created = bulkJob.createCount ?? undefined;
+      progress.updated = bulkJob.updateCount ?? undefined;
+      progress.unchanged = bulkJob.unchangedCount ?? undefined;
+      progress.excluded = bulkJob.excludedCount ?? undefined;
+      progress.priceChanges = bulkJob.priceChanges ?? undefined;
+      progress.stockChanges = bulkJob.stockChanges ?? undefined;
+      progress.costChanges = bulkJob.costChanges ?? undefined;
+      progress.titleChanges = bulkJob.titleChanges ?? undefined;
+      progress.descriptionChanges = bulkJob.descriptionChanges ?? undefined;
+      progress.vendorChanges = bulkJob.vendorChanges ?? undefined;
+      progress.productTypeChanges = bulkJob.productTypeChanges ?? undefined;
+      progress.tagsChanges = bulkJob.tagsChanges ?? undefined;
+    }
+
+    return { ...item, progress };
+  });
+
   return {
-    active: active as QueueItem[],
+    active: activeWithProgress as QueueItem[],
     queued: queued as QueueItem[],
     recent: allRecent,
     schedulerActive,

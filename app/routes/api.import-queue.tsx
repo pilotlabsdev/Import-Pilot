@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { data } from "react-router";
-import { getQueueStatus, cancelQueueItem, getQueueItemProgress, clearCompleted } from "~/lib/queue-manager.server";
+import { getQueueStatus, cancelQueueItem, clearCompleted } from "~/lib/queue-manager.server";
 import { cancelBulkImport, forceCleanupStuckBulkJobs } from "~/lib/bulk-import.server";
 import { prisma } from "~/lib/db.server";
 
@@ -15,16 +15,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
     const status = await getQueueStatus(shopDomain);
 
-    // Get progress for active items
-    const activeWithProgress = await Promise.all(
-      status.active.map(async (item) => {
-        const progress = await getQueueItemProgress(item.id);
-        return { ...item, progress };
-      })
-    );
-
+    // Progress is now included in active items from getQueueStatus — no extra queries needed
     console.log(`[Queue API] Loader OK shop=${shopDomain}, active=${status.active.length}, queued=${status.queued.length}, schedulerActive=${status.schedulerActive.length}, recent=${status.recent.length}`);
-    return data({ ...status, active: activeWithProgress });
+    return data(status);
   } catch (error: any) {
     console.error(`[Queue API] Loader FAILED shop=${shopDomain}:`, error?.message || error);
     return data({ error: error?.message || "Error desconocido" }, { status: 500 });

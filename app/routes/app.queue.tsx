@@ -66,7 +66,7 @@ export default function QueuePage() {
       } catch {}
     };
     poll();
-    const interval = setInterval(poll, 3000);
+    const interval = setInterval(poll, 5000);
     return () => { active = false; clearInterval(interval); };
   }, [shopDomain, revalidate]);
 
