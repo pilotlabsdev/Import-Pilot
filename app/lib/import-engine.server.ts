@@ -1415,10 +1415,16 @@ async function processProduct({
             return;
           }
         } else {
-          // skip_existing + different SKU: skip
-          await logExternalDuplicate(shopDomain, rowEan, foundBarcode.productId, sku, config.id, config.name || "Proveedor");
-          result.excluded++;
-          return;
+          // External product with no mapping (or same supplier) — handle by dupPolicy
+          if (dupPolicy2 === "priority") {
+            priorityReplaceTarget = { mappingId: "", shopifyProductId: foundBarcode.productId, supplierName: "EXTERNAL", configId: "" };
+          } else if (dupPolicy2 === "create_both") {
+            // create_both: fall through to create new product
+          } else {
+            await logExternalDuplicate(shopDomain, rowEan, foundBarcode.productId, sku, config.id, config.name || "Proveedor");
+            result.excluded++;
+            return;
+          }
         }
       } else {
         // Same SKU found in Shopify → adopt
@@ -1447,7 +1453,7 @@ async function processProduct({
     }
   }
 
-  // === PRIORITY REPLACE: full overwrite for inter-supplier priority ===
+  // === PRIORITY REPLACE: overwrite or update based on matchMode ===
   if (priorityReplaceTarget) {
     const prices2 = await calculatePrices(shopDomain, sku, category, costPrice, config.id);
     const categoryMap2 = config.categoryMaps?.filter(
@@ -1463,33 +1469,38 @@ async function processProduct({
     );
     if (shopifyProductType2) productInput2.productType = shopifyProductType2;
 
-    // Full overwrite: update ALL fields on the existing product
-    const fullPatch: any = {
-      id: priorityReplaceTarget.shopifyProductId,
-      title: productInput2.title,
-      descriptionHtml: productInput2.descriptionHtml,
-      productType: productInput2.productType,
-      vendor: productInput2.vendor,
-      tags: productInput2.tags,
-      metafields: productInput2.metafields,
-      seo: productInput2.seo,
-    };
-    const updateRes = await graphqlWithRetry(admin,
-      `#graphql
-      mutation productUpdate($product: ProductUpdateInput!) {
-        productUpdate(product: $product) { product { id } userErrors { field message } }
-      }`,
-      { product: fullPatch }
-    );
-    if (updateRes.data?.productUpdate?.userErrors?.length) {
-      const updateErrors = updateRes.data.productUpdate.userErrors;
-      const notFound = updateErrors.some((e: any) =>
-        e.message?.includes("not find") || e.message?.includes("NOT_FOUND") || e.message?.includes("was not found")
+    const shopSettingsPR = await prisma.shopSettings.findUnique({ where: { shopDomain } });
+    const matchModePR = shopSettingsPR?.matchMode || "overwrite";
+
+    // overwrite: update ALL fields; update: only update price/stock/images
+    if (matchModePR === "overwrite") {
+      const fullPatch: any = {
+        id: priorityReplaceTarget.shopifyProductId,
+        title: productInput2.title,
+        descriptionHtml: productInput2.descriptionHtml,
+        productType: productInput2.productType,
+        vendor: productInput2.vendor,
+        tags: productInput2.tags,
+        metafields: productInput2.metafields,
+        seo: productInput2.seo,
+      };
+      const updateRes = await graphqlWithRetry(admin,
+        `#graphql
+        mutation productUpdate($product: ProductUpdateInput!) {
+          productUpdate(product: $product) { product { id } userErrors { field message } }
+        }`,
+        { product: fullPatch }
       );
-      if (notFound) {
-        return;
+      if (updateRes.data?.productUpdate?.userErrors?.length) {
+        const updateErrors = updateRes.data.productUpdate.userErrors;
+        const notFound = updateErrors.some((e: any) =>
+          e.message?.includes("not find") || e.message?.includes("NOT_FOUND") || e.message?.includes("was not found")
+        );
+        if (notFound) {
+          return;
+        }
+        console.error(`[Import] Priority replace: productUpdate errors:`, JSON.stringify(updateErrors));
       }
-      console.error(`[Import] Priority replace: productUpdate errors:`, JSON.stringify(updateErrors));
     }
 
     // Update variant: SKU + price + compareAt + barcode
@@ -1522,7 +1533,7 @@ async function processProduct({
           variants: [variantPatch],
         }
       );
-      if (sku) {
+      if (sku && matchModePR === "overwrite") {
         try {
           await updateVariantSku(admin, priorityReplaceTarget.shopifyProductId, variantId2, sku);
         } catch (e: any) {
@@ -1568,8 +1579,10 @@ async function processProduct({
       });
     }
 
-    // Delete old mapping, upsert new one
-    try { await prisma.productMapping.delete({ where: { id: priorityReplaceTarget.mappingId } }); } catch {}
+    // Delete old mapping (overwrite only), upsert new one
+    if (matchModePR === "overwrite" && priorityReplaceTarget.mappingId) {
+      try { await prisma.productMapping.delete({ where: { id: priorityReplaceTarget.mappingId } }); } catch {}
+    }
     const newMapping2 = await prisma.productMapping.upsert({
       where: { shopDomain_supplierSku: { shopDomain, supplierSku: sku } },
       create: {
@@ -1601,11 +1614,13 @@ async function processProduct({
         lastComparePrice: prices2.compareAtPrice,
         lastQuantity: newQty,
         lastCost: costPrice > 0 ? costPrice : null,
-        lastTitle: productInput2.title ?? undefined,
-        lastDescription: productInput2.descriptionHtml ?? undefined,
-        lastVendor: productInput2.vendor ?? undefined,
-        lastProductType: productInput2.productType ?? undefined,
-        lastTags: productInput2.tags?.length ? JSON.stringify(productInput2.tags) : undefined,
+        ...(matchModePR === "overwrite" ? {
+          lastTitle: productInput2.title ?? undefined,
+          lastDescription: productInput2.descriptionHtml ?? undefined,
+          lastVendor: productInput2.vendor ?? undefined,
+          lastProductType: productInput2.productType ?? undefined,
+          lastTags: productInput2.tags?.length ? JSON.stringify(productInput2.tags) : undefined,
+        } : {}),
         lastImportSource: sourceKey,
       },
     });
