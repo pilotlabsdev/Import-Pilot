@@ -5,6 +5,11 @@ import { useTranslation } from "react-i18next";
 import { AppProvider as PolarisAppProvider } from "@shopify/polaris";
 import "@shopify/polaris/build/esm/styles.css";
 
+// Suppress Node.js MaxListenersExceededWarning for BrotliCompress streams (Railway HTTP)
+if (typeof process !== "undefined") {
+  process.setMaxListeners?.(50);
+}
+
 import esPolaris from "@shopify/polaris/locales/es.json";
 import enPolaris from "@shopify/polaris/locales/en.json";
 import ptPolaris from "@shopify/polaris/locales/pt-BR.json";
