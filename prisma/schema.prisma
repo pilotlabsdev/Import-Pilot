@@ -204,6 +204,8 @@ model ProductMapping {
   config            ImportConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
 
   @@unique([shopDomain, supplierSku])
+  @@index([shopDomain, shopifyInventoryItemId])
+  @@index([shopDomain, shopifyProductId])
 }
 
 // Job de importación bulk en curso (pipeline async por webhook)

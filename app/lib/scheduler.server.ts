@@ -376,9 +376,16 @@ export function startScheduler() {
         status: "running",
         startedAt: { lt: new Date(Date.now() - STALE_QUEUED_MS) },
       },
-      select: { id: true, logId: true },
+      select: { id: true, logId: true, configId: true },
     }).then(async (staleRunning) => {
       for (const item of staleRunning) {
+        // Skip if there's an active BulkJob for this config (bulk imports don't update lastProgressAt)
+        const activeBulkJob = await prisma.bulkJob.findFirst({
+          where: { configId: item.configId, phase: { in: ["lookup", "mutations", "finalizing"] } },
+          select: { id: true },
+        }).catch(() => null);
+        if (activeBulkJob) continue;
+
         if (item.logId) {
           const log = await prisma.importLog.findUnique({
             where: { id: item.logId },
@@ -523,14 +530,24 @@ async function runScheduledImport(configId: string) {
         }).catch(() => null);
         const lastActivity = log?.lastProgressAt || log?.startedAt;
         if (lastActivity && (Date.now() - lastActivity.getTime()) > 15 * 60 * 1000) {
-          await prisma.importQueue.update({
-            where: { id: activeQueueItem.id },
-            data: { status: "failed", finishedAt: new Date() },
-          }).catch(() => {});
-          await prisma.importLog.update({
-            where: { id: activeQueueItem.logId },
-            data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "systemError.timeout_no_progress", lineNumber: 0 }]) },
-          }).catch(() => {});
+          // Skip if there's an active BulkJob for this config (bulk imports don't update lastProgressAt)
+          const activeBulkJob = await prisma.bulkJob.findFirst({
+            where: { configId, phase: { in: ["lookup", "mutations", "finalizing"] } },
+            select: { id: true },
+          }).catch(() => null);
+          if (!activeBulkJob) {
+            await prisma.importQueue.update({
+              where: { id: activeQueueItem.id },
+              data: { status: "failed", finishedAt: new Date() },
+            }).catch(() => {});
+            await prisma.importLog.update({
+              where: { id: activeQueueItem.logId },
+              data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "systemError.timeout_no_progress", lineNumber: 0 }]) },
+            }).catch(() => {});
+          } else {
+            scheduleNext(configId, scheduledFrequencies.get(configId) || "4h", null);
+            return;
+          }
         } else {
           scheduleNext(configId, scheduledFrequencies.get(configId) || "4h", null);
           return;

@@ -1250,10 +1250,18 @@ async function prepareAndLaunch(
             duplicateSkippedCount++;
             continue;
           }
-          // Current supplier has HIGHER priority
-          if (matchMode === "overwrite") {
-            priorityReplaceMappingId = existingDup.mappingId;
-            priorityReplaceConfigId = existingDup.configId;
+          // Current supplier has HIGHER priority — replace old supplier's product
+          priorityReplaceMappingId = existingDup.mappingId;
+          priorityReplaceConfigId = existingDup.configId;
+          // Track for post-processing: delete old mapping if it has a DIFFERENT SKU
+          // (if same SKU, the upsert will reassign configId automatically)
+          if (existingDup.supplierSku !== sku) {
+            priorityReplacements.push({
+              mappingId: existingDup.mappingId,
+              oldConfigId: existingDup.configId,
+              newSku: sku,
+              newEan: ean,
+            });
           }
         } else {
           // skip_existing
@@ -1262,13 +1270,15 @@ async function prepareAndLaunch(
           continue;
         }
       } else if (maps.byBarcode.has(ean) && !selfEanMappings.has(ean)) {
-        // === CASE: Same EAN found in Shopify but not from current supplier ===
-        if (duplicatePolicy === "skip_existing" || duplicatePolicy === "priority") {
+        // === CASE: Same EAN found in Shopify but not from current supplier (external product) ===
+        if (duplicatePolicy === "skip_existing") {
           const matchInfo = maps.byBarcode.get(ean);
           await logExternalDuplicate(job.shopDomain, ean, matchInfo?.productId || "", sku, config.id, config.name || "Proveedor");
           duplicateSkippedCount++;
           continue;
         }
+        // priority + overwrite/update: let the product fall through to UPDATE path
+        // (match will be found via byBarcode, product gets updated with current supplier's data)
       }
     }
 
@@ -1370,7 +1380,8 @@ async function prepareAndLaunch(
       const imagesChanged = effectiveOpts.has("images") && csvImageUrls.length !== shopifyImageCount;
 
       // Skip products with NO changes — don't send mutation
-      if (!priceChanged && !stockChanged && !costChanged && !titleChanged && !descriptionChanged && !vendorChanged && !productTypeChanged && !tagsChanged && !imagesChanged) {
+      // BUT: if this is a priority replacement, always send UPDATE to reassign configId
+      if (!priorityReplaceMappingId && !priceChanged && !stockChanged && !costChanged && !titleChanged && !descriptionChanged && !vendorChanged && !productTypeChanged && !tagsChanged && !imagesChanged) {
         matchedUnchangedCount++;
         unchangedCount++;
         continue;
@@ -1580,6 +1591,31 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
   let opErrors = 0;
   const transientRetries: Array<{ meta: MetaLine; error: string }> = [];
 
+  // Batch-load all existing mappings for this shop to avoid N+1 findUnique queries
+  const allResultSkus = metaLines.map((m: any) => m?.sku).filter(Boolean);
+  const existingMappingsMap = new Map<string, {
+    shopifyProductId: string; lastPrice: number | null; lastComparePrice: number | null;
+    lastQuantity: number | null; lastCost: number | null; lastTitle: string | null;
+    lastDescription: string | null; lastVendor: string | null; lastProductType: string | null; lastTags: string | null;
+  }>();
+  if (allResultSkus.length > 0) {
+    try {
+      const existingMappings = await prisma.productMapping.findMany({
+        where: { shopDomain: job.shopDomain, supplierSku: { in: allResultSkus } },
+        select: {
+          supplierSku: true, shopifyProductId: true,
+          lastPrice: true, lastComparePrice: true, lastQuantity: true, lastCost: true,
+          lastTitle: true, lastDescription: true, lastVendor: true, lastProductType: true, lastTags: true,
+        },
+      });
+      for (const m of existingMappings) {
+        existingMappingsMap.set(m.supplierSku, m);
+      }
+    } catch (e: any) {
+      console.error(`[Bulk] Batch load existing mappings failed: ${e?.message}`);
+    }
+  }
+
   // Proactive refresh before post-processing mutations
   await ensureFreshTokenForBulk(job.shopDomain);
   const errorWrites: string[] = [];
@@ -1619,14 +1655,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
     const isNewProduct = op.kind === "create";
 
     // Check if product already existed (productSet is an upsert — Shopify returns existing product)
-    const existingMapping = await prisma.productMapping.findUnique({
-      where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: meta.sku } },
-      select: {
-        shopifyProductId: true,
-        lastPrice: true, lastComparePrice: true, lastQuantity: true, lastCost: true,
-        lastTitle: true, lastDescription: true, lastVendor: true, lastProductType: true, lastTags: true,
-      },
-    }).catch(() => null);
+    const existingMapping = existingMappingsMap.get(meta.sku) || null;
     const actuallyNew = isNewProduct && !existingMapping;
 
     // For existing products sent as "create", detect actual changes by comparing with last known state
@@ -1679,6 +1708,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
         postProcessStatus: actuallyNew ? "pending" : "complete",
       },
       update: {
+        configId: job.configId,
         shopifyProductId: product.id,
         shopifyVariantId: variant?.id ?? null,
         shopifyInventoryItemId: variant?.inventoryItem?.id ?? null,
@@ -2467,9 +2497,9 @@ export async function reconcileStaleBulkJobs(): Promise<void> {
       continue;
     }
 
-    // Tiene lookupOpId pero no pasó a mutations después de 60 min → webhook nunca llegó
+    // Tiene lookupOpId pero no pasó a mutations después de 120 min → webhook nunca llegó
     // (catalogos grandes pueden tardar 30+ min en la query de Shopify)
-    if (job.phase === "lookup" && job.lookupOpId && ageMs > 60 * 60 * 1000) {
+    if (job.phase === "lookup" && job.lookupOpId && ageMs > 120 * 60 * 1000) {
       console.error(`[Bulk] Job ${job.id.slice(0,8)} stuck in lookup phase with lookupOpId=${job.lookupOpId} after ${Math.round(ageMs/60000)}min → failing`);
       await failJob(job, `systemError.webhook_never_arrived`);
       continue;
