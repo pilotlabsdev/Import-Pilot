@@ -287,10 +287,11 @@ async function getCurrentStock(admin: any, inventoryItemId: string, locationId: 
 
 async function setStock(admin: any, inventoryItemId: string, locationId: string, targetQuantity: number, sku: string, maxRetries = 3): Promise<void> {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const idempotencyKey = `inv-set-${inventoryItemId}-${locationId}-${targetQuantity}-${Date.now()}`;
     const stockRes = await graphqlWithRetry(admin,
       `#graphql
-      mutation inventorySetQuantities($input: InventorySetQuantitiesInput!) {
-        inventorySetQuantities(input: $input) {
+      mutation inventorySetQuantities($input: InventorySetQuantitiesInput!, $idempotencyKey: String!) {
+        inventorySetQuantities(input: $input) @idempotent(key: $idempotencyKey) {
           inventoryAdjustmentGroup { id }
           userErrors { field message code }
         }
@@ -305,6 +306,7 @@ async function setStock(admin: any, inventoryItemId: string, locationId: string,
             quantity: targetQuantity,
           }],
         },
+        idempotencyKey,
       }
     );
 
@@ -314,7 +316,7 @@ async function setStock(admin: any, inventoryItemId: string, locationId: string,
 
     const mutationData = stockRes.data?.inventorySetQuantities;
     if (!mutationData) {
-      console.error(`[Import] Stock mutation returned null data for SKU ${sku}`);
+      console.error(`[Import] Stock mutation returned null data for SKU ${sku}:`, JSON.stringify(stockRes));
       return;
     }
 
