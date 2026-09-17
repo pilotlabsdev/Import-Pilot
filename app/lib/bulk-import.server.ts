@@ -1277,6 +1277,13 @@ async function prepareAndLaunch(
           duplicateSkippedCount++;
           continue;
         }
+        // priority + applyToExternal disabled: skip external products
+        if (duplicatePolicy === "priority" && shopSettings?.applyToExternal === false) {
+          const matchInfo = maps.byBarcode.get(ean);
+          await logExternalDuplicate(job.shopDomain, ean, matchInfo?.productId || "", sku, config.id, config.name || "Proveedor");
+          duplicateSkippedCount++;
+          continue;
+        }
         // priority + overwrite/update: let the product fall through to UPDATE path
         // (match will be found via byBarcode, product gets updated with current supplier's data)
       }

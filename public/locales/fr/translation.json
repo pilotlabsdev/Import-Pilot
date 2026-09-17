@@ -465,6 +465,10 @@
   "settings.updateFiltersOnly": "Mettre à jour avec filtres + conserver le SKU",
   "settings.matchModeUpdateDetail": "Les champs sélectionnés dans les filtres de configuration du fournisseur seront mis à jour (prix, stock, images, titre, description, etc.). Le SKU du produit existant sera préservé.",
   "settings.matchModeOverwriteDetail": "Les champs sélectionnés dans les filtres de configuration du fournisseur seront mis à jour (prix, stock, images, titre, description, etc.) et le SKU sera remplacé par celui du fichier.",
+
+  "settings.applyToExternal": "Inclure les produits créés en dehors de l'application",
+  "settings.applyToExternalHelp": "Appliquer les règles de priorité aux produits qui existent déjà dans Shopify mais qui n'ont pas été importés par cette application (même EAN, SKU différent).",
+  "settings.applyToExternalInfo": "Si désactivé, les produits externes seront ignorés et enregistrés comme doublons.",
   
   "tutorial.title": "Tutoriel de l'App",
   "tutorial.subtitle": "Apprenez à utiliser l'Importeur de Produits",

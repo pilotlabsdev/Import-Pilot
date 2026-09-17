@@ -466,6 +466,10 @@
   "settings.matchModeUpdateDetail": "Die in den Konfigurationsfiltern des Lieferanten ausgewählten Felder werden aktualisiert (Preis, Lagerbestand, Bilder, Titel, Beschreibung usw.). Das SKU des vorhandenen Produkts bleibt erhalten.",
   "settings.matchModeOverwriteDetail": "Die in den Konfigurationsfiltern des Lieferanten ausgewählten Felder werden aktualisiert (Preis, Lagerbestand, Bilder, Titel, Beschreibung usw.) und das SKU wird durch das aus der Datei ersetzt.",
 
+  "settings.applyToExternal": "Außerhalb der App erstellte Produkte einbeziehen",
+  "settings.applyToExternalHelp": "Prioritätsregeln auf Produkte anwenden, die bereits in Shopify existieren, aber nicht von dieser App importiert wurden (gleicher EAN, anderes SKU).",
+  "settings.applyToExternalInfo": "Wenn deaktiviert, werden externe Produkte übersprungen und als Duplikate protokolliert.",
+
   "tutorial.title": "App-Tutorial",
   "tutorial.subtitle": "Lernen Sie den Produktimporteur zu nutzen",
   "tutorial.description": "Dieses Tutorial führt Sie Schritt für Schritt durch alle Funktionen der App. Wir durchlaufen jede Sektion der Reihe nach und erklären, was sie macht und wie Sie sie konfigurieren.",

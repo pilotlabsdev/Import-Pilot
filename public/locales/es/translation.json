@@ -496,7 +496,11 @@
   "settings.updateFiltersOnly": "Actualizar con filtros + conservar SKU",
   "settings.matchModeUpdateDetail": "Se actualizarán los campos seleccionados en los filtros de configuración del proveedor (precio, stock, imágenes, título, descripción, etc.). El SKU del producto existente se conservará.",
   "settings.matchModeOverwriteDetail": "Se actualizarán los campos seleccionados en los filtros de configuración del proveedor (precio, stock, imágenes, título, descripción, etc.) y el SKU se reemplazará con el del archivo.",
-  
+
+  "settings.applyToExternal": "Incluir productos creados fuera de la app",
+  "settings.applyToExternalHelp": "Aplica las reglas de prioridad a productos que ya existen en Shopify pero que no fueron importados por esta app (mismo EAN, SKU diferente).",
+  "settings.applyToExternalInfo": "Si está desactivado, los productos externos se ignorarán y se registrarán como duplicados.",
+
   "tutorial.title": "Tutorial de la App",
   "tutorial.subtitle": "Aprende a usar el Importador de Productos",
   "tutorial.description": "Este tutorial te guiará paso a paso por todas las funcionalidades de la app. Recorreremos cada sección en orden, explicando qué hace y cómo configurarla.",

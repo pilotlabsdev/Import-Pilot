@@ -8,6 +8,7 @@ import {
   InlineStack,
   Text,
   Select,
+  Checkbox,
   Button,
   Banner,
   Badge,
@@ -67,6 +68,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return data({ success: true });
   }
 
+  if (intent === "updateApplyToExternal") {
+    const applyToExternal = form.get("applyToExternal") === "true";
+    await prisma.shopSettings.upsert({
+      where: { shopDomain },
+      create: { shopDomain, applyToExternal },
+      update: { applyToExternal },
+    });
+    return data({ success: true });
+  }
+
   if (intent === "updatePriority") {
     const priorityJson = form.get("supplierPriority") as string;
     await prisma.shopSettings.upsert({
@@ -87,6 +98,7 @@ export default function Settings() {
   const { t } = useTranslation();
   const [policy, setPolicy] = useState(settings.duplicatePolicy);
   const [matchMode, setMatchMode] = useState(settings.matchMode || "overwrite");
+  const [applyToExternal, setApplyToExternal] = useState(settings.applyToExternal ?? true);
   const [priority, setPriority] = useState<string[]>(() => {
     try {
       return settings.supplierPriority ? JSON.parse(settings.supplierPriority) : [];
@@ -132,6 +144,14 @@ export default function Settings() {
     setMatchMode(value);
     fetcher.submit(
       { intent: "updateMatchMode", matchMode: value },
+      { method: "POST" }
+    );
+  }
+
+  function handleApplyToExternalChange(checked: boolean) {
+    setApplyToExternal(checked);
+    fetcher.submit(
+      { intent: "updateApplyToExternal", applyToExternal: String(checked) },
       { method: "POST" }
     );
   }
@@ -232,6 +252,17 @@ export default function Settings() {
                 {matchMode === "overwrite" && (
                   <Banner tone="warning">
                     <p>{t("settings.matchModeOverwriteDetail")}</p>
+                  </Banner>
+                )}
+                <Checkbox
+                  label={t("settings.applyToExternal")}
+                  helpText={t("settings.applyToExternalHelp")}
+                  checked={applyToExternal}
+                  onChange={handleApplyToExternalChange}
+                />
+                {!applyToExternal && (
+                  <Banner tone="info">
+                    <p>{t("settings.applyToExternalInfo")}</p>
                   </Banner>
                 )}
               </BlockStack>

@@ -253,6 +253,7 @@ model ShopSettings {
   shopDomain         String   @unique
   duplicatePolicy    String   @default("skip_existing") // create_both | priority | skip_existing
   matchMode          String   @default("overwrite")   // overwrite | update (how to handle same EAN + different SKU)
+  applyToExternal    Boolean  @default(true)           // apply matchMode to external products (same EAN, different SKU, not from app suppliers)
   supplierPriority   String?  // JSON array de IDs de proveedor en orden de prioridad
   maxSuppliers       Int      @default(5)
   active             Boolean  @default(true)

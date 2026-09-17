@@ -1225,49 +1225,15 @@ async function processProduct({
               return;
             }
             if (dupPolicy === "priority") {
-              // Priority replace: update existing external product
-              const prices2 = await calculatePrices(shopDomain, sku, category, costPrice, config.id);
-              const categoryMap2 = config.categoryMaps?.filter(
-                (cm: any) => cm.csvCategory === category && cm.isActive
-              ) || [];
-              const collectionIds2 = categoryMap2.map((cm: any) => cm.collectionId);
-              const categoryTags2 = categoryMap2.map((cm: any) => cm.tags).filter(Boolean).join(",");
-              const shopifyProductType2 = categoryMap2.find((cm: any) => cm.shopifyProductType)?.shopifyProductType || null;
-              const productInput2 = mapCsvRowToProductSet(
-                row, columnMaps, prices2, collectionIds2, locationId,
-                config.defaultTags || undefined,
-                categoryTags2 || undefined
-              );
-              if (shopifyProductType2) productInput2.productType = shopifyProductType2;
-
-              const matchMode3 = shopSettings?.matchMode || "overwrite";
-
-              // overwrite: update ALL fields; update: only update fields in updateOpts
-              if (matchMode3 === "overwrite") {
-                try {
-                  const fullPatch: any = {
-                    id: foundBarcode.productId,
-                    title: productInput2.title,
-                    descriptionHtml: productInput2.descriptionHtml,
-                    productType: productInput2.productType,
-                    vendor: productInput2.vendor,
-                    tags: productInput2.tags,
-                    metafields: productInput2.metafields,
-                    seo: productInput2.seo,
-                  };
-                  const updateRes = await graphqlWithRetry(admin,
-                    `#graphql mutation productUpdate($product: ProductUpdateInput!) { productUpdate(product: $product) { product { id } userErrors { field message } } }`,
-                    { product: fullPatch }
-                  );
-                  if (updateRes.data?.productUpdate?.userErrors?.length) {
-                    console.error(`[Import] Priority replace (external): productUpdate errors:`, JSON.stringify(updateRes.data.productUpdate.userErrors));
-                  }
-                } catch (e: any) {
-                  console.error(`[Import] Priority replace (external): productUpdate failed for ${foundBarcode.productId}:`, e?.message);
-                }
+              // Check applyToExternal setting
+              if (shopSettings?.applyToExternal === false) {
+                await logExternalDuplicate(shopDomain, rowEan, foundBarcode.productId, sku, config.id, config.name || "Proveedor", foundBarcode.sku);
+                result.excluded++;
+                return;
               }
 
-              // Update variant
+              // Adopt: upsert mapping, then fall through to SINGLE UPDATE PATH
+              const prices2 = await calculatePrices(shopDomain, sku, category, costPrice, config.id);
               let variantId2: string | undefined;
               let invItemId2: string | undefined;
               try {
@@ -1278,61 +1244,25 @@ async function processProduct({
                 variantId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.id;
                 invItemId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.inventoryItem?.id;
               } catch (e: any) {
-                console.error(`[Import] Priority replace (external): variants query failed for ${foundBarcode.productId}:`, e?.message);
+                console.error(`[Import] External: variants query failed for ${foundBarcode.productId}:`, e?.message);
               }
-              if (variantId2 && updateOpts.has("price")) {
-                try {
-                  const variantPatch: any = {
-                    id: variantId2,
-                    price: prices2.regularPrice.toString(),
-                    compareAtPrice: (prices2.compareAtPrice ?? 0) > 0 ? prices2.compareAtPrice!.toString() : null,
-                  };
-                  if (rowEan) variantPatch.barcode = rowEan;
-                  await graphqlWithRetry(admin,
-                    `#graphql mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) { productVariantsBulkUpdate(productId: $productId, variants: $variants) { productVariants { id } userErrors { field message } } }`,
-                    { productId: foundBarcode.productId, variants: [variantPatch] }
-                  );
-                } catch (e: any) {
-                  console.error(`[Import] Priority replace (external): variantBulkUpdate failed for ${foundBarcode.productId}:`, e?.message);
-                }
-                if (sku && matchMode3 === "overwrite") {
-                  try { await updateVariantSku(admin, foundBarcode.productId, variantId2, sku); } catch (e: any) { console.error(`[Import] Priority replace (external): SKU error:`, e?.message); }
-                }
-              }
-
-              // Update stock (only if stock selected)
-              if (updateOpts.has("stock") && invItemId2 && locationId) {
-                try { await setInventoryQuantity(admin, invItemId2, locationId, newQty); } catch (e: any) { console.error(`[Import] Priority replace (external): stock error:`, e?.message); }
-              }
-
-              // Update images (only if images selected)
-              if (updateOpts.has("images") && productInput2.files && productInput2.files.length > 0) {
-                result.imageChanges++;
-                imageQueue.push({
-                  productId: foundBarcode.productId,
-                  files: productInput2.files.map((f) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType })),
-                  label: `SKU=${sku} (priority replace external)`,
-                });
-              }
-
-              // Adopt: upsert mapping
-              const adopted = await prisma.productMapping.upsert({
+              existing = await prisma.productMapping.upsert({
                 where: { shopDomain_supplierSku: { shopDomain, supplierSku: sku } },
                 create: {
                   shopDomain, configId: config.id, supplierSku: sku, ean: rowEan || null,
-                  shopifyProductId: foundBarcode.productId, shopifyVariantId: foundBarcode.variantId, shopifyInventoryItemId: invItemId2 || null,
+                  shopifyProductId: foundBarcode.productId, shopifyVariantId: variantId2 || null,
+                  shopifyInventoryItemId: invItemId2 || null,
                   lastPrice: prices2.regularPrice, lastComparePrice: prices2.compareAtPrice,
                   lastQuantity: newQty, lastCost: costPrice > 0 ? costPrice : null, lastImportSource: sourceKey,
                 },
                 update: {
-                  shopifyProductId: foundBarcode.productId, shopifyVariantId: foundBarcode.variantId,
-                  lastImportSource: sourceKey,
+                  shopifyProductId: foundBarcode.productId, shopifyVariantId: variantId2 || null,
+                  shopifyInventoryItemId: invItemId2 || null, lastImportSource: sourceKey,
                 },
               });
-              existing = adopted;
               result.updated++;
-              console.log(`[Import] Priority replace (external): adopted ${foundBarcode.productId} (same EAN, different SKU)`);
-              return;
+              console.log(`[Import] External: adopted ${foundBarcode.productId} (same EAN, different SKU) — falling through to UPDATE path`);
+              // NO return — fall through to SINGLE UPDATE PATH (line 1717+)
             }
           }
         }

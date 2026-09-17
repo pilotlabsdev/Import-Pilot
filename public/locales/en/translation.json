@@ -468,6 +468,10 @@
   "settings.updateFiltersOnly": "Update with filters + keep SKU",
   "settings.matchModeUpdateDetail": "The fields selected in the supplier's config filters will be updated (price, stock, images, title, description, etc.). The existing product's SKU will be preserved.",
   "settings.matchModeOverwriteDetail": "The fields selected in the supplier's config filters will be updated (price, stock, images, title, description, etc.) and the SKU will be replaced with the one from the file.",
+
+  "settings.applyToExternal": "Include products created outside the app",
+  "settings.applyToExternalHelp": "Apply priority rules to products that already exist in Shopify but were not imported by this app (same EAN, different SKU).",
+  "settings.applyToExternalInfo": "If disabled, external products will be skipped and logged as duplicates.",
   
   "tutorial.title": "App Tutorial",
   "tutorial.subtitle": "Learn how to use the Product Importer",
