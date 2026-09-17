@@ -134,6 +134,14 @@ export default function App() {
   );
 }
 
+function AutoRedirect({ url, delayMs }: { url: string; delayMs?: number }) {
+  useEffect(() => {
+    const timer = setTimeout(() => { window.location.href = url; }, delayMs ?? 0);
+    return () => clearTimeout(timer);
+  }, [url, delayMs]);
+  return null;
+}
+
 export function ErrorBoundary() {
   const error = useRouteError();
 
@@ -141,12 +149,12 @@ export function ErrorBoundary() {
   const rawStatus = error instanceof Response ? error.status : 0;
   const status = rrStatus || rawStatus;
 
-  // OAuth redirect Responses — follow the redirect instead of rendering error page
   const redirectUrl = isRouteErrorResponse(error)
     ? (error.data instanceof Response ? error.data.headers.get("Location") : null)
     : error instanceof Response
     ? error.headers.get("Location")
     : null;
+
   if (redirectUrl) {
     console.log(`[Root ErrorBoundary] Redirect detected → ${redirectUrl}`);
     return (
@@ -156,8 +164,9 @@ export function ErrorBoundary() {
           <meta name="viewport" content="width=device-width,initial-scale=1" />
           <title>Import Pilot</title>
         </head>
-        <body>
-          <script dangerouslySetInnerHTML={{ __html: `window.location.href = ${JSON.stringify(redirectUrl)};` }} />
+        <body style={{ fontFamily: "'Inter', sans-serif", display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh", margin: 0, background: "#f6f6f7" }}>
+          <p>Redirigiendo...</p>
+          <AutoRedirect url={redirectUrl} />
         </body>
       </html>
     );
@@ -173,22 +182,21 @@ export function ErrorBoundary() {
 
   console.error(`[Root ErrorBoundary] status=${status} error=${errorText}`);
 
-  // All errors auto-recover: redirect to /app after short delay
   return (
     <html lang="en">
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width,initial-scale=1" />
         <title>Import Pilot</title>
-        <meta httpEquiv="refresh" content="2;url=/app" />
       </head>
-      <body style={{ fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif", display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh", margin: 0, background: "#f6f6f7" }}>
+      <body style={{ fontFamily: "'Inter', sans-serif", display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh", margin: 0, background: "#f6f6f7" }}>
         <div style={{ textAlign: "center", padding: "40px", background: "white", borderRadius: "8px", boxShadow: "0 1px 3px rgba(0,0,0,0.1)", maxWidth: "400px" }}>
           <div style={{ width: 32, height: 32, border: "3px solid #006fbb", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 16px" }} />
           <h2 style={{ fontSize: "16px", fontWeight: 600, marginBottom: 8, color: "#202223" }}>Cargando...</h2>
         </div>
         <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
         <Scripts />
+        <AutoRedirect url="/app" delayMs={2000} />
       </body>
     </html>
   );

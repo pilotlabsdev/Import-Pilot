@@ -206,28 +206,48 @@ export default function App() {
   );
 }
 
+function AutoRedirect({ url, delayMs }: { url: string; delayMs?: number }) {
+  useEffect(() => {
+    const timer = setTimeout(() => { window.location.href = url; }, delayMs ?? 0);
+    return () => clearTimeout(timer);
+  }, [url, delayMs]);
+  return null;
+}
+
 export function ErrorBoundary() {
   const error = useRouteError();
 
-  // React Router v7 wraps thrown Response in RouteErrorResponse — check both
   const rrStatus = isRouteErrorResponse(error) ? error.status : 0;
   const rawStatus = error instanceof Response ? error.status : 0;
   const status = rrStatus || rawStatus;
 
-  // OAuth redirect Responses (302/307/200 with Location header) — follow the redirect instead of rendering
   const redirectUrl = isRouteErrorResponse(error)
     ? (error.data instanceof Response ? error.data.headers.get("Location") : null)
     : error instanceof Response
     ? error.headers.get("Location")
     : null;
+
+  const isAppBridgeHtml = isRouteErrorResponse(error)
+    && error.status === 200
+    && typeof error.data === "string"
+    && error.data.includes("app-bridge");
+
   if (redirectUrl) {
     console.log(`[App ErrorBoundary] Redirect detected → ${redirectUrl}`);
     return (
       <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "60vh" }}>
-        <div style={{ textAlign: "center", color: "#6d7175" }}>
-          <p style={{ fontSize: "14px" }}>Redirigiendo...</p>
-        </div>
-        <script dangerouslySetInnerHTML={{ __html: `window.location.href = ${JSON.stringify(redirectUrl)};` }} />
+        <p style={{ fontSize: "14px", color: "#6d7175" }}>Redirigiendo...</p>
+        <AutoRedirect url={redirectUrl} />
+      </div>
+    );
+  }
+
+  if (isAppBridgeHtml) {
+    console.log("[App ErrorBoundary] App Bridge redirect (status=200) → /app");
+    return (
+      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "60vh" }}>
+        <p style={{ fontSize: "14px", color: "#6d7175" }}>Cargando...</p>
+        <AutoRedirect url="/app" />
       </div>
     );
   }
@@ -240,22 +260,8 @@ export function ErrorBoundary() {
     ? `${error.name}: ${error.message}`
     : String(error);
 
-  // Detect App Bridge HTML redirect (200 with app-bridge script, no Location header) — redirect immediately
-  if (isRouteErrorResponse(error) && error.status === 200 && typeof error.data === "string" && error.data.includes("app-bridge")) {
-    console.log("[App ErrorBoundary] App Bridge redirect detected (status=200) → /app");
-    return (
-      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "60vh" }}>
-        <div style={{ textAlign: "center", color: "#6d7175" }}>
-          <p style={{ fontSize: "14px" }}>Cargando...</p>
-        </div>
-        <script dangerouslySetInnerHTML={{ __html: `window.location.href = "/app";` }} />
-      </div>
-    );
-  }
-
   console.error(`[App ErrorBoundary] status=${status} error=${errorText}`);
 
-  // All errors auto-recover: redirect to /app after short delay
   return (
     <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "60vh" }}>
       <div style={{ textAlign: "center", color: "#6d7175" }}>
@@ -263,7 +269,7 @@ export function ErrorBoundary() {
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         <p style={{ fontSize: "14px" }}>Cargando...</p>
       </div>
-      <script dangerouslySetInnerHTML={{ __html: `setTimeout(function(){ window.location.href = "/app"; }, 2000);` }} />
+      <AutoRedirect url="/app" delayMs={2000} />
     </div>
   );
 }
