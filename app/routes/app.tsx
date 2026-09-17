@@ -240,11 +240,8 @@ export function ErrorBoundary() {
     ? `${error.name}: ${error.message}`
     : String(error);
 
-  // Detect App Bridge HTML redirect (200 with <script> tag, no Location header) — redirect immediately
-  const isAppBridgeHtml =
-    (isRouteErrorResponse(error) && error.status === 200 && typeof error.data === "string" && error.data.includes("app-bridge")) ||
-    (error instanceof Response && error.status === 200);
-  if (isAppBridgeHtml) {
+  // Detect App Bridge HTML redirect (200 with app-bridge script, no Location header) — redirect immediately
+  if (isRouteErrorResponse(error) && error.status === 200 && typeof error.data === "string" && error.data.includes("app-bridge")) {
     console.log("[App ErrorBoundary] App Bridge redirect detected (status=200) → /app");
     return (
       <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "60vh" }}>
