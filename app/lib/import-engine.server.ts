@@ -1693,18 +1693,7 @@ async function processProduct({
 
     if (existing.shopifyInventoryItemId && locationId) {
       try {
-        const invRes = await graphqlWithRetry(admin,
-          `#graphql
-          query liveInventory($id: ID!) {
-            inventoryItem(id: $id) {
-              inventoryLevels(first: 1) {
-                edges { node { available } }
-              }
-            }
-          }`,
-          { id: existing.shopifyInventoryItemId }
-        );
-        liveInventoryQuantity = invRes.data?.inventoryItem?.inventoryLevels?.edges?.[0]?.node?.available ?? null;
+        liveInventoryQuantity = await getCurrentStock(admin, existing.shopifyInventoryItemId, locationId);
       } catch {}
     }
 
