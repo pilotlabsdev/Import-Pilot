@@ -17,6 +17,7 @@ import {
 } from "@shopify/polaris";
 import { useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
+import { HydratedDate } from "~/components/HydratedDate";
 
 import { safeAuthenticate } from "~/shopify.server";
 import { prisma } from "~/lib/db.server";
@@ -230,7 +231,7 @@ export default function SupplierList() {
                               {s.importMode === "bulk" ? t("common.bulk") : t("common.chunks")}
                               {s.frequency ? ` · ${t("dashboard.frequency")}: ${t(FREQUENCY_LABELS[s.frequency] || "frequency." + s.frequency)}` : ""}
                               {s.lastImportAt
-                                ? ` · ${t("dashboard.lastImport")} ${new Date(s.lastImportAt).toLocaleDateString("es-ES")}`
+                                ? <>{" · "}{t("dashboard.lastImport")}{" "}<HydratedDate dateString={s.lastImportAt} format="date" /></>
                                 : ""}
                             </Text>
                             {s.dataSource === "file" ? (

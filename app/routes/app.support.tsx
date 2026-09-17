@@ -13,6 +13,7 @@ import {
   Box,
 } from "@shopify/polaris";
 import { useState, useRef, useEffect, useCallback } from "react";
+import { HydratedDate } from "~/components/HydratedDate";
 import { useTranslation } from "react-i18next";
 
 import { safeAuthenticate } from "~/shopify.server";
@@ -195,10 +196,7 @@ export default function SupportChat() {
                         {msg.message}
                       </Text>
                       <Text variant="bodySm" as="p" tone="subdued">
-                        {new Date(msg.createdAt).toLocaleTimeString("es-ES", {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
+                        <HydratedDate dateString={msg.createdAt} format="time" />
                       </Text>
                     </div>
                   </div>

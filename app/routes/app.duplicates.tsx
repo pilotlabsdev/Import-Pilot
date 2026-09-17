@@ -13,6 +13,7 @@ import {
   DataTable,
 } from "@shopify/polaris";
 import { useTranslation } from "react-i18next";
+import { HydratedDate } from "~/components/HydratedDate";
 
 import { safeAuthenticate } from "~/shopify.server";
 import { prisma } from "~/lib/db.server";
@@ -242,7 +243,7 @@ export default function Duplicates() {
       </Text>
     </BlockStack>,
     <Text key="date" variant="bodySm" as="p" tone="subdued">
-      {new Date(d.detectedAt).toLocaleDateString("es-ES")}
+      <HydratedDate dateString={d.detectedAt} format="date" />
     </Text>,
     d.resolved ? (
       <Button

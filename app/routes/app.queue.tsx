@@ -1,6 +1,7 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { data, useLoaderData, useFetcher, useRevalidator } from "react-router";
 import { useEffect, useState } from "react";
+import { HydratedDate } from "~/components/HydratedDate";
 import {
   Badge,
   BlockStack,
@@ -283,8 +284,8 @@ export default function QueuePage() {
                           </ul>
                         </details>
                       ) : "0",
-                      item.startedAt ? new Date(item.startedAt).toLocaleString("es-ES") : "—",
-                      item.finishedAt ? new Date(item.finishedAt).toLocaleString("es-ES") : "—",
+                      item.startedAt ? <HydratedDate dateString={item.startedAt} /> : "\u2014",
+                      item.finishedAt ? <HydratedDate dateString={item.finishedAt} /> : "\u2014",
                     ])}
                   />
                 ) : (

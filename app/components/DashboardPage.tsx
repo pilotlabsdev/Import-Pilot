@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { HydratedDate } from "~/components/HydratedDate";
 import { useFetcher, Link } from "react-router";
 import {
   BlockStack,
@@ -213,7 +214,7 @@ export default function DashboardPage({ config, lastLog, lastErrors, totalProduc
     | null;
 
   const rows = (config?.logs || []).map((log: any) => [
-    new Date(log.startedAt).toLocaleString("es-ES"),
+    <HydratedDate key={log.id} dateString={log.startedAt} />,
     log.status,
     log.totalProducts,
     log.created,
@@ -386,7 +387,7 @@ export default function DashboardPage({ config, lastLog, lastErrors, totalProduc
                   </Text>
                   <Text as="p">
                     <strong>{t("import.lastImport")}:</strong> {lastLog
-                      ? new Date(lastLog.startedAt).toLocaleString("es-ES")
+                      ? <HydratedDate dateString={lastLog.startedAt} />
                       : t("import.never")}
                   </Text>
                   {lastLog?.lastSku && (

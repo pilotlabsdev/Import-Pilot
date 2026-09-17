@@ -8,6 +8,7 @@ import {
   Text,
 } from "@shopify/polaris";
 import { useTranslation } from "react-i18next";
+import { HydratedDate } from "~/components/HydratedDate";
 
 import { boundary } from "@shopify/shopify-app-react-router/server";
 
@@ -68,8 +69,8 @@ export default function Logs() {
     const errors = log.errors ? JSON.parse(log.errors) : [];
 
     return [
-      new Date(log.startedAt).toLocaleString("es-ES"),
-      log.completedAt ? new Date(log.completedAt).toLocaleString("es-ES") : "—",
+      <HydratedDate key={`s-${log.id}`} dateString={log.startedAt} />,
+      log.completedAt ? <HydratedDate key={`c-${log.id}`} dateString={log.completedAt} /> : "\u2014",
       <Badge key={`st-${log.id}`} tone={statusTone(log.status)}>
         {t(STATUS_LABEL_KEY[log.status] || log.status)}
       </Badge>,

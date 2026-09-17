@@ -1,6 +1,7 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
 import { data, useLoaderData, useFetcher, useRevalidator, useNavigate } from "react-router";
 import { useState, useEffect, useCallback, useRef } from "react";
+import { HydratedDate } from "~/components/HydratedDate";
 import { useAppBridge, SaveBar } from "@shopify/app-bridge-react";
 import {
   Badge,
@@ -331,7 +332,7 @@ export default function ImportTab() {
   };
 
   const rows = (recentLogs || []).map((log: any) => [
-    new Date(log.startedAt).toLocaleString("es-ES"),
+    <HydratedDate key={log.id} dateString={log.startedAt} />,
     <Badge key={log.id} tone={STATUS_TONE[log.status] || "info"}>
       {statusLabel(log.status)}
     </Badge>,
@@ -567,7 +568,7 @@ export default function ImportTab() {
                   </Text>
                   <Text as="p">
                     <strong>{t("import.lastImport")}:</strong> {lastLog
-                      ? new Date(lastLog.startedAt).toLocaleString("es-ES")
+                      ? <HydratedDate dateString={lastLog.startedAt} />
                       : t("import.never")}
                   </Text>
                   {lastLog?.lastSku && (
