@@ -1725,22 +1725,10 @@ async function processProduct({
   }
   let descDebugCount = 0;
   if (existing) {
-    // === CHANGE DETECTION: compare against live Shopify data (not just last import) ===
-    const lastPrice = existing.lastPrice ?? null;
-    const lastQty = existing.lastQuantity ?? null;
-    const lastCost = existing.lastCost ?? null;
-
-    const priceChanged = updateOpts.has("price") && (lastPrice === null || lastPrice !== prices.regularPrice);
-    const stockChanged = updateOpts.has("stock") && existing.shopifyInventoryItemId && (lastQty === null || lastQty !== newQty);
-    const costChanged = costPrice > 0 && existing.shopifyInventoryItemId && Math.abs((lastCost ?? 0) - costPrice) > 0.001;
-
-    const weightValue = parseFloat((getField(row, columnMaps, "weight") || "0").replace(",", "."));
-    const shouldSendWeight = weightValue > 0 && existing.shopifyInventoryItemId;
-
-    const imagesChanged = updateOpts.has("images") && (productInput.files?.length ?? 0) > 0;
-
-    // Fetch live product data from Shopify for accurate comparison
+    // Fetch live product + variant + inventory data from Shopify FIRST
     let liveProduct: any = null;
+    let liveVariantPrice: string | null = null;
+    let liveInventoryQuantity: number | null = null;
     try {
       const liveRes = await graphqlWithRetry(admin,
         `#graphql
@@ -1751,12 +1739,33 @@ async function processProduct({
             vendor
             productType
             tags
+            variants(first: 1) {
+              edges { node { price } }
+            }
           }
         }`,
         { id: existing.shopifyProductId }
       );
       liveProduct = liveRes.data?.product;
+      liveVariantPrice = liveProduct?.variants?.edges?.[0]?.node?.price ?? null;
     } catch {}
+
+    if (existing.shopifyInventoryItemId && locationId) {
+      try {
+        const invRes = await graphqlWithRetry(admin,
+          `#graphql
+          query liveInventory($id: ID!) {
+            inventoryItem(id: $id) {
+              inventoryLevels(first: 1) {
+                edges { node { available } }
+              }
+            }
+          }`,
+          { id: existing.shopifyInventoryItemId }
+        );
+        liveInventoryQuantity = invRes.data?.inventoryItem?.inventoryLevels?.edges?.[0]?.node?.available ?? null;
+      } catch {}
+    }
 
     const liveTitle = liveProduct?.title ?? existing.lastTitle ?? null;
     const liveDescription = liveProduct?.descriptionHtml ?? existing.lastDescription ?? null;
@@ -1764,12 +1773,24 @@ async function processProduct({
     const liveProductType = liveProduct?.productType ?? existing.lastProductType ?? null;
     const liveTags = liveProduct?.tags ?? shopifyLiveTags ?? null;
 
+    // === CHANGE DETECTION: compare against LIVE Shopify data ===
+    const lastCost = existing.lastCost ?? null;
+
+    const priceChanged = updateOpts.has("price") && liveVariantPrice !== null && String(prices.regularPrice) !== liveVariantPrice;
+    const stockChanged = updateOpts.has("stock") && existing.shopifyInventoryItemId && liveInventoryQuantity !== null && newQty !== liveInventoryQuantity;
+    const costChanged = costPrice > 0 && existing.shopifyInventoryItemId && Math.abs((lastCost ?? 0) - costPrice) > 0.001;
+
+    const weightValue = parseFloat((getField(row, columnMaps, "weight") || "0").replace(",", "."));
+    const shouldSendWeight = weightValue > 0 && existing.shopifyInventoryItemId;
+
+    const imagesChanged = updateOpts.has("images") && (productInput.files?.length ?? 0) > 0;
+
     const titleChanged = updateOpts.has("name") && productInput.title && productInput.title !== liveTitle;
     const csvDescNorm = normalizeHtml(productInput.descriptionHtml ?? "");
-    const lastDescNorm = normalizeHtml(existing.lastDescription ?? "");
-    const descriptionChanged = updateOpts.has("description") && productInput.descriptionHtml && csvDescNorm !== lastDescNorm;
-    if (descriptionChanged && productInput.descriptionHtml && existing.lastDescription) {
-      console.log(`[Import] SKU ${sku}: DESC CHANGED csvLen=${csvDescNorm.length} lastLen=${lastDescNorm.length}`);
+    const liveDescNorm = normalizeHtml(liveDescription ?? "");
+    const descriptionChanged = updateOpts.has("description") && productInput.descriptionHtml && csvDescNorm !== liveDescNorm;
+    if (descriptionChanged && productInput.descriptionHtml && liveDescription) {
+      console.log(`[Import] SKU ${sku}: DESC CHANGED csvLen=${csvDescNorm.length} liveLen=${liveDescNorm.length}`);
     }
     const vendorChanged = updateOpts.has("vendor") && productInput.vendor && productInput.vendor !== liveVendor;
     const productTypeChanged = updateOpts.has("productType") && productInput.productType && productInput.productType !== liveProductType;
