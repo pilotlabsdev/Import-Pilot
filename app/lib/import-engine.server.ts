@@ -1240,7 +1240,7 @@ async function processProduct({
                   shopifyProductId: foundBarcode.productId, shopifyVariantId: variantId2 || null,
                   shopifyInventoryItemId: invItemId2 || null,
                   lastPrice: prices2.regularPrice, lastComparePrice: prices2.compareAtPrice,
-                  lastQuantity: newQty, lastCost: costPrice > 0 ? costPrice : null, lastImportSource: sourceKey,
+                  lastQuantity: null, lastCost: costPrice > 0 ? costPrice : null, lastImportSource: sourceKey,
                 },
                 update: {
                   shopifyProductId: foundBarcode.productId, shopifyVariantId: variantId2 || null,
@@ -1709,6 +1709,8 @@ async function processProduct({
     const priceChanged = updateOpts.has("price") && liveVariantPrice !== null && String(prices.regularPrice) !== liveVariantPrice;
     const stockChanged = updateOpts.has("stock") && existing.shopifyInventoryItemId && newQty !== (liveInventoryQuantity ?? existing.lastQuantity);
     const costChanged = costPrice > 0 && Math.abs((lastCost ?? 0) - costPrice) > 0.001;
+
+    console.log(`[Import] SKU ${sku}: stockCheck liveQty=${liveInventoryQuantity} lastQty=${existing.lastQuantity} csvQty=${newQty} stockChanged=${!!stockChanged} hasInvItem=${!!existing.shopifyInventoryItemId} hasStockOpt=${updateOpts.has("stock")}`);
 
     if (!stockChanged && updateOpts.has("stock") && !existing.shopifyInventoryItemId) {
       console.log(`[Import] SKU ${sku}: stock SKIPPED — shopifyInventoryItemId is null`);
