@@ -285,36 +285,26 @@ async function getCurrentStock(admin: any, inventoryItemId: string, locationId: 
     ?.quantities?.find((q: any) => q.name === "available")?.quantity ?? 0;
 }
 
-async function adjustStock(admin: any, inventoryItemId: string, locationId: string, targetQuantity: number, sku: string, maxRetries = 3): Promise<void> {
+async function setStock(admin: any, inventoryItemId: string, locationId: string, targetQuantity: number, sku: string, maxRetries = 3): Promise<void> {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    const currentQuantity = await getCurrentStock(admin, inventoryItemId, locationId);
-    const delta = targetQuantity - currentQuantity;
-
-    if (delta === 0) {
-      return;
-    }
-
-    const idempotencyKey = `inv-adj-${inventoryItemId}-${locationId}-${targetQuantity}-${Date.now()}`;
     const stockRes = await graphqlWithRetry(admin,
       `#graphql
-      mutation inventoryAdjustQuantities($input: InventoryAdjustQuantitiesInput!, $idempotencyKey: String!) {
-        inventoryAdjustQuantities(input: $input) @idempotent(key: $idempotencyKey) {
+      mutation inventorySetQuantities($input: InventorySetQuantitiesInput!) {
+        inventorySetQuantities(input: $input) {
           inventoryAdjustmentGroup { id }
           userErrors { field message code }
         }
       }`,
       {
         input: {
-          reason: "correction",
           name: "available",
-          changes: [{
+          reason: "correction",
+          quantities: [{
             inventoryItemId,
             locationId,
-            delta,
-            changeFromQuantity: currentQuantity,
+            quantity: targetQuantity,
           }],
         },
-        idempotencyKey,
       }
     );
 
@@ -322,25 +312,19 @@ async function adjustStock(admin: any, inventoryItemId: string, locationId: stri
       console.error(`[Import] Stock GQL errors for SKU ${sku}:`, JSON.stringify(stockRes.errors));
     }
 
-    const mutationData = stockRes.data?.inventoryAdjustQuantities;
+    const mutationData = stockRes.data?.inventorySetQuantities;
     if (!mutationData) {
       console.error(`[Import] Stock mutation returned null data for SKU ${sku}`);
       return;
     }
 
     const stockErrors = mutationData.userErrors || [];
-    const stale = stockErrors.find((e: any) => e.code === "CHANGE_FROM_QUANTITY_STALE");
-
-    if (stale) {
-      await sleep(500);
-      continue;
-    }
-
     if (stockErrors.length) {
       console.error(`[Import] Stock errors for SKU ${sku}:`, JSON.stringify(stockErrors));
       return;
     }
 
+    console.log(`[Import] Stock set to ${targetQuantity} for SKU ${sku}`);
     return;
   }
   console.error(`[Import] Stock failed after ${maxRetries} retries for SKU ${sku}`);
@@ -1734,7 +1718,7 @@ async function processProduct({
     const lastCost = existing.lastCost ?? null;
 
     const priceChanged = updateOpts.has("price") && liveVariantPrice !== null && String(prices.regularPrice) !== liveVariantPrice;
-    const stockChanged = updateOpts.has("stock") && existing.shopifyInventoryItemId && liveInventoryQuantity !== null && newQty !== liveInventoryQuantity;
+    const stockChanged = updateOpts.has("stock") && existing.shopifyInventoryItemId && newQty !== (liveInventoryQuantity ?? existing.lastQuantity);
     const costChanged = costPrice > 0 && Math.abs((lastCost ?? 0) - costPrice) > 0.001;
 
     if (!stockChanged && updateOpts.has("stock") && !existing.shopifyInventoryItemId) {
@@ -1943,7 +1927,7 @@ async function processProduct({
       } else {
         processedInventoryItems.add(existing.shopifyInventoryItemId);
         try {
-          await adjustStock(admin, existing.shopifyInventoryItemId, locationId, newQty, sku);
+          await setStock(admin, existing.shopifyInventoryItemId, locationId, newQty, sku);
         } catch (error: any) {
           console.error("[Import] Error ajustando inventario:", error);
         }
