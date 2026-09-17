@@ -1260,7 +1260,6 @@ async function processProduct({
                   shopifyInventoryItemId: invItemId2 || null, lastImportSource: sourceKey,
                 },
               });
-              result.updated++;
               console.log(`[Import] External: adopted ${foundBarcode.productId} (same EAN, different SKU) — falling through to UPDATE path`);
               // NO return — fall through to SINGLE UPDATE PATH (line 1717+)
             }
@@ -1653,6 +1652,28 @@ async function processProduct({
       existing = null;
     }
   }
+
+  // Recover variantId/inventoryItemId if missing (e.g. Path C variants query failed)
+  if (existing && (!existing.shopifyVariantId || !existing.shopifyInventoryItemId)) {
+    try {
+      const variantRecovery = await graphqlWithRetry(admin,
+        `#graphql query { product(id: "${existing.shopifyProductId}") {
+          variants(first: 1) { edges { node { id inventoryItem { id } } } }
+        }}`, {}
+      );
+      const vId = variantRecovery.data?.product?.variants?.edges?.[0]?.node?.id;
+      const invId = variantRecovery.data?.product?.variants?.edges?.[0]?.node?.inventoryItem?.id;
+      if (vId || invId) {
+        await prisma.productMapping.update({
+          where: { id: existing.id },
+          data: { shopifyVariantId: vId || null, shopifyInventoryItemId: invId || null },
+        });
+        if (vId) existing.shopifyVariantId = vId;
+        if (invId) existing.shopifyInventoryItemId = invId;
+      }
+    } catch {}
+  }
+
   let descDebugCount = 0;
   if (existing) {
     // Fetch live product + variant + inventory data from Shopify FIRST
@@ -1846,7 +1867,7 @@ async function processProduct({
     if (vendorChanged) result.vendorChanges++;
     if (productTypeChanged) result.productTypeChanges++;
     if (tagsChanged) result.tagsChanges++;
-    if (imagesChanged) result.imageChanges++;
+    // NOTE: imageChanges is counted inside the image dedup block (line ~1842)
 
     const productPatch: any = { id: existing.shopifyProductId };
     if (updateOpts.has("name")) productPatch.title = productInput.title;
@@ -1884,7 +1905,7 @@ async function processProduct({
       }
     }
 
-    if (priceChanged) {
+    if (priceChanged && existing.shopifyVariantId) {
       const ean = getField(row, columnMaps, "ean");
       await graphqlWithRetry(admin,
         `#graphql
@@ -1897,7 +1918,7 @@ async function processProduct({
         {
           productId: existing.shopifyProductId,
           variants: [{
-            id: existing.shopifyVariantId || existing.shopifyProductId,
+            id: existing.shopifyVariantId,
             price: String(isNaN(prices.regularPrice) ? 0 : prices.regularPrice),
             compareAtPrice: prices.compareAtPrice && !isNaN(prices.compareAtPrice) ? String(prices.compareAtPrice) : null,
             barcode: ean,
