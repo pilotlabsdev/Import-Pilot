@@ -240,6 +240,22 @@ export function ErrorBoundary() {
     ? `${error.name}: ${error.message}`
     : String(error);
 
+  // Detect App Bridge HTML redirect (200 with <script> tag, no Location header) — redirect immediately
+  const isAppBridgeHtml =
+    (isRouteErrorResponse(error) && error.status === 200 && typeof error.data === "string" && error.data.includes("app-bridge")) ||
+    (error instanceof Response && error.status === 200);
+  if (isAppBridgeHtml) {
+    console.log("[App ErrorBoundary] App Bridge redirect detected (status=200) → /app");
+    return (
+      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "60vh" }}>
+        <div style={{ textAlign: "center", color: "#6d7175" }}>
+          <p style={{ fontSize: "14px" }}>Cargando...</p>
+        </div>
+        <script dangerouslySetInnerHTML={{ __html: `window.location.href = "/app";` }} />
+      </div>
+    );
+  }
+
   console.error(`[App ErrorBoundary] status=${status} error=${errorText}`);
 
   // All errors auto-recover: redirect to /app after short delay

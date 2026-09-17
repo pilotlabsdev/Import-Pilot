@@ -1238,7 +1238,10 @@ async function processProduct({
               let invItemId2: string | undefined;
               try {
                 const variantRes2 = await graphqlWithRetry(admin,
-                  `#graphql query { product(id: "${foundBarcode.productId}") { variants(first: 1) { edges { node { id inventoryItem { id } } } } } }`,
+                  `#graphql
+                  query { product(id: "${foundBarcode.productId}") {
+                    variants(first: 1) { edges { node { id inventoryItem { id } } } }
+                  }}`,
                   {}
                 );
                 variantId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.id;
