@@ -1666,6 +1666,7 @@ async function processProduct({
       );
       const vId = variantRecovery.data?.product?.variants?.edges?.[0]?.node?.id;
       const invId = variantRecovery.data?.product?.variants?.edges?.[0]?.node?.inventoryItem?.id;
+      console.log(`[Import] Recovery SKU=${sku}: variantId=${vId || "null"} inventoryItemId=${invId || "null"} (was: variantId=${existing.shopifyVariantId || "null"} inventoryItemId=${existing.shopifyInventoryItemId || "null"})`);
       if (vId || invId) {
         await prisma.productMapping.update({
           where: { id: existing.id },
@@ -1674,7 +1675,9 @@ async function processProduct({
         if (vId) existing.shopifyVariantId = vId;
         if (invId) existing.shopifyInventoryItemId = invId;
       }
-    } catch {}
+    } catch (e: any) {
+      console.error(`[Import] Recovery FAILED SKU=${sku} product=${existing.shopifyProductId}:`, e?.message);
+    }
   }
 
   let descDebugCount = 0;
@@ -1732,7 +1735,11 @@ async function processProduct({
 
     const priceChanged = updateOpts.has("price") && liveVariantPrice !== null && String(prices.regularPrice) !== liveVariantPrice;
     const stockChanged = updateOpts.has("stock") && existing.shopifyInventoryItemId && liveInventoryQuantity !== null && newQty !== liveInventoryQuantity;
-    const costChanged = costPrice > 0 && existing.shopifyInventoryItemId && Math.abs((lastCost ?? 0) - costPrice) > 0.001;
+    const costChanged = costPrice > 0 && Math.abs((lastCost ?? 0) - costPrice) > 0.001;
+
+    if (!stockChanged && updateOpts.has("stock") && !existing.shopifyInventoryItemId) {
+      console.log(`[Import] SKU ${sku}: stock SKIPPED — shopifyInventoryItemId is null`);
+    }
 
     const weightValue = parseFloat((getField(row, columnMaps, "weight") || "0").replace(",", "."));
     const shouldSendWeight = weightValue > 0 && existing.shopifyInventoryItemId;
