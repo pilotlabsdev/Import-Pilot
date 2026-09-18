@@ -1344,7 +1344,7 @@ async function prepareAndLaunch(
       const priceChanged = effectiveOpts.has("price") && (lastPrice === null || lastPrice !== prices.regularPrice);
       const stockChanged = effectiveOpts.has("stock") && stockQty >= 0 && (lastQty === null || lastQty !== stockQty);
       const costChanged =
-        costPrice > 0 && !!match.inventoryItemId && Math.abs((mapping?.lastCost ?? 0) - costPrice) > 0.001;
+        costPrice > 0 && !!match.inventoryItemId && Math.abs((match.shopifyCost ?? 0) - costPrice) > 0.001;
       const csvHasImages = effectiveOpts.has("images") && (() => {
         for (let i = 1; i <= 5; i++) { if (getField(row, columnMaps, `image${i}`)) return true; }
         return false;
