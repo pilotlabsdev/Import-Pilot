@@ -1908,17 +1908,8 @@ async function processProduct({
     const overwriteMode = (shopSettings0?.matchMode || "overwrite") === "overwrite";
     const skuChanged = overwriteMode && existing.shopifyVariantId && sku;
 
-    if ((priceChanged || skuChanged) && existing.shopifyVariantId) {
+    if (priceChanged && existing.shopifyVariantId) {
       const ean = getField(row, columnMaps, "ean");
-      const variantPatch: any = { id: existing.shopifyVariantId };
-      if (priceChanged) {
-        variantPatch.price = String(isNaN(prices.regularPrice) ? 0 : prices.regularPrice);
-        variantPatch.compareAtPrice = prices.compareAtPrice && !isNaN(prices.compareAtPrice) ? String(prices.compareAtPrice) : null;
-      }
-      if (skuChanged) {
-        variantPatch.sku = sku;
-      }
-      variantPatch.barcode = ean;
       await graphqlWithRetry(admin,
         `#graphql
         mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
@@ -1929,9 +1920,23 @@ async function processProduct({
         }`,
         {
           productId: existing.shopifyProductId,
-          variants: [variantPatch],
+          variants: [{
+            id: existing.shopifyVariantId,
+            price: String(isNaN(prices.regularPrice) ? 0 : prices.regularPrice),
+            compareAtPrice: prices.compareAtPrice && !isNaN(prices.compareAtPrice) ? String(prices.compareAtPrice) : null,
+            barcode: ean,
+          }],
         }
       );
+    }
+
+    if (skuChanged) {
+      try {
+        await updateVariantSku(admin, existing.shopifyProductId, existing.shopifyVariantId!, sku);
+        console.log(`[Import] SKU ${sku}: overwritten SKU on variant ${existing.shopifyVariantId}`);
+      } catch (error: any) {
+        console.error(`[Import] SKU update failed for ${sku}:`, error?.message || error);
+      }
     }
 
     if (stockChanged && existing.shopifyInventoryItemId) {
