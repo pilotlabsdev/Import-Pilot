@@ -288,46 +288,49 @@ async function getCurrentStock(admin: any, inventoryItemId: string, locationId: 
 async function setStock(admin: any, inventoryItemId: string, locationId: string, targetQuantity: number, sku: string, maxRetries = 3): Promise<void> {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     const idempotencyKey = `inv-set-${inventoryItemId}-${locationId}-${targetQuantity}-${Date.now()}`;
-    const stockRes = await graphqlWithRetry(admin,
-      `#graphql
-      mutation inventorySetQuantities($input: InventorySetQuantitiesInput!, $idempotencyKey: String!) {
-        inventorySetQuantities(input: $input) @idempotent(key: $idempotencyKey) {
-          inventoryAdjustmentGroup { id }
-          userErrors { field message code }
-        }
-      }`,
-      {
-        input: {
-          name: "available",
-          reason: "correction",
+    try {
+      const stockRes = await graphqlWithRetry(admin,
+        `#graphql
+        mutation inventorySetQuantities($input: InventorySetQuantitiesInput!, $idempotencyKey: String!) {
+          inventorySetQuantities(input: $input) @idempotent(key: $idempotencyKey) {
+            inventoryAdjustmentGroup { id }
+            userErrors { field message code }
+          }
+        }`,
+        {
+          input: {
+            name: "available",
+            reason: "correction",
           quantities: [{
             inventoryItemId,
             locationId,
             quantity: targetQuantity,
+            changeFromQuantity: null,
           }],
-        },
-        idempotencyKey,
+          },
+          idempotencyKey,
+        }
+      );
+
+      const mutationData = stockRes.data?.inventorySetQuantities;
+      if (!mutationData) {
+        console.error(`[Import] Stock mutation returned null for SKU ${sku}:`, JSON.stringify(stockRes).slice(0, 500));
+        continue;
       }
-    );
 
-    if (stockRes.errors?.length) {
-      console.error(`[Import] Stock GQL errors for SKU ${sku}:`, JSON.stringify(stockRes.errors));
-    }
+      const stockErrors = mutationData.userErrors || [];
+      if (stockErrors.length) {
+        console.error(`[Import] Stock userErrors for SKU ${sku}:`, JSON.stringify(stockErrors));
+        return;
+      }
 
-    const mutationData = stockRes.data?.inventorySetQuantities;
-    if (!mutationData) {
-      console.error(`[Import] Stock mutation returned null data for SKU ${sku}:`, JSON.stringify(stockRes));
+      console.log(`[Import] Stock set to ${targetQuantity} for SKU ${sku}`);
       return;
+    } catch (error: any) {
+      const gqlErrors = error?.graphQLErrors || error?.response?.errors;
+      console.error(`[Import] Stock exception SKU=${sku} invItem=${inventoryItemId} loc=${locationId} qty=${targetQuantity} (attempt ${attempt}/${maxRetries}):`, error?.message?.slice(0, 200), gqlErrors ? JSON.stringify(gqlErrors).slice(0, 500) : "");
+      if (attempt < maxRetries) await sleep(1000 * attempt);
     }
-
-    const stockErrors = mutationData.userErrors || [];
-    if (stockErrors.length) {
-      console.error(`[Import] Stock errors for SKU ${sku}:`, JSON.stringify(stockErrors));
-      return;
-    }
-
-    console.log(`[Import] Stock set to ${targetQuantity} for SKU ${sku}`);
-    return;
   }
   console.error(`[Import] Stock failed after ${maxRetries} retries for SKU ${sku}`);
 }
