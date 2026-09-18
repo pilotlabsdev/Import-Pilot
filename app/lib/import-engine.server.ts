@@ -1715,8 +1715,6 @@ async function processProduct({
     const stockChanged = updateOpts.has("stock") && existing.shopifyInventoryItemId && newQty !== (liveInventoryQuantity ?? existing.lastQuantity);
     const costChanged = costPrice > 0 && Math.abs((lastCost ?? 0) - costPrice) > 0.001;
 
-    console.log(`[Import] SKU ${sku}: stockCheck liveQty=${liveInventoryQuantity} lastQty=${existing.lastQuantity} csvQty=${newQty} stockChanged=${!!stockChanged} hasInvItem=${!!existing.shopifyInventoryItemId} hasStockOpt=${updateOpts.has("stock")}`);
-
     if (!stockChanged && updateOpts.has("stock") && !existing.shopifyInventoryItemId) {
       console.log(`[Import] SKU ${sku}: stock SKIPPED — shopifyInventoryItemId is null`);
     }
