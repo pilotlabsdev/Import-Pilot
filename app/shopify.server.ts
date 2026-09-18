@@ -182,8 +182,8 @@ export async function safeAuthenticate(request: Request) {
       if (location) {
         throw res;
       }
-      // 401 without Location — redirect to / to trigger App Bridge session refresh
-      if (res.status === 401) {
+      // 401/410 without Location — redirect to / to trigger App Bridge session refresh
+      if (res.status === 401 || res.status === 410) {
         throw redirect("/");
       }
     }
