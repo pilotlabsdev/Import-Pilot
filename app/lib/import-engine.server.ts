@@ -1675,6 +1675,7 @@ async function processProduct({
     let liveProduct: any = null;
     let liveVariantPrice: string | null = null;
     let liveInventoryQuantity: number | null = null;
+    let liveCost: number | null = null;
     try {
       const liveRes = await graphqlWithRetry(admin,
         `#graphql
@@ -1700,6 +1701,18 @@ async function processProduct({
       try {
         liveInventoryQuantity = await getCurrentStock(admin, existing.shopifyInventoryItemId, locationId);
       } catch {}
+      try {
+        const costRes = await graphqlWithRetry(admin,
+          `#graphql
+          query liveCost($id: ID!) {
+            inventoryItem(id: $id) {
+              unitCost { amount currencyCode }
+            }
+          }`,
+          { id: existing.shopifyInventoryItemId }
+        );
+        liveCost = parseFloat(costRes.data?.inventoryItem?.unitCost?.amount ?? "0") || 0;
+      } catch {}
     }
 
     const liveTitle = liveProduct?.title ?? existing.lastTitle ?? null;
@@ -1709,11 +1722,10 @@ async function processProduct({
     const liveTags = liveProduct?.tags ?? shopifyLiveTags ?? null;
 
     // === CHANGE DETECTION: compare against LIVE Shopify data ===
-    const lastCost = existing.lastCost ?? null;
 
     const priceChanged = updateOpts.has("price") && liveVariantPrice !== null && String(prices.regularPrice) !== liveVariantPrice;
     const stockChanged = updateOpts.has("stock") && existing.shopifyInventoryItemId && newQty !== (liveInventoryQuantity ?? existing.lastQuantity);
-    const costChanged = costPrice > 0 && Math.abs((lastCost ?? 0) - costPrice) > 0.001;
+    const costChanged = costPrice > 0 && existing.shopifyInventoryItemId && Math.abs((liveCost ?? 0) - costPrice) > 0.001;
 
     if (!stockChanged && updateOpts.has("stock") && !existing.shopifyInventoryItemId) {
       console.log(`[Import] SKU ${sku}: stock SKIPPED — shopifyInventoryItemId is null`);
@@ -1893,8 +1905,20 @@ async function processProduct({
       }
     }
 
-    if (priceChanged && existing.shopifyVariantId) {
+    const overwriteMode = (shopSettings0?.matchMode || "overwrite") === "overwrite";
+    const skuChanged = overwriteMode && existing.shopifyVariantId && sku;
+
+    if ((priceChanged || skuChanged) && existing.shopifyVariantId) {
       const ean = getField(row, columnMaps, "ean");
+      const variantPatch: any = { id: existing.shopifyVariantId };
+      if (priceChanged) {
+        variantPatch.price = String(isNaN(prices.regularPrice) ? 0 : prices.regularPrice);
+        variantPatch.compareAtPrice = prices.compareAtPrice && !isNaN(prices.compareAtPrice) ? String(prices.compareAtPrice) : null;
+      }
+      if (skuChanged) {
+        variantPatch.sku = sku;
+      }
+      variantPatch.barcode = ean;
       await graphqlWithRetry(admin,
         `#graphql
         mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
@@ -1905,12 +1929,7 @@ async function processProduct({
         }`,
         {
           productId: existing.shopifyProductId,
-          variants: [{
-            id: existing.shopifyVariantId,
-            price: String(isNaN(prices.regularPrice) ? 0 : prices.regularPrice),
-            compareAtPrice: prices.compareAtPrice && !isNaN(prices.compareAtPrice) ? String(prices.compareAtPrice) : null,
-            barcode: ean,
-          }],
+          variants: [variantPatch],
         }
       );
     }

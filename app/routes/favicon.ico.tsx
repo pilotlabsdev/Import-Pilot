@@ -1,5 +1,3 @@
-import type { Route } from "./+types/favicon.ico";
-
 export const loader = async () => {
   return new Response(null, {
     status: 204,
