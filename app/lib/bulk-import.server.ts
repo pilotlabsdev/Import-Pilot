@@ -3193,7 +3193,7 @@ async function queryProductsTargeted(
         edges {
           node {
             id sku barcode
-            product { id title vendor productType tags descriptionHtml }
+            product { id title vendor productType tags descriptionHtml images(first: 5) { edges { node { url } } } }
             inventoryItem { id unitCost { amount } }
           }
         }
@@ -3227,6 +3227,9 @@ async function queryProductsTargeted(
             shopifyVendor: prod.vendor || undefined,
             shopifyProductType: prod.productType || undefined,
             shopifyTags: prod.tags?.length > 0 ? prod.tags : undefined,
+            shopifyImages: prod.images?.edges?.length > 0
+              ? prod.images.edges.map((e: any) => e.node.url).filter(Boolean)
+              : undefined,
           };
           if (v.sku && !bySku.has(v.sku)) bySku.set(String(v.sku), match);
           if (v.barcode) byBarcode.set(String(v.barcode), match);
