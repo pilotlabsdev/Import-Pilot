@@ -36,14 +36,14 @@ const UPDATE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "description", label: "config.fieldDescription" },
   { value: "price", label: "config.fieldPrice" },
   { value: "stock", label: "config.fieldStock" },
-  { value: "images", label: "config.fieldImages" },
+  { value: "collections", label: "config.fieldCollections" },
   { value: "vendor", label: "config.fieldBrand" },
   { value: "productType", label: "config.fieldProductType" },
   { value: "tags", label: "config.fieldTags" },
   // NOTE: "metafields" checkbox removed — it only gated description_tag (redundant with
   // "description" checkbox's seo.description update), supplier_sku, and supplier_url.
   // costo and tipo_producto are always sent regardless. See product-mapper.server.ts.
-  { value: "collections", label: "config.fieldCollections" },
+  { value: "images", label: "config.fieldImages" },
 ];
 
 function parseUpdateOptions(raw?: string | null): string[] {
