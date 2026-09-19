@@ -1601,6 +1601,9 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
   let imgChanges = 0;
   let opErrors = 0;
   const transientRetries: Array<{ meta: MetaLine; error: string }> = [];
+  const skuOverwriteQueue: Array<{ productId: string; variantId: string; newSku: string }> = [];
+  const shopSettings = await prisma.shopSettings.findUnique({ where: { shopDomain: job.shopDomain } });
+  const matchMode = shopSettings?.matchMode || "overwrite";
 
   // Batch-load all existing mappings for this shop to avoid N+1 findUnique queries
   const allResultSkus = metaLines.map((m: any) => m?.sku).filter(Boolean);
@@ -1833,6 +1836,9 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       if (productTypeChanged) ptChanges++;
       if (tagsChanged) tagChanges++;
       if (imagesChanged) imgChanges++;
+      if (matchMode === "overwrite" && meta.sku && variant?.id && variant?.sku && variant.sku !== meta.sku) {
+        skuOverwriteQueue.push({ productId: product.id, variantId: variant.id, newSku: meta.sku });
+      }
     }
     } catch (loopErr: any) {
       console.error(`[Bulk] handleMutationOpFinished iteration ${i} CRASH: ${loopErr?.message}\n${loopErr?.stack}`);
@@ -1843,6 +1849,26 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
   }
 
   await fs.appendFile(errorsPath, errorWrites.length ? errorWrites.join("\n") + "\n" : "");
+
+  // SKU overwrite: productSet ignores sku in variants for existing products,
+  // so we must use REST API to set the SKU after the mutation completes
+  if (skuOverwriteQueue.length > 0) {
+    let skuOverwriteSuccess = 0;
+    let skuOverwriteFailed = 0;
+    for (const { productId, variantId, newSku } of skuOverwriteQueue) {
+      try {
+        await setVariantSkuViaRest(job.shopDomain, productId, variantId, newSku);
+        skuOverwriteSuccess++;
+        console.log(`[Bulk] SKU overwrite OK: ${newSku} → variant ${variantId}`);
+      } catch (e: any) {
+        skuOverwriteFailed++;
+        console.error(`[Bulk] SKU overwrite FAILED: ${newSku} → ${e?.message}`);
+        errorWrites.push(JSON.stringify({ sku: newSku, error: `sku_overwrite_failed: ${e?.message}`, lineNumber: 0 }));
+      }
+    }
+    await fs.appendFile(errorsPath, errorWrites.length ? errorWrites.join("\n") + "\n" : "");
+    console.log(`[Bulk] SKU overwrite: ${skuOverwriteSuccess} ok, ${skuOverwriteFailed} failed`);
+  }
 
   // Retry transient errors ("currently being modified") via individual productSet mutations.
   // These happen when two concurrent imports modify the same product.
@@ -3084,7 +3110,8 @@ async function preScanCsv(
       })();
       const skuMatch = skuFilter ? skuFilter.has(sku.toLowerCase()) : true;
       const catMatch = catFilter ? catFilter.has(category.toLowerCase()) : true;
-      if (!skuMatch && !catMatch) continue;
+      if (skuFilter && !skuMatch) continue;
+      if (catFilter && !catMatch) continue;
     }
 
     skuSet.add(sku);
