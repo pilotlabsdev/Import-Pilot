@@ -444,6 +444,7 @@ interface MetaLine {
   replaceMappingId?: string;
   replaceOldConfigId?: string;
   images?: string[];
+  shopifySku?: string;
 }
 
 export async function runBulkImport({
@@ -1397,6 +1398,7 @@ async function prepareAndLaunch(
       meta.productId = match.productId;
       meta.variantId = match.variantId;
       meta.inventoryItemId = match.inventoryItemId;
+      meta.shopifySku = match.sku;
       meta.priceChanged = priceChanged;
       meta.stockChanged = stockChanged;
       meta.costChanged = costChanged;
@@ -1836,7 +1838,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       if (productTypeChanged) ptChanges++;
       if (tagsChanged) tagChanges++;
       if (imagesChanged) imgChanges++;
-      if (matchMode === "overwrite" && meta.sku && variant?.id && variant?.sku && variant.sku !== meta.sku) {
+      if (matchMode === "overwrite" && meta.sku && meta.shopifySku && variant?.id && meta.shopifySku !== meta.sku) {
         skuOverwriteQueue.push({ productId: product.id, variantId: variant.id, newSku: meta.sku });
       }
     }
