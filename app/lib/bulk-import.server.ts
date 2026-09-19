@@ -1124,9 +1124,7 @@ async function prepareAndLaunch(
   };
 
   const pushCreate = async (inputObj: any, meta: MetaLine) => {
-    const handle = meta.sku ? `ip-${meta.sku.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}` : undefined;
     const payload: any = { input: inputObj };
-    if (handle) payload.identifier = { handle };
     const line = JSON.stringify(payload);
     createLines.push(line);
     createMetas.push(meta);
