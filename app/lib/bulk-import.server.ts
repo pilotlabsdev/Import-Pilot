@@ -1386,10 +1386,11 @@ async function prepareAndLaunch(
       }
       const shopifyImageCount = (match.shopifyImages || []).length;
       const imagesChanged = effectiveOpts.has("images") && csvImageUrls.length !== shopifyImageCount;
+      const skuChanged = matchMode === "overwrite" && match.sku && match.sku !== sku;
 
       // Skip products with NO changes — don't send mutation
       // BUT: if this is a priority replacement, always send UPDATE to reassign configId
-      if (!priorityReplaceMappingId && !priceChanged && !stockChanged && !costChanged && !titleChanged && !descriptionChanged && !vendorChanged && !productTypeChanged && !tagsChanged && !imagesChanged) {
+      if (!priorityReplaceMappingId && !priceChanged && !stockChanged && !costChanged && !titleChanged && !descriptionChanged && !vendorChanged && !productTypeChanged && !tagsChanged && !imagesChanged && !skuChanged) {
         matchedUnchangedCount++;
         unchangedCount++;
         continue;
