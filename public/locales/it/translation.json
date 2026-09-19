@@ -183,6 +183,7 @@
   "config.fieldPrice": "Prezzo",
   "config.fieldStock": "Stock",
   "config.fieldImages": "Immagini",
+  "config.fieldImagesHelp": "Sostituisce tutte le immagini esistenti del prodotto. Le immagini aggiunte manualmente verranno rimosse.",
   "config.fieldBrand": "Marca",
   "config.fieldProductType": "Tipo di prodotto",
   "config.fieldTags": "Tags",

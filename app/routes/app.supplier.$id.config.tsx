@@ -751,6 +751,12 @@ export default function Config() {
                     />
                   ))}
                 </FormLayout.Group>
+
+                {updateOptions.includes("images") && (
+                  <Banner tone="info">
+                    <p>{t("config.fieldImagesHelp")}</p>
+                  </Banner>
+                )}
               </div>
 
               <input
