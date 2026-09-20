@@ -61,28 +61,18 @@ export async function checkDuplicate(
     case "priority": {
       const priorityJson = settings?.supplierPriority;
       if (!priorityJson) {
-        await logDuplicate(shopDomain, ean, existingMappings[0], currentConfigId, newSku);
-        return {
-          isDuplicate: true,
-          shouldSkip: true,
-          shouldReplace: false,
-          existingSupplierName: existingMappings[0].config.name,
-          existingSku: existingMappings[0].supplierSku,
-        };
+        return { isDuplicate: false, shouldSkip: false, shouldReplace: false };
       }
 
       let priorityList: string[];
       try {
         priorityList = JSON.parse(priorityJson);
       } catch {
-        await logDuplicate(shopDomain, ean, existingMappings[0], currentConfigId, newSku);
-        return {
-          isDuplicate: true,
-          shouldSkip: true,
-          shouldReplace: false,
-          existingSupplierName: existingMappings[0].config.name,
-          existingSku: existingMappings[0].supplierSku,
-        };
+        return { isDuplicate: false, shouldSkip: false, shouldReplace: false };
+      }
+
+      if (!Array.isArray(priorityList) || priorityList.length === 0) {
+        return { isDuplicate: false, shouldSkip: false, shouldReplace: false };
       }
 
       // Find the "winner" among all existing mappings (lowest index = highest priority)
@@ -97,6 +87,10 @@ export async function checkDuplicate(
       }
 
       const currentIndex = priorityList.indexOf(currentConfigId);
+
+      if (winnerIndex === -1 && currentIndex === -1) {
+        return { isDuplicate: false, shouldSkip: false, shouldReplace: false };
+      }
 
       // Current supplier has LOWER or equal priority than the winner → skip
       if (currentIndex === -1 || (winnerIndex !== -1 && winnerIndex <= currentIndex)) {

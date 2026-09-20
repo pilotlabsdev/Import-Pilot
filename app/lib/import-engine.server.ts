@@ -1778,6 +1778,7 @@ async function processProduct({
     // Fetch live product + variant + inventory data from Shopify FIRST
     let liveProduct: any = null;
     let liveVariantPrice: string | null = null;
+    let liveVariantSku: string | null = null;
     let liveInventoryQuantity: number | null = null;
     let liveCost: number | null = null;
     try {
@@ -1791,7 +1792,7 @@ async function processProduct({
             productType
             tags
             variants(first: 1) {
-              edges { node { price } }
+              edges { node { price sku } }
             }
           }
         }`,
@@ -1799,6 +1800,7 @@ async function processProduct({
       );
       liveProduct = liveRes.data?.product;
       liveVariantPrice = liveProduct?.variants?.edges?.[0]?.node?.price ?? null;
+      liveVariantSku = liveProduct?.variants?.edges?.[0]?.node?.sku ?? null;
     } catch (err: any) {
       console.error(`[Import] SKU ${sku}: liveProduct query FAILED, falling back to cached data. Error: ${err?.message || err}`);
     }
@@ -1992,7 +1994,7 @@ async function processProduct({
     // Skip productUpdate/price/stock if nothing changed
     // NOTE: images are handled BEFORE this check, so imagesChanged is NOT included here
     const overwriteModeEarly = (shopSettings0?.matchMode || "overwrite") === "overwrite";
-    const skuChangedEarly = overwriteModeEarly && existing.shopifyVariantId && sku && sku !== existing.supplierSku;
+    const skuChangedEarly = overwriteModeEarly && existing.shopifyVariantId && sku && sku !== (liveVariantSku || existing.supplierSku);
     if (!priceChanged && !stockChanged && !costChanged && !titleChanged && !descriptionChanged && !vendorChanged && !productTypeChanged && !tagsChanged && !skuChangedEarly) {
       result.unchanged++;
       return;
@@ -2045,7 +2047,7 @@ async function processProduct({
     }
 
     const overwriteMode = (shopSettings0?.matchMode || "overwrite") === "overwrite";
-    const skuChanged = overwriteMode && existing.shopifyVariantId && sku && sku !== existing.supplierSku;
+    const skuChanged = overwriteMode && existing.shopifyVariantId && sku && sku !== (liveVariantSku || existing.supplierSku);
 
     if (priceChanged && existing.shopifyVariantId) {
       const ean = getField(row, columnMaps, "ean");
