@@ -12,6 +12,7 @@ import shopify from "~/shopify.server";
 function normalizeHtml(html: string): string {
   if (!html) return "";
   return html
+    .normalize("NFC")
     .replace(/<[^>]*>/g, " ")
     .replace(/&\w+;/g, " ")
     .replace(/&#x?[0-9a-fA-F]+;/g, " ")
@@ -923,14 +924,30 @@ async function processProduct({
         }
       }
 
-      // Update images — deferred to batch queue (only if images selected)
+      // Update images — deferred to batch queue (compare by count to avoid CDN URL mismatch)
       if (updateOpts.has("images") && productInput2.files && productInput2.files.length > 0) {
-        result.imageChanges++;
-        imageQueue.push({
-          productId: existing.shopifyProductId,
-          files: productInput2.files.map((f) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType })),
-          label: `SKU=${sku} (priority replace inter-supplier)`,
-        });
+        try {
+          const mediaRes = await graphqlWithRetry(admin,
+            `#graphql query productMedia($id: ID!) { product(id: $id) { media(first: 50) { edges { node { id ... on MediaImage { image { url } } } } } } }`,
+            { id: existing.shopifyProductId }
+          );
+          const existingCount = (mediaRes.data?.product?.media?.edges || []).length;
+          if (existingCount !== productInput2.files.length) {
+            result.imageChanges++;
+            imageQueue.push({
+              productId: existing.shopifyProductId,
+              files: productInput2.files.map((f) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType })),
+              label: `SKU=${sku} (priority replace inter-supplier, ${existingCount}→${productInput2.files.length})`,
+            });
+          }
+        } catch {
+          result.imageChanges++;
+          imageQueue.push({
+            productId: existing.shopifyProductId,
+            files: productInput2.files.map((f) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType })),
+            label: `SKU=${sku} (priority replace inter-supplier, media query failed)`,
+          });
+        }
       }
       const newMapping2 = await prisma.productMapping.upsert({
         where: { shopDomain_supplierSku: { shopDomain, supplierSku: sku } },
@@ -950,7 +967,7 @@ async function processProduct({
           lastDescription: productInput2.descriptionHtml ?? null,
           lastVendor: productInput2.vendor ?? null,
           lastProductType: productInput2.productType ?? null,
-          lastTags: productInput2.tags?.length ? JSON.stringify(productInput2.tags) : null,
+          lastTags: productInput2.tags?.length ? normalizeTags(productInput2.tags) : null,
           lastImportSource: sourceKey,
         },
         update: {
@@ -967,7 +984,7 @@ async function processProduct({
           lastDescription: productInput2.descriptionHtml ?? undefined,
           lastVendor: productInput2.vendor ?? undefined,
           lastProductType: productInput2.productType ?? undefined,
-          lastTags: productInput2.tags?.length ? JSON.stringify(productInput2.tags) : undefined,
+          lastTags: productInput2.tags?.length ? normalizeTags(productInput2.tags) : undefined,
           lastImportSource: sourceKey,
         },
       });
@@ -1142,14 +1159,30 @@ async function processProduct({
           }
         }
 
-        // Update images — deferred to batch queue (only if images selected)
+        // Update images — deferred to batch queue (compare by count to avoid CDN URL mismatch)
         if (updateOpts.has("images") && productInput2.files && productInput2.files.length > 0) {
-          result.imageChanges++;
-          imageQueue.push({
-            productId: dupCheck.existingShopifyProductId,
-            files: productInput2.files.map((f) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType })),
-            label: `SKU=${sku} (priority replace EAN dup)`,
-          });
+          try {
+            const mediaRes2 = await graphqlWithRetry(admin,
+              `#graphql query productMedia($id: ID!) { product(id: $id) { media(first: 50) { edges { node { id ... on MediaImage { image { url } } } } } } }`,
+              { id: dupCheck.existingShopifyProductId }
+            );
+            const existingCount2 = (mediaRes2.data?.product?.media?.edges || []).length;
+            if (existingCount2 !== productInput2.files.length) {
+              result.imageChanges++;
+              imageQueue.push({
+                productId: dupCheck.existingShopifyProductId,
+                files: productInput2.files.map((f) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType })),
+                label: `SKU=${sku} (priority replace EAN dup, ${existingCount2}→${productInput2.files.length})`,
+              });
+            }
+          } catch {
+            result.imageChanges++;
+            imageQueue.push({
+              productId: dupCheck.existingShopifyProductId,
+              files: productInput2.files.map((f) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType })),
+              label: `SKU=${sku} (priority replace EAN dup, media query failed)`,
+            });
+          }
         }
 
         // Update mapping: delete old (other supplier) for overwrite, or just reassign for update
@@ -1678,7 +1711,7 @@ async function processProduct({
         lastDescription: productInput2.descriptionHtml ?? null,
         lastVendor: productInput2.vendor ?? null,
         lastProductType: productInput2.productType ?? null,
-        lastTags: productInput2.tags?.length ? JSON.stringify(productInput2.tags) : null,
+        lastTags: productInput2.tags?.length ? normalizeTags(productInput2.tags) : null,
         lastImportSource: sourceKey,
       },
       update: {
@@ -1696,7 +1729,7 @@ async function processProduct({
           lastDescription: productInput2.descriptionHtml ?? undefined,
           lastVendor: productInput2.vendor ?? undefined,
           lastProductType: productInput2.productType ?? undefined,
-          lastTags: productInput2.tags?.length ? JSON.stringify(productInput2.tags) : undefined,
+          lastTags: productInput2.tags?.length ? normalizeTags(productInput2.tags) : undefined,
         } : {}),
         lastImportSource: sourceKey,
       },
@@ -1766,7 +1799,9 @@ async function processProduct({
       );
       liveProduct = liveRes.data?.product;
       liveVariantPrice = liveProduct?.variants?.edges?.[0]?.node?.price ?? null;
-    } catch {}
+    } catch (err: any) {
+      console.error(`[Import] SKU ${sku}: liveProduct query FAILED, falling back to cached data. Error: ${err?.message || err}`);
+    }
 
     if (existing.shopifyInventoryItemId && locationId) {
       try {
@@ -1816,10 +1851,16 @@ async function processProduct({
     }
     const vendorChanged = updateOpts.has("vendor") && productInput.vendor && productInput.vendor !== liveVendor;
     const productTypeChanged = updateOpts.has("productType") && productInput.productType && productInput.productType !== liveProductType;
-    const tagsBaseline = liveTags?.length
-      ? (Array.isArray(liveTags) ? normalizeTags(liveTags) : normalizeTags(liveTags.split(",")))
+    const tagsBaseline = liveTags != null
+      ? normalizeTags(Array.isArray(liveTags) ? liveTags : liveTags.split(","))
       : existing.lastTags ?? null;
-    const tagsChanged = updateOpts.has("tags") && productInput.tags?.length && normalizeTags(productInput.tags) !== tagsBaseline;
+    const tagsChanged = updateOpts.has("tags") && productInput.tags?.length && normalizeTags(productInput.tags as string[]) !== tagsBaseline;
+    if (tagsChanged) {
+      console.log(`[Import] SKU ${sku}: TAGS CHANGED baseline=${tagsBaseline} new=${normalizeTags(productInput.tags as string[])} liveTags=${JSON.stringify(liveTags)}`);
+    }
+    if (titleChanged) {
+      console.log(`[Import] SKU ${sku}: TITLE CHANGED liveTitle=${JSON.stringify(liveTitle)} csvTitle=${JSON.stringify(productInput.title)}`);
+    }
 
     // === COLLECTIONS: always sync (idempotent) even if nothing else changed ===
     if (updateOpts.has("collections") && productInput.collections?.length) {
@@ -1914,8 +1955,7 @@ async function processProduct({
         const newFiles = (productInput.files as any[]).filter((f: any) => f.originalSource);
         const newUrls = new Set(newFiles.map((f: any) => f.originalSource));
 
-        const sameImages = existingUrls.size === newUrls.size &&
-          [...newUrls].every((u) => existingUrls.has(u));
+        const sameImages = existingMedia.length === newFiles.length;
 
         if (!sameImages && newFiles.length > 0) {
           const toDelete = existingMedia.filter((m) => !newUrls.has(m.url));
@@ -1950,8 +1990,10 @@ async function processProduct({
     }
 
     // Skip productUpdate/price/stock if nothing changed
-    // NOTE: images are handled BEFORE this check (lines 1731-1771), so imagesChanged is NOT included here
-    if (!priceChanged && !stockChanged && !costChanged && !titleChanged && !descriptionChanged && !vendorChanged && !productTypeChanged && !tagsChanged) {
+    // NOTE: images are handled BEFORE this check, so imagesChanged is NOT included here
+    const overwriteModeEarly = (shopSettings0?.matchMode || "overwrite") === "overwrite";
+    const skuChangedEarly = overwriteModeEarly && existing.shopifyVariantId && sku && sku !== existing.supplierSku;
+    if (!priceChanged && !stockChanged && !costChanged && !titleChanged && !descriptionChanged && !vendorChanged && !productTypeChanged && !tagsChanged && !skuChangedEarly) {
       result.unchanged++;
       return;
     }
@@ -2003,7 +2045,7 @@ async function processProduct({
     }
 
     const overwriteMode = (shopSettings0?.matchMode || "overwrite") === "overwrite";
-    const skuChanged = overwriteMode && existing.shopifyVariantId && sku;
+    const skuChanged = overwriteMode && existing.shopifyVariantId && sku && sku !== existing.supplierSku;
 
     if (priceChanged && existing.shopifyVariantId) {
       const ean = getField(row, columnMaps, "ean");
