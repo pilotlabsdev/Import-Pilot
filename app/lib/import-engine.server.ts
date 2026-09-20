@@ -234,23 +234,30 @@ async function updateInventoryItem(admin: any, inventoryItemId: string, fields: 
   );
 }
 
-async function updateVariantSku(admin: any, productId: string, variantId: string, sku: string): Promise<void> {
-  await graphqlWithRetry(admin,
-    `#graphql
-    mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-      productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-        productVariants { id sku }
-        userErrors { field message }
-      }
-    }`,
-    {
-      productId,
-      variants: [{
-        id: variantId,
-        inventoryItem: { sku },
-      }],
-    }
-  );
+async function updateVariantSku(shopDomain: string, productId: string, variantId: string, sku: string): Promise<void> {
+  const session = await prisma.session.findFirst({
+    where: { shop: shopDomain },
+    orderBy: { expires: "desc" },
+  });
+  if (!session?.accessToken) {
+    console.error(`[Import] SKU ${sku}: no session found for ${shopDomain}, skip REST SKU update`);
+    return;
+  }
+  const shopId = productId.replace("gid://shopify/Product/", "");
+  const varId = variantId.replace("gid://shopify/ProductVariant/", "");
+  const url = `https://${shopDomain}/admin/api/2026-07/products/${shopId}/variants/${varId}.json`;
+  const resp = await fetch(url, {
+    method: "PUT",
+    headers: {
+      "X-Shopify-Access-Token": session.accessToken,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ variant: { id: Number(varId), sku } }),
+  });
+  if (!resp.ok) {
+    const body = await resp.text();
+    throw new Error(`REST SKU update ${resp.status}: ${body}`);
+  }
 }
 
 async function verifyProductExists(admin: any, shopifyProductId: string): Promise<boolean> {
@@ -806,6 +813,7 @@ async function processProduct({
           productPatch.seo = productInput2.seo;
         } else {
           // update mode: only fields selected in updateOpts
+          if (updateOpts.has("name")) productPatch.title = productInput2.title;
           if (updateOpts.has("description")) {
             productPatch.descriptionHtml = productInput2.descriptionHtml;
             productPatch.seo = productInput2.seo;
@@ -880,10 +888,10 @@ async function processProduct({
         }
         if (sku && variantId2 && matchMode0 === "overwrite") {
           try {
-            await updateVariantSku(admin, existing.shopifyProductId, variantId2, sku);
-          } catch (e: any) {
-            console.error("[Import] Priority replace: error updating SKU:", e?.message);
-          }
+            await updateVariantSku(shopDomain, existing.shopifyProductId, variantId2, sku);
+            } catch (e: any) {
+              console.error(`[Import] Priority replace: error updating SKU:`, e?.message);
+            }
         }
       }
 
@@ -1014,6 +1022,7 @@ async function processProduct({
             productPatch.seo = productInput2.seo;
           } else {
             // update mode: only fields selected in updateOpts
+            if (updateOpts.has("name")) productPatch.title = productInput2.title;
             if (updateOpts.has("description")) {
               productPatch.descriptionHtml = productInput2.descriptionHtml;
               productPatch.seo = productInput2.seo;
@@ -1092,7 +1101,7 @@ async function processProduct({
             }
             if (sku && matchMode2 === "overwrite") {
               try {
-                await updateVariantSku(admin, dupCheck.existingShopifyProductId, variantId2, sku);
+                await updateVariantSku(shopDomain, dupCheck.existingShopifyProductId, variantId2, sku);
               } catch (e: any) {
                 console.error(`[Import] Priority replace: error updating SKU:`, e?.message);
               }
@@ -1466,6 +1475,7 @@ async function processProduct({
         productPatch.seo = productInput2.seo;
       } else {
         // update mode: only fields selected in updateOpts
+        if (updateOpts.has("name")) productPatch.title = productInput2.title;
         if (updateOpts.has("description")) {
           productPatch.descriptionHtml = productInput2.descriptionHtml;
           productPatch.seo = productInput2.seo;
@@ -1540,7 +1550,7 @@ async function processProduct({
       }
       if (sku && matchModePR === "overwrite") {
         try {
-          await updateVariantSku(admin, priorityReplaceTarget.shopifyProductId, variantId2, sku);
+          await updateVariantSku(shopDomain, priorityReplaceTarget.shopifyProductId, variantId2, sku);
         } catch (e: any) {
           console.error("[Import] Priority replace: error updating SKU:", e?.message);
         }
@@ -1784,7 +1794,7 @@ async function processProduct({
 
     // === CHANGE DETECTION: compare against LIVE Shopify data ===
 
-    const priceChanged = updateOpts.has("price") && liveVariantPrice !== null && String(prices.regularPrice) !== liveVariantPrice;
+    const priceChanged = updateOpts.has("price") && liveVariantPrice !== null && Math.abs(prices.regularPrice - parseFloat(liveVariantPrice)) > 0.01;
     const stockChanged = updateOpts.has("stock") && existing.shopifyInventoryItemId && newQty !== (liveInventoryQuantity ?? existing.lastQuantity);
     const costChanged = costPrice > 0 && existing.shopifyInventoryItemId && Math.abs((liveCost ?? 0) - costPrice) > 0.001;
 
@@ -1872,7 +1882,7 @@ async function processProduct({
       }
     }
 
-    // Images in update: check existing media, only add if missing
+    // Images in update: replace existing media with CSV images
     if (updateOpts.has("images") && productInput.files?.length) {
       try {
         const mediaRes = await graphqlWithRetry(admin,
@@ -1882,6 +1892,7 @@ async function processProduct({
               media(first: 50) {
                 edges {
                   node {
+                    id
                     ... on MediaImage {
                       image { url altText }
                     }
@@ -1892,20 +1903,45 @@ async function processProduct({
           }`,
           { id: existing.shopifyProductId }
         );
-        const existingUrls = new Set(
-          (mediaRes.data?.product?.media?.edges || [])
-            .map((e: any) => e.node?.image?.url || "")
-            .filter(Boolean)
-        );
-        const newFiles = existingUrls.size === 0
-          ? (productInput.files as any[]).filter((f: any) => f.originalSource)
-          : [];
-        if (newFiles.length > 0) {
+        const existingMedia: Array<{ mediaId: string; url: string }> = [];
+        for (const edge of mediaRes.data?.product?.media?.edges || []) {
+          const url = edge.node?.image?.url || "";
+          if (url && edge.node?.id) {
+            existingMedia.push({ mediaId: edge.node.id, url });
+          }
+        }
+        const existingUrls = new Set(existingMedia.map((m) => m.url));
+        const newFiles = (productInput.files as any[]).filter((f: any) => f.originalSource);
+        const newUrls = new Set(newFiles.map((f: any) => f.originalSource));
+
+        const sameImages = existingUrls.size === newUrls.size &&
+          [...newUrls].every((u) => existingUrls.has(u));
+
+        if (!sameImages && newFiles.length > 0) {
+          const toDelete = existingMedia.filter((m) => !newUrls.has(m.url));
+          if (toDelete.length > 0) {
+            try {
+              await graphqlWithRetry(admin,
+                `#graphql
+                mutation productDeleteMedia($id: ID!, $mediaIds: [ID!]!) {
+                  productDeleteMedia(productId: $id, mediaIds: $mediaIds) {
+                    deletedMediaIds
+                    userErrors { field message code }
+                  }
+                }`,
+                { id: existing.shopifyProductId, mediaIds: toDelete.map((m) => m.mediaId) },
+                3
+              );
+            } catch (delErr: any) {
+              console.error(`[Import] Standard update: delete existing images error: ${delErr?.message}`);
+            }
+          }
+
           result.imageChanges++;
           imageQueue.push({
             productId: existing.shopifyProductId,
             files: newFiles.map((f: any) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType || "IMAGE" })),
-            label: `SKU=${sku} (update add ${newFiles.length} images)`,
+            label: `SKU=${sku} (update replace ${toDelete.length} existing)`,
           });
         }
       } catch (error: any) {
@@ -1993,7 +2029,7 @@ async function processProduct({
 
     if (skuChanged) {
       try {
-        await updateVariantSku(admin, existing.shopifyProductId, existing.shopifyVariantId!, sku);
+        await updateVariantSku(shopDomain, existing.shopifyProductId, existing.shopifyVariantId!, sku);
         console.log(`[Import] SKU ${sku}: overwritten SKU on variant ${existing.shopifyVariantId}`);
       } catch (error: any) {
         console.error(`[Import] SKU update failed for ${sku}:`, error?.message || error);
