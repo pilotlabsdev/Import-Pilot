@@ -1576,13 +1576,74 @@ async function processProduct({
     }
 
     // Update images — deferred to batch queue (only if images selected)
+    // In priority replace, we REPLACE images (delete existing if different, then add new ones)
     if (updateOpts.has("images") && productInput2.files && productInput2.files.length > 0) {
-      result.imageChanges++;
-      imageQueue.push({
-        productId: priorityReplaceTarget.shopifyProductId,
-        files: productInput2.files.map((f) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType })),
-        label: `SKU=${sku} (priority replace target)`,
-      });
+      try {
+        const mediaRes = await graphqlWithRetry(admin,
+          `#graphql
+          query productMedia($id: ID!) {
+            product(id: $id) {
+              media(first: 50) {
+                edges {
+                  node {
+                    id
+                    ... on MediaImage {
+                      image { url altText }
+                    }
+                  }
+                }
+              }
+            }
+          }`,
+          { id: priorityReplaceTarget.shopifyProductId }
+        );
+        const existingMedia: Array<{ mediaId: string; url: string }> = [];
+        for (const edge of mediaRes.data?.product?.media?.edges || []) {
+          const url = edge.node?.image?.url || "";
+          if (url && edge.node?.id) {
+            existingMedia.push({ mediaId: edge.node.id, url });
+          }
+        }
+        const existingUrls = new Set(existingMedia.map((m) => m.url));
+        const newFiles = (productInput2.files as any[]).filter((f: any) => f.originalSource);
+        const newUrls = new Set(newFiles.map((f: any) => f.originalSource));
+
+        // Check if images are actually different
+        const sameImages = existingUrls.size === newUrls.size &&
+          [...newUrls].every((u) => existingUrls.has(u));
+
+        if (!sameImages && newFiles.length > 0) {
+          // Delete existing media that's not in the new set
+          const toDelete = existingMedia.filter((m) => !newUrls.has(m.url));
+          if (toDelete.length > 0) {
+            try {
+              await graphqlWithRetry(admin,
+                `#graphql
+                mutation productDeleteMedia($id: ID!, $mediaIds: [ID!]!) {
+                  productDeleteMedia(productId: $id, mediaIds: $mediaIds) {
+                    deletedMediaIds
+                    userErrors { field message code }
+                  }
+                }`,
+                { id: priorityReplaceTarget.shopifyProductId, mediaIds: toDelete.map((m) => m.mediaId) },
+                3
+              );
+            } catch (delErr: any) {
+              console.error(`[Import] Priority replace: delete existing images error: ${delErr?.message}`);
+            }
+          }
+
+          // Push new images to queue
+          result.imageChanges++;
+          imageQueue.push({
+            productId: priorityReplaceTarget.shopifyProductId,
+            files: newFiles.map((f) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType })),
+            label: `SKU=${sku} (priority replace target, replaced ${toDelete.length} existing)`,
+          });
+        }
+      } catch (error: any) {
+        console.error(`[Import] Priority replace: error checking images: ${error?.message}`);
+      }
     }
 
     // Delete old mapping (overwrite only), upsert new one

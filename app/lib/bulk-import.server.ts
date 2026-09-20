@@ -1340,7 +1340,7 @@ async function prepareAndLaunch(
       // With productSet, price and stock are always sent in the mutation.
       // Track as "applied" whenever the option is selected (productSet handles idempotency).
       // Compare against previous values to detect actual changes.
-      const priceChanged = effectiveOpts.has("price") && (lastPrice === null || lastPrice !== prices.regularPrice);
+      const priceChanged = effectiveOpts.has("price") && (lastPrice === null || Math.abs(lastPrice - prices.regularPrice) > 0.01);
       const stockChanged = effectiveOpts.has("stock") && stockQty >= 0 && (lastQty === null || lastQty !== stockQty);
       const costChanged =
         costPrice > 0 && !!match.inventoryItemId && Math.abs((match.shopifyCost ?? 0) - costPrice) > 0.001;
@@ -1355,11 +1355,11 @@ async function prepareAndLaunch(
       const csvDescription = getField(row, columnMaps, "description") || "";
       const csvVendor = getField(row, columnMaps, "brand") || "";
       const titleBaseline = match.shopifyTitle ?? lastTitle ?? "";
-      const descBaseline = lastDescription ?? "";
+      const descBaseline = match.shopifyDescription ?? lastDescription ?? "";
       const vendorBaseline = match.shopifyVendor ?? lastVendor ?? "";
       const ptBaseline = match.shopifyProductType ?? lastProductType ?? "";
       const titleChanged = effectiveOpts.has("name") && csvTitle !== titleBaseline;
-      const descriptionChanged = effectiveOpts.has("description") && normalizeHtml(csvDescription).trim() !== "" && normalizeHtml(csvDescription).trim() !== normalizeHtml(descBaseline).trim();
+      const descriptionChanged = effectiveOpts.has("description") && normalizeHtml(csvDescription).trim() !== normalizeHtml(descBaseline).trim();
       const vendorChanged = effectiveOpts.has("vendor") && csvVendor.trim() !== "" && csvVendor.trim() !== vendorBaseline.trim();
 
       const productTypeChanged = effectiveOpts.has("productType") && csvProductType !== ptBaseline;
@@ -1383,7 +1383,7 @@ async function prepareAndLaunch(
         for (let i = 1; i <= 5; i++) { const img = getField(row, columnMaps, `image${i}`); if (img) csvImageUrls.push(img.trim()); }
       }
       const shopifyImageCount = (match.shopifyImages || []).length;
-      const imagesChanged = effectiveOpts.has("images") && csvImageUrls.length !== shopifyImageCount;
+      const imagesChanged = effectiveOpts.has("images") && csvImageUrls.length > 0 && csvImageUrls.length !== shopifyImageCount;
       const skuChanged = matchMode === "overwrite" && match.sku && match.sku !== sku;
 
       // Skip products with NO changes — don't send mutation
@@ -2135,6 +2135,30 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
         });
       }
 
+      // Ensure inventory is activated at the location before setting quantities.
+      // If the product was created by another supplier or the location was activated
+      // after creation, inventorySetQuantities fails with "not stocked at the location".
+      const activationSet = new Set<string>();
+      for (const u of inventoryUpdates) {
+        if (activationSet.has(u.inventoryItemId)) continue;
+        activationSet.add(u.inventoryItemId);
+        try {
+          await gql(admin,
+            `#graphql
+            mutation inventoryBulkToggleActivation($inventoryItemId: ID!, $inventoryItemUpdates: [InventoryBulkToggleActivationInput!]!) {
+              inventoryBulkToggleActivation(inventoryItemId: $inventoryItemId, inventoryItemUpdates: $inventoryItemUpdates) {
+                inventoryItem { id }
+                userErrors { field message code }
+              }
+            }`,
+            { variables: { inventoryItemId: u.inventoryItemId, inventoryItemUpdates: [{ locationId, activate: true }] } },
+            job.shopDomain
+          );
+        } catch (e: any) {
+          console.error(`[Bulk] inventory activation failed for ${u.inventoryItemId} (SKU ${u.sku}): ${e?.message}`);
+        }
+      }
+
       const INVENTORY_SET_MUTATION = `#graphql
         mutation inventorySetQuantities($input: InventorySetQuantitiesInput!, $idempotencyKey: String!) {
           inventorySetQuantities(input: $input) @idempotent(key: $idempotencyKey) {
@@ -2211,7 +2235,7 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
           await prisma.productMapping.update({
             where: { id: mapping.id },
             data: { lastQuantity: 0 },
-          });
+          }).catch(() => {});
         } catch {
           // no detener la importación
         }

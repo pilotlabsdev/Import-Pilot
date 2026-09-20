@@ -186,6 +186,11 @@ export async function* streamCSV(
 
           if (lineNumber === 1) {
             headers = parseCSVLine(trimmed, effectiveDelimiter || "|").map((h) => h.toLowerCase());
+            const required = ["sku", "ean"];
+            const found = headers.some((h) => required.includes(h));
+            if (!found) {
+              throw new Error(`Cabeceras CSV no válidas: falta columna "sku" o "ean". Cabeceras encontradas: [${headers.slice(0, 10).join(", ")}...]`);
+            }
             continue;
           }
 
