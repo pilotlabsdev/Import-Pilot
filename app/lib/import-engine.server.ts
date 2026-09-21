@@ -28,9 +28,10 @@ function normalizeHtml(html: string): string {
     .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
     .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
     .replace(/&(\w+);/g, (entity) => HTML_ENTITY_MAP[entity] || "")
-    .replace(/<[^>]*>/g, " ")
-    .replace(/[\u200B\u200C\u200D\u00AD\u2060\uFEFF]/g, " ")
+    .replace(/<\/?[a-zA-Z][^>]*>/g, " ")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u200B\u200C\u200D\u00AD\u2060\uFEFF]/g, "")
     .replace(/[^a-záéíóúñüàèìòùäëïöûçñ0-9\s]/gi, " ")
+    .replace(/\bwi\s+fi\b/gi, "wifi")
     .replace(/\.{2,}/g, ".")
     .replace(/\s+/g, " ")
     .trim()
@@ -1960,27 +1961,6 @@ async function processProduct({
     const liveDescNorm = normalizeHtml(liveDescription ?? "");
     const descriptionChanged = updateOpts.has("description") && productInput.descriptionHtml && csvDescNorm !== liveDescNorm;
     if (descriptionChanged && productInput.descriptionHtml && liveDescription) {
-      const debugSkus = ["42748", "45396", "48125"];
-      if (debugSkus.includes(sku)) {
-        const csvRaw = productInput.descriptionHtml ?? "";
-        const liveRaw = liveDescription ?? "";
-        console.log(`[Import] SKU ${sku}: DESC DEBUG csvLen=${csvDescNorm.length} liveLen=${liveDescNorm.length} diff=${csvDescNorm.length - liveDescNorm.length}`);
-        console.log(`  CSV RAW FIRST 500: ${JSON.stringify(csvRaw.slice(0, 500))}`);
-        console.log(`  LIVE RAW FIRST 500: ${JSON.stringify(liveRaw.slice(0, 500))}`);
-        console.log(`  CSV RAW LAST 500: ${JSON.stringify(csvRaw.slice(-500))}`);
-        console.log(`  LIVE RAW LAST 500: ${JSON.stringify(liveRaw.slice(-500))}`);
-        console.log(`  CSV NORM FIRST 500: ${JSON.stringify(csvDescNorm.slice(0, 500))}`);
-        console.log(`  LIVE NORM FIRST 500: ${JSON.stringify(liveDescNorm.slice(0, 500))}`);
-        console.log(`  CSV NORM LAST 500: ${JSON.stringify(csvDescNorm.slice(-500))}`);
-        console.log(`  LIVE NORM LAST 500: ${JSON.stringify(liveDescNorm.slice(-500))}`);
-        // Find first position where they differ
-        for (let i = 0; i < Math.min(csvDescNorm.length, liveDescNorm.length); i++) {
-          if (csvDescNorm[i] !== liveDescNorm[i]) {
-            console.log(`  FIRST DIFF at pos ${i}: csv="${csvDescNorm.slice(Math.max(0,i-20), i+20)}" live="${liveDescNorm.slice(Math.max(0,i-20), i+20)}"`);
-            break;
-          }
-        }
-      }
       console.log(`[Import] SKU ${sku}: DESC CHANGED csvLen=${csvDescNorm.length} liveLen=${liveDescNorm.length}`);
     }
     const vendorChanged = updateOpts.has("vendor") && productInput.vendor && productInput.vendor !== liveVendor;

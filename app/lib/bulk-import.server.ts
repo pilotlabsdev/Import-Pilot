@@ -37,9 +37,10 @@ function normalizeHtml(html: string): string {
       };
       return map[entity] || "";
     })
-    .replace(/<[^>]*>/g, " ")
-    .replace(/[\u200B\u200C\u200D\u00AD\u2060\uFEFF]/g, " ")
+    .replace(/<\/?[a-zA-Z][^>]*>/g, " ")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u200B\u200C\u200D\u00AD\u2060\uFEFF]/g, "")
     .replace(/[^a-záéíóúñüàèìòùäëïöûçñ0-9\s]/gi, " ")
+    .replace(/\bwi\s+fi\b/gi, "wifi")
     .replace(/\.{2,}/g, ".")
     .replace(/\s+/g, " ")
     .trim()
