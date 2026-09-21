@@ -1946,6 +1946,14 @@ async function processProduct({
     const liveDescNorm = normalizeHtml(liveDescription ?? "");
     const descriptionChanged = updateOpts.has("description") && productInput.descriptionHtml && csvDescNorm !== liveDescNorm;
     if (descriptionChanged && productInput.descriptionHtml && liveDescription) {
+      const debugSkus = ["42748", "45396", "48125"];
+      if (debugSkus.includes(sku)) {
+        console.log(`[Import] SKU ${sku}: DESC DEBUG`);
+        console.log(`  CSV RAW (first 300): ${JSON.stringify((productInput.descriptionHtml ?? "").slice(0, 300))}`);
+        console.log(`  LIVE RAW (first 300): ${JSON.stringify((liveDescription ?? "").slice(0, 300))}`);
+        console.log(`  CSV NORM (first 300): ${JSON.stringify(csvDescNorm.slice(0, 300))}`);
+        console.log(`  LIVE NORM (first 300): ${JSON.stringify(liveDescNorm.slice(0, 300))}`);
+      }
       console.log(`[Import] SKU ${sku}: DESC CHANGED csvLen=${csvDescNorm.length} liveLen=${liveDescNorm.length}`);
     }
     const vendorChanged = updateOpts.has("vendor") && productInput.vendor && productInput.vendor !== liveVendor;
