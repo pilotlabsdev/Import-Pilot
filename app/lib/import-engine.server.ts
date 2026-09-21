@@ -1020,9 +1020,8 @@ async function processProduct({
       // Auto-resolve duplicate logs for this EAN after priority replace
       try {
         if (rowEanForReplace) {
-          await prisma.duplicateLog.updateMany({
-            where: { shopDomain, ean: rowEanForReplace, resolved: false },
-            data: { resolved: true },
+          await prisma.duplicateLog.deleteMany({
+            where: { shopDomain, ean: rowEanForReplace },
           });
         }
       } catch {}
@@ -1309,9 +1308,8 @@ async function processProduct({
         // Auto-resolve duplicate logs for this EAN after priority replace
         try {
           if (rowEan) {
-            await prisma.duplicateLog.updateMany({
-              where: { shopDomain, ean: rowEan, resolved: false },
-              data: { resolved: true },
+            await prisma.duplicateLog.deleteMany({
+              where: { shopDomain, ean: rowEan },
             });
           }
         } catch {}
@@ -1829,9 +1827,8 @@ async function processProduct({
     // Auto-resolve duplicate logs for this EAN after priority replace
     try {
       if (rowEanForReplace) {
-        await prisma.duplicateLog.updateMany({
-          where: { shopDomain, ean: rowEanForReplace, resolved: false },
-          data: { resolved: true },
+        await prisma.duplicateLog.deleteMany({
+          where: { shopDomain, ean: rowEanForReplace },
         });
       }
     } catch {}
@@ -2258,9 +2255,8 @@ async function processProduct({
     try {
       const resolveEan = getField(row, columnMaps, "ean") || row["ean"] || "";
       if (resolveEan) {
-        await prisma.duplicateLog.updateMany({
-          where: { shopDomain, ean: resolveEan, resolved: false },
-          data: { resolved: true },
+        await prisma.duplicateLog.deleteMany({
+          where: { shopDomain, ean: resolveEan },
         });
       }
     } catch {}
