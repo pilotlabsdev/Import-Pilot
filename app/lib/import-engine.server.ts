@@ -924,29 +924,57 @@ async function processProduct({
         }
       }
 
-      // Update images — deferred to batch queue (compare by count to avoid CDN URL mismatch)
+      // Update images — always replace all images for priority replace
       if (updateOpts.has("images") && productInput2.files && productInput2.files.length > 0) {
         try {
           const mediaRes = await graphqlWithRetry(admin,
-            `#graphql query productMedia($id: ID!) { product(id: $id) { media(first: 50) { edges { node { id ... on MediaImage { image { url } } } } } } }`,
+            `#graphql
+            query productMedia($id: ID!) {
+              product(id: $id) {
+                media(first: 50) {
+                  edges {
+                    node {
+                      id
+                    }
+                  }
+                }
+              }
+            }`,
             { id: existing.shopifyProductId }
           );
-          const existingCount = (mediaRes.data?.product?.media?.edges || []).length;
-          if (existingCount !== productInput2.files.length) {
-            result.imageChanges++;
-            imageQueue.push({
-              productId: existing.shopifyProductId,
-              files: productInput2.files.map((f) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType })),
-              label: `SKU=${sku} (priority replace inter-supplier, ${existingCount}→${productInput2.files.length})`,
-            });
+          const existingMediaIds: string[] = [];
+          for (const edge of mediaRes.data?.product?.media?.edges || []) {
+            if (edge.node?.id) existingMediaIds.push(edge.node.id);
           }
-        } catch {
+
+          // Delete ALL existing images
+          if (existingMediaIds.length > 0) {
+            try {
+              await graphqlWithRetry(admin,
+                `#graphql
+                mutation productDeleteMedia($id: ID!, $mediaIds: [ID!]!) {
+                  productDeleteMedia(productId: $id, mediaIds: $mediaIds) {
+                    deletedMediaIds
+                    userErrors { field message }
+                  }
+                }`,
+                { id: existing.shopifyProductId, mediaIds: existingMediaIds },
+                3
+              );
+            } catch (delErr: any) {
+              console.error(`[Import] Priority replace inter-supplier: delete images error: ${delErr?.message}`);
+            }
+          }
+
+          // Add ALL new supplier images
           result.imageChanges++;
           imageQueue.push({
             productId: existing.shopifyProductId,
-            files: productInput2.files.map((f) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType })),
-            label: `SKU=${sku} (priority replace inter-supplier, media query failed)`,
+            files: productInput2.files.map((f: any) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType || "IMAGE" })),
+            label: `SKU=${sku} (priority replace inter-supplier ${existingMediaIds.length}→${productInput2.files.length} images)`,
           });
+        } catch (error: any) {
+          console.error(`[Import] Priority replace inter-supplier: error checking images: ${error?.message}`);
         }
       }
       const newMapping2 = await prisma.productMapping.upsert({
@@ -1503,11 +1531,32 @@ async function processProduct({
         }
       } else {
         // Same SKU found in Shopify → adopt
+        let adoptInventoryItemId: string | null = null;
+        try {
+          const adoptRes = await graphqlWithRetry(admin,
+            `#graphql
+            query productVariant($id: ID!) {
+              product(id: $id) {
+                variants(first: 1) {
+                  edges {
+                    node {
+                      id
+                      inventoryItem { id }
+                    }
+                  }
+                }
+              }
+            }`,
+            { id: foundBarcode.productId }
+          );
+          adoptInventoryItemId = adoptRes.data?.product?.variants?.edges?.[0]?.node?.inventoryItem?.id || null;
+        } catch {}
+
         const mapping = await prisma.productMapping.upsert({
           where: { shopDomain_supplierSku: { shopDomain, supplierSku: sku } },
           create: {
             shopDomain, configId: config.id, supplierSku: sku, ean: rowEan || null,
-            shopifyProductId: foundBarcode.productId, shopifyVariantId: foundBarcode.variantId, shopifyInventoryItemId: null,
+            shopifyProductId: foundBarcode.productId, shopifyVariantId: foundBarcode.variantId, shopifyInventoryItemId: adoptInventoryItemId,
             lastPrice: prices.regularPrice, lastComparePrice: prices.compareAtPrice,
             lastQuantity: newQty, lastCost: costPrice > 0 ? costPrice : null,
             lastTitle: productInput.title ?? null, lastDescription: productInput.descriptionHtml ?? null,
@@ -1517,6 +1566,7 @@ async function processProduct({
           },
           update: {
             shopifyProductId: foundBarcode.productId, shopifyVariantId: foundBarcode.variantId,
+            shopifyInventoryItemId: adoptInventoryItemId || undefined,
             lastTitle: productInput.title ?? undefined, lastDescription: productInput.descriptionHtml ?? undefined,
             lastVendor: productInput.vendor ?? undefined, lastProductType: productInput.productType ?? undefined,
             lastTags: productInput.tags?.length ? normalizeTags(productInput.tags) : undefined,
@@ -1721,6 +1771,12 @@ async function processProduct({
         });
       } catch (error: any) {
         console.error(`[Import] Priority replace: error checking images: ${error?.message}`);
+        result.imageChanges++;
+        imageQueue.push({
+          productId: priorityReplaceTarget.shopifyProductId,
+          files: productInput2.files.map((f: any) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType || "IMAGE" })),
+          label: `SKU=${sku} (priority replace fallback: ${error?.message || "query error"})`,
+        });
       }
     }
 
@@ -2020,6 +2076,12 @@ async function processProduct({
         });
       } catch (error: any) {
         console.error("[Import] Error checking images:", error?.message || error);
+        result.imageChanges++;
+        imageQueue.push({
+          productId: existing.shopifyProductId,
+          files: productInput.files.map((f: any) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType || "IMAGE" })),
+          label: `SKU=${sku} (replace fallback: ${error?.message || "query error"})`,
+        });
       }
     }
 
@@ -2190,6 +2252,17 @@ async function processProduct({
           lastSyncAt: new Date(),
         },
       });
+    } catch {}
+
+    // Auto-resolve duplicate logs when adopting via priority (single update path)
+    try {
+      const resolveEan = getField(row, columnMaps, "ean") || row["ean"] || "";
+      if (resolveEan) {
+        await prisma.duplicateLog.updateMany({
+          where: { shopDomain, ean: resolveEan, resolved: false },
+          data: { resolved: true },
+        });
+      }
     } catch {}
 
     result.updated++;
