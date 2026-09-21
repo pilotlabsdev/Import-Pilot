@@ -9,15 +9,29 @@ import { rateLimitedGraphql } from "./import-locks.server";
 import { ensureMetafieldDefinitions } from "./metafield-definitions";
 import shopify from "~/shopify.server";
 
+const HTML_ENTITY_MAP: Record<string, string> = {
+  amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ",
+  eacute: "é", agrave: "à", auml: "ä", ouml: "ö", uuml: "ü",
+  ccordil: "ç", ntide: "ñ", iquest: "¿", iexcl: "¡", times: "×",
+  divide: "÷", euro: "€", pound: "£", cent: "¢", copy: "©",
+  reg: "®", trade: "™", mdash: "—", ndash: "–", lsquo: "'", rsquo: "'",
+  ldquo: '"', rdquo: '"', bull: "•", middot: "·", hellip: "…",
+  laquo: "«", raquo: "»", para: "§", micro: "µ", acute: "´",
+  cedil: "¸", tilde: "~", circ: "ˆ", deg: "°", brvbar: "¦",
+  sect: "§", curren: "¤", yen: "¥", not: "¬",
+  shy: "\u00AD", macr: "¯",
+};
 function normalizeHtml(html: string): string {
   if (!html) return "";
   return html
     .normalize("NFC")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/&(\w+);/g, (entity) => HTML_ENTITY_MAP[entity] || "")
     .replace(/<[^>]*>/g, " ")
-    .replace(/&\w+;/g, " ")
-    .replace(/&#x?[0-9a-fA-F]+;/g, " ")
     .replace(/[\u200B\u200C\u200D\u00AD\u2060\uFEFF]/g, " ")
     .replace(/[^a-záéíóúñüàèìòùäëïöûçñ0-9\s]/gi, " ")
+    .replace(/\.{2,}/g, ".")
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
@@ -1948,11 +1962,24 @@ async function processProduct({
     if (descriptionChanged && productInput.descriptionHtml && liveDescription) {
       const debugSkus = ["42748", "45396", "48125"];
       if (debugSkus.includes(sku)) {
-        console.log(`[Import] SKU ${sku}: DESC DEBUG`);
-        console.log(`  CSV RAW (first 300): ${JSON.stringify((productInput.descriptionHtml ?? "").slice(0, 300))}`);
-        console.log(`  LIVE RAW (first 300): ${JSON.stringify((liveDescription ?? "").slice(0, 300))}`);
-        console.log(`  CSV NORM (first 300): ${JSON.stringify(csvDescNorm.slice(0, 300))}`);
-        console.log(`  LIVE NORM (first 300): ${JSON.stringify(liveDescNorm.slice(0, 300))}`);
+        const csvRaw = productInput.descriptionHtml ?? "";
+        const liveRaw = liveDescription ?? "";
+        console.log(`[Import] SKU ${sku}: DESC DEBUG csvLen=${csvDescNorm.length} liveLen=${liveDescNorm.length} diff=${csvDescNorm.length - liveDescNorm.length}`);
+        console.log(`  CSV RAW FIRST 500: ${JSON.stringify(csvRaw.slice(0, 500))}`);
+        console.log(`  LIVE RAW FIRST 500: ${JSON.stringify(liveRaw.slice(0, 500))}`);
+        console.log(`  CSV RAW LAST 500: ${JSON.stringify(csvRaw.slice(-500))}`);
+        console.log(`  LIVE RAW LAST 500: ${JSON.stringify(liveRaw.slice(-500))}`);
+        console.log(`  CSV NORM FIRST 500: ${JSON.stringify(csvDescNorm.slice(0, 500))}`);
+        console.log(`  LIVE NORM FIRST 500: ${JSON.stringify(liveDescNorm.slice(0, 500))}`);
+        console.log(`  CSV NORM LAST 500: ${JSON.stringify(csvDescNorm.slice(-500))}`);
+        console.log(`  LIVE NORM LAST 500: ${JSON.stringify(liveDescNorm.slice(-500))}`);
+        // Find first position where they differ
+        for (let i = 0; i < Math.min(csvDescNorm.length, liveDescNorm.length); i++) {
+          if (csvDescNorm[i] !== liveDescNorm[i]) {
+            console.log(`  FIRST DIFF at pos ${i}: csv="${csvDescNorm.slice(Math.max(0,i-20), i+20)}" live="${liveDescNorm.slice(Math.max(0,i-20), i+20)}"`);
+            break;
+          }
+        }
       }
       console.log(`[Import] SKU ${sku}: DESC CHANGED csvLen=${csvDescNorm.length} liveLen=${liveDescNorm.length}`);
     }

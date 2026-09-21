@@ -26,11 +26,21 @@ import shopify from "~/shopify.server";
 function normalizeHtml(html: string): string {
   if (!html) return "";
   return html
+    .normalize("NFC")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/&(\w+);/g, (entity) => {
+      const map: Record<string, string> = {
+        amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ",
+        eacute: "é", agrave: "à", auml: "ä", ouml: "ö", uuml: "ü",
+        ccordil: "ç", ntide: "ñ", iquest: "¿", iexcl: "¡",
+      };
+      return map[entity] || "";
+    })
     .replace(/<[^>]*>/g, " ")
-    .replace(/&\w+;/g, " ")
-    .replace(/&#x?[0-9a-fA-F]+;/g, " ")
     .replace(/[\u200B\u200C\u200D\u00AD\u2060\uFEFF]/g, " ")
     .replace(/[^a-záéíóúñüàèìòùäëïöûçñ0-9\s]/gi, " ")
+    .replace(/\.{2,}/g, ".")
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
