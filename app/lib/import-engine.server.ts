@@ -1960,9 +1960,6 @@ async function processProduct({
     const csvDescNorm = normalizeHtml(productInput.descriptionHtml ?? "");
     const liveDescNorm = normalizeHtml(liveDescription ?? "");
     const descriptionChanged = updateOpts.has("description") && productInput.descriptionHtml && csvDescNorm !== liveDescNorm;
-    if (descriptionChanged && productInput.descriptionHtml && liveDescription) {
-      console.log(`[Import] SKU ${sku}: DESC CHANGED csvLen=${csvDescNorm.length} liveLen=${liveDescNorm.length}`);
-    }
     const vendorChanged = updateOpts.has("vendor") && productInput.vendor && productInput.vendor !== liveVendor;
     const productTypeChanged = updateOpts.has("productType") && productInput.productType && productInput.productType !== liveProductType;
     const tagsBaseline = liveTags != null
