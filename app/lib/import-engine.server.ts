@@ -142,29 +142,39 @@ interface ImageUploadTask {
   label: string; // for logging
 }
 
-async function processImageQueue(admin: any, queue: ImageUploadTask[], concurrency = 10): Promise<void> {
-  if (queue.length === 0) return;
+async function processImageQueue(admin: any, queue: ImageUploadTask[], concurrency = 10): Promise<Map<string, StoredImage[]>> {
+  const resultMap = new Map<string, StoredImage[]>();
+  if (queue.length === 0) return resultMap;
   console.log(`[Import] Processing image queue: ${queue.length} products, batch size ${concurrency}`);
 
   for (let i = 0; i < queue.length; i += concurrency) {
     const batch = queue.slice(i, i + concurrency);
     const promises = batch.map(async (task) => {
       try {
-        await graphqlWithRetry(admin,
+        const res = await graphqlWithRetry(admin,
           `#graphql
           mutation productCreateMedia($id: ID!, $media: [CreateMediaInput!]!) {
             productCreateMedia(productId: $id, media: $media) { media { id } userErrors { field message } }
           }`,
           { id: task.productId, media: task.files.map((f) => ({ originalSource: f.originalSource, alt: f.alt, mediaContentType: f.contentType })) }
         );
+        const mediaIds: string[] = (res.data?.productCreateMedia?.media || []).map((m: any) => m.id).filter(Boolean);
+        if (mediaIds.length > 0) {
+          const stored: StoredImage[] = mediaIds.map((mediaId, idx) => ({
+            mediaId,
+            url: task.files[idx]?.originalSource || "",
+          }));
+          resultMap.set(task.productId, stored);
+        }
       } catch (error: any) {
         console.error(`[Import] Images ERROR: ${task.label}:`, error?.message);
       }
     });
     await Promise.all(promises);
-    if (i + concurrency < queue.length) await sleep(200); // brief pause between batches
+    if (i + concurrency < queue.length) await sleep(200);
   }
   console.log(`[Import] Image queue complete: ${queue.length} products processed`);
+  return resultMap;
 }
 
 export interface StoredImage {
@@ -829,7 +839,21 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
 
     // Process all deferred image uploads in parallel batches
     if (imageQueue.length > 0) {
-      await processImageQueue(admin, imageQueue);
+      const imageResults = await processImageQueue(admin, imageQueue);
+      // Save mediaIds from processImageQueue results to DB mappings
+      for (const [productId, stored] of imageResults) {
+        try {
+          const mapping = await prisma.productMapping.findFirst({
+            where: { shopDomain, shopifyProductId: productId },
+          });
+          if (mapping) {
+            await prisma.productMapping.update({
+              where: { id: mapping.id },
+              data: { shopifyImages: JSON.stringify(stored) },
+            });
+          }
+        } catch {}
+      }
     }
 
     await prisma.importLog.update({
@@ -2442,6 +2466,7 @@ async function processProduct({
           lastProductType: productInput.productType ?? null,
           lastTags: productInput.tags?.length ? normalizeTags(productInput.tags) : null,
           lastImportSource: sourceKey,
+          ...(productInput.files?.length ? { shopifyImages: JSON.stringify(productInput.files.map((f: any) => ({ mediaId: "", url: f.originalSource }))) } : {}),
         },
         update: {
           configId: config.id,
@@ -2459,8 +2484,28 @@ async function processProduct({
           lastProductType: productInput.productType ?? undefined,
           lastTags: productInput.tags?.length ? normalizeTags(productInput.tags) : undefined,
           lastImportSource: sourceKey,
+          ...(productInput.files?.length ? { shopifyImages: JSON.stringify(productInput.files.map((f: any) => ({ mediaId: "", url: f.originalSource }))) } : {}),
         },
       });
+
+      // Query Shopify media IDs for products with images (productSet uploads images async)
+      if (productInput.files?.length) {
+        try {
+          await sleep(2000);
+          const media = await queryProductMedia(admin, productId);
+          if (media.length > 0) {
+            const csvFiles = productInput.files.map((f: any) => f.originalSource);
+            const stored: StoredImage[] = media.map((m, i) => ({
+              mediaId: m.mediaId,
+              url: csvFiles[i] || m.url,
+            }));
+            await prisma.productMapping.updateMany({
+              where: { shopDomain, shopifyProductId: productId },
+              data: { shopifyImages: JSON.stringify(stored) },
+            });
+          }
+        } catch {}
+      }
     } catch {
       // Mapping may already exist from concurrent process
     }
