@@ -167,6 +167,127 @@ async function processImageQueue(admin: any, queue: ImageUploadTask[], concurren
   console.log(`[Import] Image queue complete: ${queue.length} products processed`);
 }
 
+export interface StoredImage {
+  mediaId: string;
+  url: string;
+}
+
+async function queryProductMedia(admin: any, productId: string): Promise<StoredImage[]> {
+  const mediaRes = await graphqlWithRetry(admin,
+    `#graphql
+    query productMedia($id: ID!) {
+      product(id: $id) {
+        media(first: 50) {
+          edges {
+            node {
+              id
+              ... on MediaImage {
+                image {
+                  url
+                }
+              }
+            }
+          }
+        }
+      }
+    }`,
+    { id: productId }
+  );
+  const images: StoredImage[] = [];
+  for (const edge of mediaRes.data?.product?.media?.edges || []) {
+    const node = edge.node;
+    if (node?.id) {
+      const url = node.image?.url || "";
+      images.push({ mediaId: node.id, url });
+    }
+  }
+  return images;
+}
+
+export async function incrementalImageUpdate(
+  admin: any,
+  shopDomain: string,
+  shopifyProductId: string,
+  supplierSku: string,
+  csvFiles: Array<{ originalSource: string; alt: string; contentType: string }>,
+  label: string,
+): Promise<{ changed: boolean; newImages: StoredImage[] }> {
+  // 1. Query current Shopify media
+  const currentMedia = await queryProductMedia(admin, shopifyProductId);
+
+  // 2. Diff: compare CSV URLs vs Shopify URLs
+  const csvUrls = new Set(csvFiles.map((f) => f.originalSource));
+  const shopifyUrls = new Set(currentMedia.map((m) => m.url));
+
+  const toDelete = currentMedia.filter((m) => !csvUrls.has(m.url));
+  const toAdd = csvFiles.filter((f) => !shopifyUrls.has(f.originalSource));
+  const toKeep = currentMedia.filter((m) => shopifyUrls.has(m.url) && csvUrls.has(m.url));
+
+  // Skip if nothing changed
+  if (toDelete.length === 0 && toAdd.length === 0) {
+    return { changed: false, newImages: currentMedia };
+  }
+
+  console.log(`[Import] Images ${label}: keep=${toKeep.length}, delete=${toDelete.length}, add=${toAdd.length}`);
+
+  // 3. Delete images that are in Shopify but not in CSV
+  if (toDelete.length > 0) {
+    try {
+      await graphqlWithRetry(admin,
+        `#graphql
+        mutation fileDelete($files: [ID!]!) {
+          fileDelete(files: $files) {
+            deletedFiles
+            userErrors { field message code }
+          }
+        }`,
+        { files: toDelete.map((d) => d.mediaId) },
+      );
+    } catch (delErr: any) {
+      console.error(`[Import] Images ${label}: fileDelete error:`, delErr?.message);
+    }
+  }
+
+  // 4. Add images that are in CSV but not in Shopify
+  const newMedia: StoredImage[] = [...toKeep];
+  if (toAdd.length > 0) {
+    const productUpdateRes = await graphqlWithRetry(admin,
+      `#graphql
+      mutation productUpdate($product: ProductUpdateInput!, $media: [CreateMediaInput!]) {
+        productUpdate(product: $product, media: $media) {
+          product {
+            media(first: 50) {
+              edges {
+                node {
+                  id
+                  ... on MediaImage {
+                    image { url }
+                  }
+                }
+              }
+            }
+          }
+          userErrors { field message }
+        }
+      }`,
+      {
+        product: { id: shopifyProductId },
+        media: toAdd.map((f) => ({ originalSource: f.originalSource, mediaContentType: f.contentType || "IMAGE" })),
+      },
+    );
+
+    // Capture new media IDs from response
+    for (const edge of productUpdateRes.data?.productUpdate?.product?.media?.edges || []) {
+      const node = edge.node;
+      if (node?.id) {
+        newMedia.push({ mediaId: node.id, url: node.image?.url || "" });
+      }
+    }
+  }
+
+  return { changed: true, newImages: newMedia };
+}
+
 async function graphqlWithRetry(_admin: any, query: string, vars: any, maxRetries = 3): Promise<any> {
   // Always use module-level ref (may have been refreshed mid-import)
   const admin = _adminRef.current || _admin;
@@ -939,57 +1060,21 @@ async function processProduct({
         }
       }
 
-      // Update images — always replace all images for priority replace
+      // Update images — incremental (fileDelete + productUpdate)
+      let newShopifyImages: string | null = null;
       if (updateOpts.has("images") && productInput2.files && productInput2.files.length > 0) {
         try {
-          const mediaRes = await graphqlWithRetry(admin,
-            `#graphql
-            query productMedia($id: ID!) {
-              product(id: $id) {
-                media(first: 50) {
-                  edges {
-                    node {
-                      id
-                    }
-                  }
-                }
-              }
-            }`,
-            { id: existing.shopifyProductId }
+          const imgResult = await incrementalImageUpdate(
+            admin, shopDomain, existing.shopifyProductId, sku,
+            productInput2.files.map((f: any) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType || "IMAGE" })),
+            `SKU=${sku} (priority replace inter-supplier)`,
           );
-          const existingMediaIds: string[] = [];
-          for (const edge of mediaRes.data?.product?.media?.edges || []) {
-            if (edge.node?.id) existingMediaIds.push(edge.node.id);
+          if (imgResult.changed) {
+            result.imageChanges++;
+            newShopifyImages = JSON.stringify(imgResult.newImages);
           }
-
-          // Delete ALL existing images
-          if (existingMediaIds.length > 0) {
-            try {
-              await graphqlWithRetry(admin,
-                `#graphql
-                mutation productDeleteMedia($id: ID!, $mediaIds: [ID!]!) {
-                  productDeleteMedia(productId: $id, mediaIds: $mediaIds) {
-                    deletedMediaIds
-                    userErrors { field message }
-                  }
-                }`,
-                { id: existing.shopifyProductId, mediaIds: existingMediaIds },
-                3
-              );
-            } catch (delErr: any) {
-              console.error(`[Import] Priority replace inter-supplier: delete images error: ${delErr?.message}`);
-            }
-          }
-
-          // Add ALL new supplier images
-          result.imageChanges++;
-          imageQueue.push({
-            productId: existing.shopifyProductId,
-            files: productInput2.files.map((f: any) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType || "IMAGE" })),
-            label: `SKU=${sku} (priority replace inter-supplier ${existingMediaIds.length}→${productInput2.files.length} images)`,
-          });
         } catch (error: any) {
-          console.error(`[Import] Priority replace inter-supplier: error checking images: ${error?.message}`);
+          console.error(`[Import] Priority replace inter-supplier: error updating images:`, error?.message);
         }
       }
       const newMapping2 = await prisma.productMapping.upsert({
@@ -1012,6 +1097,7 @@ async function processProduct({
           lastProductType: productInput2.productType ?? null,
           lastTags: productInput2.tags?.length ? normalizeTags(productInput2.tags) : null,
           lastImportSource: sourceKey,
+          ...(newShopifyImages ? { shopifyImages: newShopifyImages } : {}),
         },
         update: {
           configId: config.id,
@@ -1029,6 +1115,7 @@ async function processProduct({
           lastProductType: productInput2.productType ?? undefined,
           lastTags: productInput2.tags?.length ? normalizeTags(productInput2.tags) : undefined,
           lastImportSource: sourceKey,
+          ...(newShopifyImages ? { shopifyImages: newShopifyImages } : {}),
         },
       });
       existing = newMapping2;
@@ -1210,63 +1297,21 @@ async function processProduct({
           }
         }
 
-        // Update images — always replace all images for priority replace
+        // Update images — incremental (fileDelete + productUpdate)
+        let newShopifyImages2: string | null = null;
         if (updateOpts.has("images") && productInput2.files && productInput2.files.length > 0) {
           try {
-            const mediaRes2 = await graphqlWithRetry(admin,
-              `#graphql
-              query productMedia($id: ID!) {
-                product(id: $id) {
-                  media(first: 50) {
-                    edges {
-                      node {
-                        id
-                      }
-                    }
-                  }
-                }
-              }`,
-              { id: dupCheck.existingShopifyProductId }
+            const imgResult = await incrementalImageUpdate(
+              admin, shopDomain, dupCheck.existingShopifyProductId, sku,
+              productInput2.files.map((f: any) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType || "IMAGE" })),
+              `SKU=${sku} (priority replace EAN dup)`,
             );
-            const existingMediaIds2: string[] = [];
-            for (const edge of mediaRes2.data?.product?.media?.edges || []) {
-              if (edge.node?.id) existingMediaIds2.push(edge.node.id);
+            if (imgResult.changed) {
+              result.imageChanges++;
+              newShopifyImages2 = JSON.stringify(imgResult.newImages);
             }
-
-            // Delete ALL existing images
-            if (existingMediaIds2.length > 0) {
-              try {
-                await graphqlWithRetry(admin,
-                  `#graphql
-                  mutation productDeleteMedia($id: ID!, $mediaIds: [ID!]!) {
-                    productDeleteMedia(productId: $id, mediaIds: $mediaIds) {
-                      deletedMediaIds
-                      userErrors { field message }
-                    }
-                  }`,
-                  { id: dupCheck.existingShopifyProductId, mediaIds: existingMediaIds2 },
-                  3
-                );
-              } catch (delErr: any) {
-                console.error(`[Import] Priority replace EAN dup: delete images error: ${delErr?.message}`);
-              }
-            }
-
-            // Add ALL new supplier images
-            result.imageChanges++;
-            imageQueue.push({
-              productId: dupCheck.existingShopifyProductId,
-              files: productInput2.files.map((f: any) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType || "IMAGE" })),
-              label: `SKU=${sku} (priority replace EAN dup ${existingMediaIds2.length}→${productInput2.files.length} images)`,
-            });
-          } catch {
-            // If media query fails, still push images
-            result.imageChanges++;
-            imageQueue.push({
-              productId: dupCheck.existingShopifyProductId,
-              files: productInput2.files.map((f: any) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType || "IMAGE" })),
-              label: `SKU=${sku} (priority replace EAN dup, media query failed)`,
-            });
+          } catch (error: any) {
+            console.error(`[Import] Priority replace EAN dup: error updating images:`, error?.message);
           }
         }
 
@@ -1302,6 +1347,7 @@ async function processProduct({
               lastQuantity: newQty,
               lastCost: costPrice > 0 ? costPrice : null,
               lastImportSource: sourceKey,
+              ...(newShopifyImages2 ? { shopifyImages: newShopifyImages2 } : {}),
             },
             update: {
               configId: config.id,
@@ -1314,6 +1360,7 @@ async function processProduct({
               lastQuantity: newQty,
               lastCost: costPrice > 0 ? costPrice : null,
               lastImportSource: sourceKey,
+              ...(newShopifyImages2 ? { shopifyImages: newShopifyImages2 } : {}),
             },
           });
           existing = newMapping2;
@@ -1574,9 +1621,9 @@ async function processProduct({
             lastQuantity: newQty, lastCost: costPrice > 0 ? costPrice : null,
             lastTitle: productInput.title ?? null, lastDescription: productInput.descriptionHtml ?? null,
             lastVendor: productInput.vendor ?? null, lastProductType: productInput.productType ?? null,
-            lastTags: productInput.tags?.length ? normalizeTags(productInput.tags) : null,
-            lastImportSource: sourceKey,
-          },
+          lastTags: productInput.tags?.length ? normalizeTags(productInput.tags) : null,
+          lastImportSource: sourceKey,
+        },
           update: {
             shopifyProductId: foundBarcode.productId, shopifyVariantId: foundBarcode.variantId,
             shopifyInventoryItemId: adoptInventoryItemId || undefined,
@@ -1733,63 +1780,21 @@ async function processProduct({
       }
     }
 
-    // Update images — always replace all images for priority replace
+    // Update images — incremental (fileDelete + productUpdate)
+    let newShopifyImages3: string | null = null;
     if (updateOpts.has("images") && productInput2.files && productInput2.files.length > 0) {
       try {
-        const mediaRes = await graphqlWithRetry(admin,
-          `#graphql
-          query productMedia($id: ID!) {
-            product(id: $id) {
-              media(first: 50) {
-                edges {
-                  node {
-                    id
-                  }
-                }
-              }
-            }
-          }`,
-          { id: priorityReplaceTarget.shopifyProductId }
+        const imgResult = await incrementalImageUpdate(
+          admin, shopDomain, priorityReplaceTarget.shopifyProductId, sku,
+          productInput2.files.map((f: any) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType || "IMAGE" })),
+          `SKU=${sku} (priority replace)`,
         );
-        const existingMediaIds: string[] = [];
-        for (const edge of mediaRes.data?.product?.media?.edges || []) {
-          if (edge.node?.id) existingMediaIds.push(edge.node.id);
+        if (imgResult.changed) {
+          result.imageChanges++;
+          newShopifyImages3 = JSON.stringify(imgResult.newImages);
         }
-
-        // Delete ALL existing images
-        if (existingMediaIds.length > 0) {
-          try {
-            await graphqlWithRetry(admin,
-              `#graphql
-              mutation productDeleteMedia($id: ID!, $mediaIds: [ID!]!) {
-                productDeleteMedia(productId: $id, mediaIds: $mediaIds) {
-                  deletedMediaIds
-                  userErrors { field message }
-                }
-              }`,
-              { id: priorityReplaceTarget.shopifyProductId, mediaIds: existingMediaIds },
-              3
-            );
-          } catch (delErr: any) {
-            console.error(`[Import] Priority replace: delete images error: ${delErr?.message}`);
-          }
-        }
-
-        // Add ALL new supplier images
-        result.imageChanges++;
-        imageQueue.push({
-          productId: priorityReplaceTarget.shopifyProductId,
-          files: productInput2.files.map((f: any) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType || "IMAGE" })),
-          label: `SKU=${sku} (priority replace ${existingMediaIds.length}→${productInput2.files.length} images)`,
-        });
       } catch (error: any) {
-        console.error(`[Import] Priority replace: error checking images: ${error?.message}`);
-        result.imageChanges++;
-        imageQueue.push({
-          productId: priorityReplaceTarget.shopifyProductId,
-          files: productInput2.files.map((f: any) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType || "IMAGE" })),
-          label: `SKU=${sku} (priority replace fallback: ${error?.message || "query error"})`,
-        });
+        console.error(`[Import] Priority replace: error updating images:`, error?.message);
       }
     }
 
@@ -1817,6 +1822,7 @@ async function processProduct({
         lastProductType: productInput2.productType ?? null,
         lastTags: productInput2.tags?.length ? normalizeTags(productInput2.tags) : null,
         lastImportSource: sourceKey,
+        ...(newShopifyImages3 ? { shopifyImages: newShopifyImages3 } : {}),
       },
       update: {
         configId: config.id,
@@ -1836,6 +1842,7 @@ async function processProduct({
           lastTags: productInput2.tags?.length ? normalizeTags(productInput2.tags) : undefined,
         } : {}),
         lastImportSource: sourceKey,
+        ...(newShopifyImages3 ? { shopifyImages: newShopifyImages3 } : {}),
       },
     });
     existing = newMapping2;
@@ -2034,63 +2041,21 @@ async function processProduct({
       }
     }
 
-    // Images in update: always replace all images (matches banner: "Reemplaza todas las imágenes")
+    // Images in update: incremental (fileDelete + productUpdate)
+    let newShopifyImages4: string | null = null;
     if (updateOpts.has("images") && productInput.files?.length) {
       try {
-        const mediaRes = await graphqlWithRetry(admin,
-          `#graphql
-          query productMedia($id: ID!) {
-            product(id: $id) {
-              media(first: 50) {
-                edges {
-                  node {
-                    id
-                  }
-                }
-              }
-            }
-          }`,
-          { id: existing.shopifyProductId }
+        const imgResult = await incrementalImageUpdate(
+          admin, shopDomain, existing.shopifyProductId, sku,
+          productInput.files.map((f: any) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType || "IMAGE" })),
+          `SKU=${sku} (standard update)`,
         );
-        const existingMediaIds: string[] = [];
-        for (const edge of mediaRes.data?.product?.media?.edges || []) {
-          if (edge.node?.id) existingMediaIds.push(edge.node.id);
+        if (imgResult.changed) {
+          result.imageChanges++;
+          newShopifyImages4 = JSON.stringify(imgResult.newImages);
         }
-
-        // Delete ALL existing images
-        if (existingMediaIds.length > 0) {
-          try {
-            await graphqlWithRetry(admin,
-              `#graphql
-              mutation productDeleteMedia($id: ID!, $mediaIds: [ID!]!) {
-                productDeleteMedia(productId: $id, mediaIds: $mediaIds) {
-                  deletedMediaIds
-                  userErrors { field message }
-                }
-              }`,
-              { id: existing.shopifyProductId, mediaIds: existingMediaIds },
-              3
-            );
-          } catch (delErr: any) {
-            console.error(`[Import] Standard update: delete images error: ${delErr?.message}`);
-          }
-        }
-
-        // Add ALL CSV images
-        result.imageChanges++;
-        imageQueue.push({
-          productId: existing.shopifyProductId,
-          files: productInput.files.map((f: any) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType || "IMAGE" })),
-          label: `SKU=${sku} (replace ${existingMediaIds.length}→${productInput.files.length} images)`,
-        });
       } catch (error: any) {
-        console.error("[Import] Error checking images:", error?.message || error);
-        result.imageChanges++;
-        imageQueue.push({
-          productId: existing.shopifyProductId,
-          files: productInput.files.map((f: any) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType || "IMAGE" })),
-          label: `SKU=${sku} (replace fallback: ${error?.message || "query error"})`,
-        });
+        console.error(`[Import] Standard update: error updating images:`, error?.message);
       }
     }
 

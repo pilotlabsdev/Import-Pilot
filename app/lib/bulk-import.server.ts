@@ -18,6 +18,7 @@ import {
   getField,
 } from "./product-mapper.server";
 import { getLocationId } from "./location.server";
+import { incrementalImageUpdate, type StoredImage } from "./import-engine.server";
 import { ensureMetafieldDefinitions } from "./metafield-definitions";
 import { sendNotification } from "./notifications.server";
 import { setBulkActive, clearBulkActive } from "./bulk-active-cache.server";
@@ -212,17 +213,16 @@ async function processBulkImageQueue(admin: any, queue: BulkImageTask[], shopDom
     const batch = queue.slice(i, i + concurrency);
     const promises = batch.map(async (task) => {
       try {
-        await gql(admin,
-          `#graphql
-          mutation productCreateMedia($id: ID!, $media: [CreateMediaInput!]!) {
-            productCreateMedia(productId: $id, media: $media) { media { id } userErrors { field message } }
-          }`,
-          { variables: { id: task.productId, media: task.files } },
-          shopDomain
+        await incrementalImageUpdate(
+          admin,
+          shopDomain || "",
+          task.productId,
+          task.label.replace("SKU=", "").replace(/ \(.*\)/, ""),
+          task.files.map((f) => ({ originalSource: f.originalSource, alt: "", contentType: f.mediaContentType })),
+          task.label,
         );
-        // Mark product as complete after images uploaded
         if (shopDomain) {
-          const skuMatch = task.label.match(/SKU=(.+)/);
+          const skuMatch = task.label.match(/SKU=([^\s(]+)/);
           if (skuMatch) {
             await prisma.productMapping.update({
               where: { shopDomain_supplierSku: { shopDomain, supplierSku: skuMatch[1] } },
@@ -232,9 +232,8 @@ async function processBulkImageQueue(admin: any, queue: BulkImageTask[], shopDom
         }
       } catch (error: any) {
         console.error(`[Bulk] Images ERROR: ${task.label}:`, error?.message);
-        // Mark product with image error
         if (shopDomain) {
-          const skuMatch = task.label.match(/SKU=(.+)/);
+          const skuMatch = task.label.match(/SKU=([^\s(]+)/);
           if (skuMatch) {
             await prisma.productMapping.update({
               where: { shopDomain_supplierSku: { shopDomain, supplierSku: skuMatch[1] } },
@@ -417,7 +416,7 @@ interface LookupMatch {
   shopifyVendor?: string;
   shopifyProductType?: string;
   shopifyTags?: string[];
-  shopifyImages?: string[];
+  shopifyImages?: StoredImage[];
 }
 
 interface MetaLine {
@@ -609,7 +608,7 @@ export async function runBulkImport({
             query ($id: ID!) {
               product(id: $id) {
                 id title vendor productType tags descriptionHtml
-                images(first: 5) { edges { node { url } } }
+                images(first: 5) { edges { node { id url } } }
                 variants(first: 5) {
                   edges {
                     node { id sku barcode inventoryItem { id unitCost { amount } } }
@@ -630,8 +629,8 @@ export async function runBulkImport({
           const productVendor = product.vendor || undefined;
           const productProductType = product.productType || undefined;
           const productTags: string[] | undefined = product.tags?.length > 0 ? product.tags : undefined;
-          const productImages: string[] | undefined = product.images?.edges?.length > 0
-            ? product.images.edges.map((e: any) => e.node.url).filter(Boolean)
+          const productImages: StoredImage[] | undefined = product.images?.edges?.length > 0
+            ? product.images.edges.map((e: any) => ({ mediaId: e.node.id || "", url: e.node.url })).filter((img: StoredImage) => img.url)
             : undefined;
           for (const vEdge of product.variants?.edges || []) {
             const v = vEdge.node;
@@ -1402,8 +1401,10 @@ async function prepareAndLaunch(
       if (effectiveOpts.has("images")) {
         for (let i = 1; i <= 5; i++) { const img = getField(row, columnMaps, `image${i}`); if (img) csvImageUrls.push(img.trim()); }
       }
-      const shopifyImageCount = (match.shopifyImages || []).length;
-      const imagesChanged = effectiveOpts.has("images") && csvImageUrls.length > 0 && csvImageUrls.length !== shopifyImageCount;
+      const shopifyUrls = (match.shopifyImages || []).map((img: StoredImage) => img.url).filter(Boolean);
+      const imagesChanged = effectiveOpts.has("images") && csvImageUrls.length > 0 && (
+        csvImageUrls.length !== shopifyUrls.length || csvImageUrls.some((url, i) => url !== shopifyUrls[i])
+      );
       const skuChanged = matchMode === "overwrite" && match.sku && match.sku !== sku;
 
       // Skip products with NO changes — don't send mutation
@@ -1427,6 +1428,7 @@ async function prepareAndLaunch(
       meta.productTypeChanged = productTypeChanged;
       meta.tagsChanged = tagsChanged;
       meta.imagesChanged = imagesChanged;
+      meta.images = csvImageUrls;
       meta.priceApplied = effectiveOpts.has("price");
       meta.stockApplied = effectiveOpts.has("stock") && stockQty >= 0;
       meta.skipPrice = excludedFields?.includes("price") || false;
@@ -1623,6 +1625,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
   let opErrors = 0;
   const transientRetries: Array<{ meta: MetaLine; error: string }> = [];
   const skuOverwriteQueue: Array<{ productId: string; variantId: string; newSku: string }> = [];
+  const imageQueue: BulkImageTask[] = [];
   const shopSettings = await prisma.shopSettings.findUnique({ where: { shopDomain: job.shopDomain } });
   const matchMode = shopSettings?.matchMode || "overwrite";
 
@@ -1856,7 +1859,16 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       if (vendorChanged) vendorChanges++;
       if (productTypeChanged) ptChanges++;
       if (tagsChanged) tagChanges++;
-      if (imagesChanged) imgChanges++;
+      if (imagesChanged) {
+        imgChanges++;
+        if (meta.images && meta.images.length > 0) {
+          imageQueue.push({
+            productId: product.id,
+            files: meta.images.map((url: string) => ({ originalSource: url, mediaContentType: "IMAGE" as any })),
+            label: `SKU=${meta.sku} (bulk post-process)`,
+          });
+        }
+      }
       if (matchMode === "overwrite" && meta.sku && meta.shopifySku && variant?.id && meta.shopifySku !== meta.sku) {
         skuOverwriteQueue.push({ productId: product.id, variantId: variant.id, newSku: meta.sku });
       }
@@ -1889,6 +1901,13 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
     }
     await fs.appendFile(errorsPath, errorWrites.length ? errorWrites.join("\n") + "\n" : "");
     console.log(`[Bulk] SKU overwrite: ${skuOverwriteSuccess} ok, ${skuOverwriteFailed} failed`);
+
+    // Process images: incremental update using fileDelete + productUpdate
+    if (imageQueue.length > 0) {
+      console.log(`[Bulk] Processing ${imageQueue.length} image updates...`);
+      await processBulkImageQueue(admin, imageQueue, job.shopDomain, 5);
+      console.log(`[Bulk] Image processing complete`);
+    }
   }
 
   // Retry transient errors ("currently being modified") via individual productSet mutations.
@@ -3190,7 +3209,7 @@ async function queryProductsTargeted(
         edges {
           node {
             id title vendor productType tags descriptionHtml
-            images(first: 5) { edges { node { url } } }
+            images(first: 5) { edges { node { id url } } }
             variants(first: 5) {
               edges {
                 node { id sku barcode inventoryItem { id unitCost { amount } } }
@@ -3221,8 +3240,8 @@ async function queryProductsTargeted(
           const productVendor = node.vendor || undefined;
           const productProductType = node.productType || undefined;
           const productTags: string[] | undefined = node.tags?.length > 0 ? node.tags : undefined;
-          const productImages: string[] | undefined = node.images?.edges?.length > 0
-            ? node.images.edges.map((e: any) => e.node.url).filter(Boolean)
+          const productImages: StoredImage[] | undefined = node.images?.edges?.length > 0
+            ? node.images.edges.map((e: any) => ({ mediaId: e.node.id || "", url: e.node.url })).filter((img: StoredImage) => img.url)
             : undefined;
           for (const vEdge of node.variants?.edges || []) {
             const v = vEdge.node;
@@ -3265,7 +3284,7 @@ async function queryProductsTargeted(
         edges {
           node {
             id sku barcode
-            product { id title vendor productType tags descriptionHtml images(first: 5) { edges { node { url } } } }
+            product { id title vendor productType tags descriptionHtml images(first: 5) { edges { node { id url } } } }
             inventoryItem { id unitCost { amount } }
           }
         }
@@ -3300,7 +3319,7 @@ async function queryProductsTargeted(
             shopifyProductType: prod.productType || undefined,
             shopifyTags: prod.tags?.length > 0 ? prod.tags : undefined,
             shopifyImages: prod.images?.edges?.length > 0
-              ? prod.images.edges.map((e: any) => e.node.url).filter(Boolean)
+              ? prod.images.edges.map((e: any) => ({ mediaId: e.node.id || "", url: e.node.url })).filter((img: StoredImage) => img.url)
               : undefined,
           };
           if (v.sku && !bySku.has(v.sku)) bySku.set(String(v.sku), match);

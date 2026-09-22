@@ -161,6 +161,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         if (sorted !== lastSorted) patch.lastTags = newTags;
       }
 
+      // Sync images when images change externally
+      const newImages = (payload.images as any[]) || [];
+      if (newImages.length > 0) {
+        const storedImages = newImages.map((img: any) => ({
+          mediaId: img.id ? `gid://shopify/MediaImage/${img.id}` : "",
+          url: img.src || "",
+        })).filter((img: any) => img.url);
+        const currentImages = mapping.shopifyImages ? JSON.parse(mapping.shopifyImages) : [];
+        const currentUrls = currentImages.map((i: any) => i.url);
+        const newUrls = storedImages.map((i: any) => i.url);
+        if (JSON.stringify(currentUrls) !== JSON.stringify(newUrls)) {
+          patch.shopifyImages = JSON.stringify(storedImages);
+        }
+      } else if (payload.images === null || (Array.isArray(payload.images) && payload.images.length === 0)) {
+        if (mapping.shopifyImages) {
+          patch.shopifyImages = JSON.stringify([]);
+        }
+      }
+
       if (Object.keys(patch).length > 0) {
         await prisma.productMapping.update({
           where: { id: mapping.id },
