@@ -172,6 +172,16 @@ export interface StoredImage {
   url: string;
 }
 
+function normalizeImageUrl(url: string): string {
+  if (!url) return "";
+  try {
+    const u = new URL(url);
+    return u.origin + u.pathname.replace(/\/$/, "");
+  } catch {
+    return url.replace(/[?#].*$/, "").replace(/\/$/, "");
+  }
+}
+
 async function queryProductMedia(admin: any, productId: string): Promise<StoredImage[]> {
   const mediaRes = await graphqlWithRetry(admin,
     `#graphql
@@ -215,13 +225,15 @@ export async function incrementalImageUpdate(
   // 1. Query current Shopify media
   const currentMedia = await queryProductMedia(admin, shopifyProductId);
 
-  // 2. Diff: compare CSV URLs vs Shopify URLs
-  const csvUrls = new Set(csvFiles.map((f) => f.originalSource));
-  const shopifyUrls = new Set(currentMedia.map((m) => m.url));
+  // 2. Diff: compare CSV URLs vs Shopify URLs (normalized to ignore query params / CDN prefixes)
+  const csvUrls = csvFiles.map((f) => f.originalSource);
+  const csvUrlSet = new Set(csvUrls.map(normalizeImageUrl));
+  const shopifyUrlSet = new Set(currentMedia.map((m) => normalizeImageUrl(m.url)));
 
-  const toDelete = currentMedia.filter((m) => !csvUrls.has(m.url));
-  const toAdd = csvFiles.filter((f) => !shopifyUrls.has(f.originalSource));
-  const toKeep = currentMedia.filter((m) => shopifyUrls.has(m.url) && csvUrls.has(m.url));
+  // Match by normalized URL — if Shopify CDN URL normalizes to same path as CSV, treat as same
+  const toDelete = currentMedia.filter((m) => !csvUrlSet.has(normalizeImageUrl(m.url)));
+  const toAdd = csvFiles.filter((f) => !shopifyUrlSet.has(normalizeImageUrl(f.originalSource)));
+  const toKeep = currentMedia.filter((m) => csvUrlSet.has(normalizeImageUrl(m.url)));
 
   // Skip if nothing changed
   if (toDelete.length === 0 && toAdd.length === 0) {
@@ -1071,7 +1083,11 @@ async function processProduct({
           );
           if (imgResult.changed) {
             result.imageChanges++;
-            newShopifyImages = JSON.stringify(imgResult.newImages);
+            const csvSrc = productInput2.files.map((f: any) => f.originalSource);
+            newShopifyImages = JSON.stringify(imgResult.newImages.map((img, i) => ({
+              mediaId: img.mediaId,
+              url: csvSrc[i] || img.url,
+            })));
           }
         } catch (error: any) {
           console.error(`[Import] Priority replace inter-supplier: error updating images:`, error?.message);
@@ -1308,7 +1324,11 @@ async function processProduct({
             );
             if (imgResult.changed) {
               result.imageChanges++;
-              newShopifyImages2 = JSON.stringify(imgResult.newImages);
+              const csvSrc2 = productInput2.files.map((f: any) => f.originalSource);
+              newShopifyImages2 = JSON.stringify(imgResult.newImages.map((img, i) => ({
+                mediaId: img.mediaId,
+                url: csvSrc2[i] || img.url,
+              })));
             }
           } catch (error: any) {
             console.error(`[Import] Priority replace EAN dup: error updating images:`, error?.message);
@@ -1791,7 +1811,11 @@ async function processProduct({
         );
         if (imgResult.changed) {
           result.imageChanges++;
-          newShopifyImages3 = JSON.stringify(imgResult.newImages);
+          const csvSrc3 = productInput2.files.map((f: any) => f.originalSource);
+          newShopifyImages3 = JSON.stringify(imgResult.newImages.map((img, i) => ({
+            mediaId: img.mediaId,
+            url: csvSrc3[i] || img.url,
+          })));
         }
       } catch (error: any) {
         console.error(`[Import] Priority replace: error updating images:`, error?.message);
@@ -2042,17 +2066,33 @@ async function processProduct({
     }
 
     // Images in update: incremental (fileDelete + productUpdate)
+    // First check if saved CSV URLs match current CSV URLs — skip if identical
     let newShopifyImages4: string | null = null;
     if (updateOpts.has("images") && productInput.files?.length) {
       try {
-        const imgResult = await incrementalImageUpdate(
-          admin, shopDomain, existing.shopifyProductId, sku,
-          productInput.files.map((f: any) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType || "IMAGE" })),
-          `SKU=${sku} (standard update)`,
-        );
-        if (imgResult.changed) {
-          result.imageChanges++;
-          newShopifyImages4 = JSON.stringify(imgResult.newImages);
+        const currentCsvUrls = productInput.files.map((f: any) => f.originalSource);
+        const savedImages: StoredImage[] = existing.shopifyImages ? JSON.parse(existing.shopifyImages) : [];
+        const savedCsvUrls = savedImages.map((img: StoredImage) => img.url);
+
+        const csvUnchanged = savedCsvUrls.length === currentCsvUrls.length &&
+          savedCsvUrls.every((url: string, i: number) => url === currentCsvUrls[i]);
+
+        if (csvUnchanged && savedCsvUrls.length > 0) {
+          // Images haven't changed — skip expensive Shopify query
+        } else {
+          const imgResult = await incrementalImageUpdate(
+            admin, shopDomain, existing.shopifyProductId, sku,
+            productInput.files.map((f: any) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType || "IMAGE" })),
+            `SKU=${sku} (standard update)`,
+          );
+          if (imgResult.changed) {
+            result.imageChanges++;
+            // Save CSV source URLs (not Shopify CDN URLs) for fast comparison on next import
+            newShopifyImages4 = JSON.stringify(imgResult.newImages.map((img, i) => ({
+              mediaId: img.mediaId,
+              url: currentCsvUrls[i] || img.url,
+            })));
+          }
         }
       } catch (error: any) {
         console.error(`[Import] Standard update: error updating images:`, error?.message);
@@ -2224,6 +2264,7 @@ async function processProduct({
           lastProductType: productInput.productType ?? undefined,
           lastTags: productInput.tags?.length ? normalizeTags(productInput.tags) : undefined,
           lastSyncAt: new Date(),
+          ...(newShopifyImages4 ? { shopifyImages: newShopifyImages4 } : {}),
         },
       });
     } catch {}
