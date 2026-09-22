@@ -1246,6 +1246,15 @@ async function prepareAndLaunch(
     let priorityReplaceMappingId: string | undefined;
     let priorityReplaceConfigId: string | undefined;
     if (ean) {
+      // Auto-clean stale duplicate logs if current supplier already owns this EAN
+      if (selfEanMappings.has(ean)) {
+        try {
+          await prisma.duplicateLog.deleteMany({
+            where: { shopDomain: job.shopDomain, ean },
+          });
+        } catch {}
+      }
+
       const existingDup = existingEanMappings.get(ean);
       const inByBarcode = maps.byBarcode.has(ean);
 
