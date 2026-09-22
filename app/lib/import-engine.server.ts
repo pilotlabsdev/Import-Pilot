@@ -2446,6 +2446,7 @@ async function processProduct({
     }
 
     try {
+      console.log(`[Import] CREATE SKU=${sku} files=${productInput.files?.length || 0} shopifyImages=${productInput.files?.length ? "WILL_SAVE" : "NO_FILES"}`);
       await prisma.productMapping.upsert({
         where: { shopDomain_supplierSku: { shopDomain, supplierSku: sku } },
         create: {
