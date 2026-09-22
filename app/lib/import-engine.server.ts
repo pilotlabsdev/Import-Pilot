@@ -192,7 +192,7 @@ function normalizeImageUrl(url: string): string {
   }
 }
 
-async function queryProductMedia(admin: any, productId: string): Promise<StoredImage[]> {
+export async function queryProductMedia(admin: any, productId: string): Promise<StoredImage[]> {
   const mediaRes = await graphqlWithRetry(admin,
     `#graphql
     query productMedia($id: ID!) {
@@ -2446,7 +2446,6 @@ async function processProduct({
     }
 
     try {
-      console.log(`[Import] CREATE SKU=${sku} files=${productInput.files?.length || 0} shopifyImages=${productInput.files?.length ? "WILL_SAVE" : "NO_FILES"}`);
       await prisma.productMapping.upsert({
         where: { shopDomain_supplierSku: { shopDomain, supplierSku: sku } },
         create: {

@@ -18,7 +18,7 @@ import {
   getField,
 } from "./product-mapper.server";
 import { getLocationId } from "./location.server";
-import { incrementalImageUpdate, type StoredImage } from "./import-engine.server";
+import { incrementalImageUpdate, queryProductMedia, type StoredImage } from "./import-engine.server";
 import { ensureMetafieldDefinitions } from "./metafield-definitions";
 import { sendNotification } from "./notifications.server";
 import { setBulkActive, clearBulkActive } from "./bulk-active-cache.server";
@@ -224,10 +224,19 @@ async function processBulkImageQueue(admin: any, queue: BulkImageTask[], shopDom
         if (shopDomain) {
           const skuMatch = task.label.match(/SKU=([^\s(]+)/);
           if (skuMatch) {
-            await prisma.productMapping.update({
-              where: { shopDomain_supplierSku: { shopDomain, supplierSku: skuMatch[1] } },
-              data: { postProcessStatus: "complete", postProcessError: null },
-            }).catch(() => {});
+            try {
+              const media = await queryProductMedia(admin, task.productId);
+              const stored: StoredImage[] = media.map((m) => ({ mediaId: m.mediaId, url: m.url }));
+              await prisma.productMapping.update({
+                where: { shopDomain_supplierSku: { shopDomain, supplierSku: skuMatch[1] } },
+                data: { shopifyImages: stored.length > 0 ? JSON.stringify(stored) : null, postProcessStatus: "complete", postProcessError: null },
+              }).catch(() => {});
+            } catch {
+              await prisma.productMapping.update({
+                where: { shopDomain_supplierSku: { shopDomain, supplierSku: skuMatch[1] } },
+                data: { postProcessStatus: "complete", postProcessError: null },
+              }).catch(() => {});
+            }
           }
         }
       } catch (error: any) {
@@ -1723,6 +1732,10 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
     } else {
     }
 
+    const csvImagesForMapping = meta.images?.length
+      ? JSON.stringify(meta.images.map((url: string) => ({ mediaId: "", url })))
+      : undefined;
+
     await prisma.productMapping.upsert({
       where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: meta.sku } },
       create: {
@@ -1744,6 +1757,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
         lastTags: meta.tags ? JSON.stringify(meta.tags) : null,
         lastImportSource: sourceKey || null,
         postProcessStatus: actuallyNew ? "pending" : "complete",
+        ...(csvImagesForMapping ? { shopifyImages: csvImagesForMapping } : {}),
       },
       update: {
         configId: job.configId,
@@ -1763,6 +1777,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
         postProcessStatus: actuallyNew ? "pending" : "complete",
         postProcessError: null,
         postProcessRetries: 0,
+        ...(csvImagesForMapping ? { shopifyImages: csvImagesForMapping } : {}),
       },
     });
 
@@ -1848,6 +1863,23 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
           where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: meta.sku } },
           data: { postProcessStatus: "complete", postProcessError: null },
         }).catch(() => {});
+
+        if (meta.images?.length) {
+          try {
+            await new Promise(r => setTimeout(r, 3000));
+            const media = await queryProductMedia(admin, product.id);
+            if (media.length > 0) {
+              const stored: StoredImage[] = media.map((m, i) => ({
+                mediaId: m.mediaId,
+                url: meta.images?.[i] || m.url,
+              }));
+              await prisma.productMapping.update({
+                where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: meta.sku } },
+                data: { shopifyImages: JSON.stringify(stored) },
+              }).catch(() => {});
+            }
+          } catch {}
+        }
       }
     } else {
       updatedCount++;
