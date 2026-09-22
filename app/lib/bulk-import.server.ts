@@ -1249,7 +1249,7 @@ async function prepareAndLaunch(
       const existingDup = existingEanMappings.get(ean);
       const inByBarcode = maps.byBarcode.has(ean);
 
-      if (existingDup) {
+      if (existingDup && !selfEanMappings.has(ean)) {
         // === CASE: Same EAN from another app-tracked supplier ===
         if (duplicatePolicy === "priority") {
           const priorityList = shopSettings?.supplierPriority ? JSON.parse(shopSettings.supplierPriority) : [];
