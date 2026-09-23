@@ -137,12 +137,32 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const compareUnchanged = newCompare != null && mapping.lastComparePrice === newCompare;
       const qtyUnchanged = newQty != null && mapping.lastQuantity === newQty;
 
-      if (priceUnchanged && compareUnchanged && qtyUnchanged) break;
-
+      // Sync images even when price/qty unchanged (e.g. manual image delete from admin)
+      const newImages = (payload.images as any[]) || [];
       const patch: any = {};
-      if (newPrice != null && !priceUnchanged) patch.lastPrice = newPrice;
-      if (newCompare != null && !compareUnchanged) patch.lastComparePrice = newCompare;
-      if (newQty != null && !qtyUnchanged) patch.lastQuantity = newQty;
+
+      if (newImages.length > 0) {
+        const storedImages = newImages.map((img: any) => ({
+          mediaId: img.id ? `gid://shopify/MediaImage/${img.id}` : "",
+          url: img.src || "",
+        })).filter((img: any) => img.url);
+        const currentImages = mapping.shopifyImages ? JSON.parse(mapping.shopifyImages) : [];
+        const currentUrls = currentImages.map((i: any) => i.url);
+        const newUrls = storedImages.map((i: any) => i.url);
+        if (JSON.stringify(currentUrls) !== JSON.stringify(newUrls)) {
+          patch.shopifyImages = JSON.stringify(storedImages);
+        }
+      } else if (payload.images === null || (Array.isArray(payload.images) && payload.images.length === 0)) {
+        if (mapping.shopifyImages) {
+          patch.shopifyImages = JSON.stringify([]);
+        }
+      }
+
+      if (priceUnchanged && compareUnchanged && qtyUnchanged && Object.keys(patch).length === 0) break;
+
+      if (!priceUnchanged) patch.lastPrice = newPrice != null ? newPrice : undefined;
+      if (!compareUnchanged) patch.lastComparePrice = newCompare != null ? newCompare : undefined;
+      if (!qtyUnchanged) patch.lastQuantity = newQty != null ? newQty : undefined;
 
       // Sync text fields so import compares CSV against Shopify's actual values
       const newTitle = payload.title as string | null;
@@ -159,25 +179,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const sorted = newTags.split(",").map((t: string) => t.trim()).filter(Boolean).sort().join(",");
         const lastSorted = (mapping.lastTags ?? "").split(",").map((t: string) => t.trim()).filter(Boolean).sort().join(",");
         if (sorted !== lastSorted) patch.lastTags = newTags;
-      }
-
-      // Sync images when images change externally
-      const newImages = (payload.images as any[]) || [];
-      if (newImages.length > 0) {
-        const storedImages = newImages.map((img: any) => ({
-          mediaId: img.id ? `gid://shopify/MediaImage/${img.id}` : "",
-          url: img.src || "",
-        })).filter((img: any) => img.url);
-        const currentImages = mapping.shopifyImages ? JSON.parse(mapping.shopifyImages) : [];
-        const currentUrls = currentImages.map((i: any) => i.url);
-        const newUrls = storedImages.map((i: any) => i.url);
-        if (JSON.stringify(currentUrls) !== JSON.stringify(newUrls)) {
-          patch.shopifyImages = JSON.stringify(storedImages);
-        }
-      } else if (payload.images === null || (Array.isArray(payload.images) && payload.images.length === 0)) {
-        if (mapping.shopifyImages) {
-          patch.shopifyImages = JSON.stringify([]);
-        }
       }
 
       if (Object.keys(patch).length > 0) {
