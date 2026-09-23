@@ -213,31 +213,38 @@ async function processBulkImageQueue(admin: any, queue: BulkImageTask[], shopDom
     const batch = queue.slice(i, i + concurrency);
     const promises = batch.map(async (task) => {
       try {
-        await incrementalImageUpdate(
+        const skuMatch = task.label.match(/SKU=([^\s(]+)/);
+        const sku = skuMatch ? skuMatch[1] : "";
+        let storedImages: StoredImage[] = [];
+        if (shopDomain && sku) {
+          const mapping = await prisma.productMapping.findUnique({
+            where: { shopDomain_supplierSku: { shopDomain, supplierSku: sku } },
+            select: { shopifyImages: true },
+          }).catch(() => null);
+          if (mapping?.shopifyImages) {
+            try { storedImages = JSON.parse(mapping.shopifyImages); } catch {}
+          }
+        }
+
+        const imgResult = await incrementalImageUpdate(
           admin,
           shopDomain || "",
           task.productId,
-          task.label.replace("SKU=", "").replace(/ \(.*\)/, ""),
+          sku,
           task.files.map((f) => ({ originalSource: f.originalSource, alt: "", contentType: f.mediaContentType })),
           task.label,
+          storedImages,
         );
-        if (shopDomain) {
-          const skuMatch = task.label.match(/SKU=([^\s(]+)/);
-          if (skuMatch) {
-            try {
-              const media = await queryProductMedia(admin, task.productId);
-              const stored: StoredImage[] = media.map((m) => ({ mediaId: m.mediaId, url: m.url }));
-              await prisma.productMapping.update({
-                where: { shopDomain_supplierSku: { shopDomain, supplierSku: skuMatch[1] } },
-                data: { shopifyImages: stored.length > 0 ? JSON.stringify(stored) : null, postProcessStatus: "complete", postProcessError: null },
-              }).catch(() => {});
-            } catch {
-              await prisma.productMapping.update({
-                where: { shopDomain_supplierSku: { shopDomain, supplierSku: skuMatch[1] } },
-                data: { postProcessStatus: "complete", postProcessError: null },
-              }).catch(() => {});
-            }
-          }
+
+        if (shopDomain && sku) {
+          await prisma.productMapping.update({
+            where: { shopDomain_supplierSku: { shopDomain, supplierSku: sku } },
+            data: {
+              shopifyImages: JSON.stringify(imgResult.newImages),
+              postProcessStatus: "complete",
+              postProcessError: null,
+            },
+          }).catch(() => {});
         }
       } catch (error: any) {
         console.error(`[Bulk] Images ERROR: ${task.label}:`, error?.message);

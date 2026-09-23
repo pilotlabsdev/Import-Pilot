@@ -231,27 +231,33 @@ export async function incrementalImageUpdate(
   supplierSku: string,
   csvFiles: Array<{ originalSource: string; alt: string; contentType: string }>,
   label: string,
+  storedImages?: StoredImage[],
 ): Promise<{ changed: boolean; newImages: StoredImage[] }> {
   // 1. Query current Shopify media
   const currentMedia = await queryProductMedia(admin, shopifyProductId);
+  const storedByMediaId = new Map((storedImages || []).map((s) => [s.mediaId, s.url]));
 
   // 2. Diff: only ADD missing images — never delete (supplier may temporarily drop images)
-  const csvUrls = csvFiles.map((f) => f.originalSource);
-  const csvUrlSet = new Set(csvUrls.map(normalizeImageUrl));
+  const csvUrlSet = new Set(csvFiles.map((f) => normalizeImageUrl(f.originalSource)));
   const shopifyUrlSet = new Set(currentMedia.map((m) => normalizeImageUrl(m.url)));
 
   const toAdd = csvFiles.filter((f) => !shopifyUrlSet.has(normalizeImageUrl(f.originalSource)));
-  const toKeep = currentMedia;
+
+  // Preserve supplier URLs for existing images, CSV URLs for new ones
+  const existingWithSupplierUrls: StoredImage[] = currentMedia.map((m) => ({
+    mediaId: m.mediaId,
+    url: storedByMediaId.get(m.mediaId) || m.url,
+  }));
 
   // Skip if nothing to add
   if (toAdd.length === 0) {
-    return { changed: false, newImages: currentMedia };
+    return { changed: false, newImages: existingWithSupplierUrls };
   }
 
-  console.log(`[Import] Images ${label}: keep=${toKeep.length}, add=${toAdd.length} (never delete)`);
+  console.log(`[Import] Images ${label}: keep=${existingWithSupplierUrls.length}, add=${toAdd.length} (never delete)`);
 
   // 3. Add images that are in CSV but not in Shopify
-  const newMedia: StoredImage[] = [...toKeep];
+  const newMedia: StoredImage[] = [...existingWithSupplierUrls];
   if (toAdd.length > 0) {
     const productUpdateRes = await graphqlWithRetry(admin,
       `#graphql
@@ -278,11 +284,16 @@ export async function incrementalImageUpdate(
       },
     );
 
-    // Capture new media IDs from response
+    // Capture new media IDs, pair with supplier URLs from toAdd
+    const csvByNormalizedUrl = new Map(toAdd.map((f) => [normalizeImageUrl(f.originalSource), f.originalSource]));
     for (const edge of productUpdateRes.data?.productUpdate?.product?.media?.edges || []) {
       const node = edge.node;
       if (node?.id) {
-        newMedia.push({ mediaId: node.id, url: node.image?.url || "" });
+        const cdnUrl = node.image?.url || "";
+        const supplierUrl = storedByMediaId.get(node.id) || csvByNormalizedUrl.get(normalizeImageUrl(cdnUrl)) || cdnUrl;
+        if (!newMedia.some((m) => m.mediaId === node.id)) {
+          newMedia.push({ mediaId: node.id, url: supplierUrl });
+        }
       }
     }
   }
@@ -1076,22 +1087,20 @@ async function processProduct({
         }
       }
 
-      // Update images — incremental (fileDelete + productUpdate)
+      // Update images — incremental (only add, never delete)
       let newShopifyImages: string | null = null;
       if (updateOpts.has("images") && productInput2.files && productInput2.files.length > 0) {
         try {
+          const storedImgs: StoredImage[] = existing.shopifyImages ? JSON.parse(existing.shopifyImages) : [];
           const imgResult = await incrementalImageUpdate(
             admin, shopDomain, existing.shopifyProductId, sku,
             productInput2.files.map((f: any) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType || "IMAGE" })),
             `SKU=${sku} (priority replace inter-supplier)`,
+            storedImgs,
           );
           if (imgResult.changed) {
             result.imageChanges++;
-            const csvSrc = productInput2.files.map((f: any) => f.originalSource);
-            newShopifyImages = JSON.stringify(imgResult.newImages.map((img, i) => ({
-              mediaId: img.mediaId,
-              url: csvSrc[i] || img.url,
-            })));
+            newShopifyImages = JSON.stringify(imgResult.newImages);
           }
         } catch (error: any) {
           console.error(`[Import] Priority replace inter-supplier: error updating images:`, error?.message);
@@ -1317,22 +1326,24 @@ async function processProduct({
           }
         }
 
-        // Update images — incremental (fileDelete + productUpdate)
+        // Update images — incremental (only add, never delete)
         let newShopifyImages2: string | null = null;
         if (updateOpts.has("images") && productInput2.files && productInput2.files.length > 0) {
           try {
+            const dupMapping = await prisma.productMapping.findFirst({
+              where: { shopDomain, shopifyProductId: dupCheck.existingShopifyProductId },
+              select: { shopifyImages: true },
+            }).catch(() => null);
+            const storedImgs2: StoredImage[] = dupMapping?.shopifyImages ? JSON.parse(dupMapping.shopifyImages) : [];
             const imgResult = await incrementalImageUpdate(
               admin, shopDomain, dupCheck.existingShopifyProductId, sku,
               productInput2.files.map((f: any) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType || "IMAGE" })),
               `SKU=${sku} (priority replace EAN dup)`,
+              storedImgs2,
             );
             if (imgResult.changed) {
               result.imageChanges++;
-              const csvSrc2 = productInput2.files.map((f: any) => f.originalSource);
-              newShopifyImages2 = JSON.stringify(imgResult.newImages.map((img, i) => ({
-                mediaId: img.mediaId,
-                url: csvSrc2[i] || img.url,
-              })));
+              newShopifyImages2 = JSON.stringify(imgResult.newImages);
             }
           } catch (error: any) {
             console.error(`[Import] Priority replace EAN dup: error updating images:`, error?.message);
@@ -1804,22 +1815,23 @@ async function processProduct({
       }
     }
 
-    // Update images — incremental (fileDelete + productUpdate)
+    // Update images — incremental (only add, never delete)
     let newShopifyImages3: string | null = null;
     if (updateOpts.has("images") && productInput2.files && productInput2.files.length > 0) {
       try {
+        const prMapping = priorityReplaceTarget.mappingId
+          ? await prisma.productMapping.findUnique({ where: { id: priorityReplaceTarget.mappingId }, select: { shopifyImages: true } }).catch(() => null)
+          : null;
+        const storedImgs3: StoredImage[] = prMapping?.shopifyImages ? JSON.parse(prMapping.shopifyImages) : [];
         const imgResult = await incrementalImageUpdate(
           admin, shopDomain, priorityReplaceTarget.shopifyProductId, sku,
           productInput2.files.map((f: any) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType || "IMAGE" })),
           `SKU=${sku} (priority replace)`,
+          storedImgs3,
         );
         if (imgResult.changed) {
           result.imageChanges++;
-          const csvSrc3 = productInput2.files.map((f: any) => f.originalSource);
-          newShopifyImages3 = JSON.stringify(imgResult.newImages.map((img, i) => ({
-            mediaId: img.mediaId,
-            url: csvSrc3[i] || img.url,
-          })));
+          newShopifyImages3 = JSON.stringify(imgResult.newImages);
         }
       } catch (error: any) {
         console.error(`[Import] Priority replace: error updating images:`, error?.message);
@@ -2088,14 +2100,11 @@ async function processProduct({
             admin, shopDomain, existing.shopifyProductId, sku,
             productInput.files.map((f: any) => ({ originalSource: f.originalSource, alt: f.alt, contentType: f.contentType || "IMAGE" })),
             `SKU=${sku} (standard update)`,
+            savedImages,
           );
           if (imgResult.changed) {
             result.imageChanges++;
-            // Save CSV source URLs (not Shopify CDN URLs) for fast comparison on next import
-            newShopifyImages4 = JSON.stringify(imgResult.newImages.map((img, i) => ({
-              mediaId: img.mediaId,
-              url: currentCsvUrls[i] || img.url,
-            })));
+            newShopifyImages4 = JSON.stringify(imgResult.newImages);
           }
         }
       } catch (error: any) {
