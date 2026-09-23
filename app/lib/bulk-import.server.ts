@@ -1964,13 +1964,13 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
     }
     await fs.appendFile(errorsPath, errorWrites.length ? errorWrites.join("\n") + "\n" : "");
     console.log(`[Bulk] SKU overwrite: ${skuOverwriteSuccess} ok, ${skuOverwriteFailed} failed`);
+  }
 
-    // Process images: incremental update using fileDelete + productUpdate
-    if (imageQueue.length > 0) {
-      console.log(`[Bulk] Processing ${imageQueue.length} image updates...`);
-      await processBulkImageQueue(admin, imageQueue, job.shopDomain, 5);
-      console.log(`[Bulk] Image processing complete`);
-    }
+  // Process images: incremental update (must run even when skuOverwriteQueue is empty)
+  if (imageQueue.length > 0) {
+    console.log(`[Bulk] Processing ${imageQueue.length} image updates...`);
+    await processBulkImageQueue(admin, imageQueue, job.shopDomain, 5);
+    console.log(`[Bulk] Image processing complete`);
   }
 
   // Retry transient errors ("currently being modified") via individual productSet mutations.

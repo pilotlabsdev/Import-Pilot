@@ -236,12 +236,22 @@ export async function incrementalImageUpdate(
   // 1. Query current Shopify media
   const currentMedia = await queryProductMedia(admin, shopifyProductId);
   const storedByMediaId = new Map((storedImages || []).map((s) => [s.mediaId, s.url]));
+  const liveMediaIds = new Set(currentMedia.map((m) => m.mediaId));
 
   // 2. Diff: only ADD missing images — never delete (supplier may temporarily drop images)
-  const csvUrlSet = new Set(csvFiles.map((f) => normalizeImageUrl(f.originalSource)));
-  const shopifyUrlSet = new Set(currentMedia.map((m) => normalizeImageUrl(m.url)));
+  // Compare CSV supplier URLs against supplier URLs of media still live on Shopify.
+  // CDN URLs never match supplier URLs, so we must use storedImages (mediaId → supplier URL).
+  const liveSupplierUrls = new Set(
+    (storedImages || [])
+      .filter((s) => s.mediaId && liveMediaIds.has(s.mediaId) && s.url)
+      .map((s) => normalizeImageUrl(s.url)),
+  );
 
-  const toAdd = csvFiles.filter((f) => !shopifyUrlSet.has(normalizeImageUrl(f.originalSource)));
+  // Fallback when storedImages is empty/missing: cannot match supplier→CDN, so treat all as new
+  // (only happens for legacy mappings without shopifyImages)
+  const toAdd = liveSupplierUrls.size === 0 && (storedImages?.length ?? 0) === 0
+    ? csvFiles
+    : csvFiles.filter((f) => !liveSupplierUrls.has(normalizeImageUrl(f.originalSource)));
 
   // Preserve supplier URLs for existing images, CSV URLs for new ones
   const existingWithSupplierUrls: StoredImage[] = currentMedia.map((m) => ({

@@ -3,7 +3,7 @@ import { authenticate } from "~/shopify.server";
 import { prisma, ensureSingleSession } from "~/lib/db.server";
 import shopify from "~/shopify.server";
 import { handleBulkOperationFinish } from "~/lib/bulk-import.server";
-import type { StoredImage } from "~/lib/import-engine.server";
+import { queryProductMedia, type StoredImage } from "~/lib/import-engine.server";
 import { isBulkActive } from "~/lib/bulk-active-cache.server";
 import { enforcePlanLimits, upsertSubscription } from "~/lib/billing.server";
 import crypto from "node:crypto";
@@ -158,29 +158,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           console.log(`[Webhook] IMAGE DELETE-ALL SKU=${mapping.supplierSku}: db=${currentImages.length} → 0`);
         } else if (newImages.length > 0 && newImages.length < currentImages.length) {
           // Deletion detected: Shopify has fewer images than DB.
-          // Keep only DB entries whose mediaId still exists in Shopify (preserve supplier URLs).
-          const shopifyMediaIds = new Set(
-            newImages.map((img: any) => {
-              if (img?.admin_graphql_api_id) return String(img.admin_graphql_api_id);
-              if (img?.id) return `gid://shopify/MediaImage/${img.id}`;
-              return "";
-            }).filter(Boolean)
-          );
-          const remaining = currentImages.filter((i) => i.mediaId && shopifyMediaIds.has(i.mediaId));
+          // Webhook REST sends ProductImage IDs — they don't match MediaImage IDs in our DB.
+          // Query GraphQL for live MediaImage IDs, then keep only DB entries still alive.
+          try {
+            const { admin } = await shopify.unauthenticated.admin(shop);
+            const liveMedia = await queryProductMedia(admin, productId);
+            const liveIds = new Set(liveMedia.map((m) => m.mediaId));
+            const remaining = currentImages.filter((i) => i.mediaId && liveIds.has(i.mediaId));
 
-          if (remaining.length > 0 && remaining.length < currentImages.length) {
-            // Normal case: matched some/all surviving images by mediaId
-            patch.shopifyImages = JSON.stringify(remaining);
-            console.log(`[Webhook] IMAGE DELETE SKU=${mapping.supplierSku}: db=${currentImages.length} → ${remaining.length} (shopify=${newImages.length})`);
-          } else if (remaining.length === 0 && newImages.length > 0) {
-            // No mediaId match — DO NOT wipe. Fallback: keep first N DB entries by order.
-            // Shopify webhook image order generally matches product image order.
-            const kept = currentImages.slice(0, newImages.length);
-            patch.shopifyImages = JSON.stringify(kept);
-            console.log(`[Webhook] IMAGE DELETE FALLBACK SKU=${mapping.supplierSku}: no mediaId match, keep first ${kept.length} by order (db=${currentImages.length}, shopify=${newImages.length})`);
-            console.log(`[Webhook] IMAGE DEBUG SKU=${mapping.supplierSku}: webhookIds=${JSON.stringify([...shopifyMediaIds].slice(0, 3))} dbIds=${JSON.stringify(currentImages.slice(0, 3).map((i) => i.mediaId))}`);
-          } else {
-            console.log(`[Webhook] IMAGE DELETE SKIP SKU=${mapping.supplierSku}: db=${currentImages.length}, shopify=${newImages.length}, matched=${remaining.length}`);
+            if (remaining.length < currentImages.length) {
+              patch.shopifyImages = JSON.stringify(remaining);
+              console.log(`[Webhook] IMAGE DELETE SKU=${mapping.supplierSku}: db=${currentImages.length} → ${remaining.length} (live=${liveMedia.length})`);
+            } else {
+              console.log(`[Webhook] IMAGE DELETE SKIP SKU=${mapping.supplierSku}: all db mediaIds still live (db=${currentImages.length}, live=${liveMedia.length})`);
+            }
+          } catch (e: any) {
+            console.error(`[Webhook] IMAGE DELETE ERROR SKU=${mapping.supplierSku}: ${e?.message}`);
           }
         } else if (payloadImages === undefined) {
           // Shopify omitted images field — can't determine, skip safely
