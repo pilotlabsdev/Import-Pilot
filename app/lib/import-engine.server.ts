@@ -236,79 +236,91 @@ export async function incrementalImageUpdate(
   // 1. Query current Shopify media
   const currentMedia = await queryProductMedia(admin, shopifyProductId);
   const storedByMediaId = new Map((storedImages || []).map((s) => [s.mediaId, s.url]));
-  const liveMediaIds = new Set(currentMedia.map((m) => m.mediaId));
 
-  // 2. Diff: only ADD missing images — never delete (supplier may temporarily drop images)
-  // Compare CSV supplier URLs against supplier URLs of media still live on Shopify.
-  // CDN URLs never match supplier URLs, so we must use storedImages (mediaId → supplier URL).
-  const liveSupplierUrls = new Set(
-    (storedImages || [])
-      .filter((s) => s.mediaId && liveMediaIds.has(s.mediaId) && s.url)
-      .map((s) => normalizeImageUrl(s.url)),
-  );
-
-  // Fallback when storedImages is empty/missing: cannot match supplier→CDN, so treat all as new
-  // (only happens for legacy mappings without shopifyImages)
-  const toAdd = liveSupplierUrls.size === 0 && (storedImages?.length ?? 0) === 0
-    ? csvFiles
-    : csvFiles.filter((f) => !liveSupplierUrls.has(normalizeImageUrl(f.originalSource)));
-
-  // Preserve supplier URLs for existing images, CSV URLs for new ones
-  const existingWithSupplierUrls: StoredImage[] = currentMedia.map((m) => ({
+  // Pair each live media with its stored supplier URL (may be empty if prior bad write)
+  const paired: StoredImage[] = currentMedia.map((m) => ({
     mediaId: m.mediaId,
-    url: storedByMediaId.get(m.mediaId) || m.url,
+    url: storedByMediaId.get(m.mediaId) || "",
   }));
+  const pairedIds = new Set(paired.map((p) => p.mediaId));
 
-  // Skip if nothing to add
-  if (toAdd.length === 0) {
-    return { changed: false, newImages: existingWithSupplierUrls };
+  // CSV supplier URLs not yet accounted for by a live media's stored URL
+  const accounted = new Set(paired.filter((p) => p.url).map((p) => normalizeImageUrl(p.url)));
+  const unmatchedCsv = csvFiles.filter((f) => !accounted.has(normalizeImageUrl(f.originalSource)));
+
+  // 2. Repair: live media with empty/missing supplier URL → pair with unmatched CSV by order
+  //    (fixes prior bug where new mediaId was saved with url:"")
+  const orphans = paired.filter((p) => !p.url);
+  let repairCount = 0;
+  for (let i = 0; i < orphans.length && i < unmatchedCsv.length; i++) {
+    orphans[i].url = unmatchedCsv[i].originalSource;
+    repairCount++;
+    console.log(`[Import] Images ${label}: repair empty url ${orphans[i].mediaId} → ${unmatchedCsv[i].originalSource}`);
+  }
+  const stillToAdd = unmatchedCsv.slice(repairCount);
+
+  // 3. Nothing to add (repairs alone may still change DB)
+  if (stillToAdd.length === 0) {
+    if (repairCount === 0) {
+      return { changed: false, newImages: paired };
+    }
+    console.log(`[Import] Images ${label}: keep=${paired.length}, repair=${repairCount} (no add)`);
+    return { changed: true, newImages: paired };
   }
 
-  console.log(`[Import] Images ${label}: keep=${existingWithSupplierUrls.length}, add=${toAdd.length} (never delete)`);
+  console.log(`[Import] Images ${label}: keep=${paired.length}, repair=${repairCount}, add=${stillToAdd.length} (never delete)`);
 
-  // 3. Add images that are in CSV but not in Shopify
-  const newMedia: StoredImage[] = [...existingWithSupplierUrls];
-  if (toAdd.length > 0) {
-    const productUpdateRes = await graphqlWithRetry(admin,
-      `#graphql
-      mutation productUpdate($product: ProductUpdateInput!, $media: [CreateMediaInput!]) {
-        productUpdate(product: $product, media: $media) {
-          product {
-            media(first: 50) {
-              edges {
-                node {
-                  id
-                  ... on MediaImage {
-                    image { url }
-                  }
+  // 4. Add missing images via productUpdate
+  const productUpdateRes = await graphqlWithRetry(admin,
+    `#graphql
+    mutation productUpdate($product: ProductUpdateInput!, $media: [CreateMediaInput!]) {
+      productUpdate(product: $product, media: $media) {
+        product {
+          media(first: 50) {
+            edges {
+              node {
+                id
+                ... on MediaImage {
+                  image { url }
                 }
               }
             }
           }
-          userErrors { field message }
         }
-      }`,
-      {
-        product: { id: shopifyProductId },
-        media: toAdd.map((f) => ({ originalSource: f.originalSource, mediaContentType: f.contentType || "IMAGE" })),
-      },
-    );
-
-    // Capture new media IDs, pair with supplier URLs from toAdd
-    const csvByNormalizedUrl = new Map(toAdd.map((f) => [normalizeImageUrl(f.originalSource), f.originalSource]));
-    for (const edge of productUpdateRes.data?.productUpdate?.product?.media?.edges || []) {
-      const node = edge.node;
-      if (node?.id) {
-        const cdnUrl = node.image?.url || "";
-        const supplierUrl = storedByMediaId.get(node.id) || csvByNormalizedUrl.get(normalizeImageUrl(cdnUrl)) || cdnUrl;
-        if (!newMedia.some((m) => m.mediaId === node.id)) {
-          newMedia.push({ mediaId: node.id, url: supplierUrl });
-        }
+        userErrors { field message }
       }
-    }
+    }`,
+    {
+      product: { id: shopifyProductId },
+      media: stillToAdd.map((f) => ({ originalSource: f.originalSource, mediaContentType: f.contentType || "IMAGE" })),
+    },
+  );
+
+  const userErrors = productUpdateRes.data?.productUpdate?.userErrors || [];
+  if (userErrors.length > 0) {
+    console.error(`[Import] Images ${label}: productUpdate userErrors=${JSON.stringify(userErrors)}`);
   }
 
-  return { changed: true, newImages: newMedia };
+  // 5. Pair NEW media IDs (not already known) with stillToAdd by submission order.
+  //    CDN urls never match supplier urls — do not use them for pairing.
+  const addedIds: string[] = [];
+  for (const edge of productUpdateRes.data?.productUpdate?.product?.media?.edges || []) {
+    const id = edge.node?.id;
+    if (id && !pairedIds.has(id)) {
+      addedIds.push(id);
+    }
+  }
+  for (let i = 0; i < addedIds.length; i++) {
+    const supplierUrl = stillToAdd[i]?.originalSource || "";
+    paired.push({ mediaId: addedIds[i], url: supplierUrl });
+    pairedIds.add(addedIds[i]);
+    console.log(`[Import] Images ${label}: pair new ${addedIds[i]} → ${supplierUrl}`);
+  }
+  if (addedIds.length < stillToAdd.length) {
+    console.warn(`[Import] Images ${label}: expected ${stillToAdd.length} new media, got ${addedIds.length} (async processing?)`);
+  }
+
+  return { changed: true, newImages: paired };
 }
 
 async function graphqlWithRetry(_admin: any, query: string, vars: any, maxRetries = 3): Promise<any> {
