@@ -1644,6 +1644,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
     shopifyProductId: string; lastPrice: number | null; lastComparePrice: number | null;
     lastQuantity: number | null; lastCost: number | null; lastTitle: string | null;
     lastDescription: string | null; lastVendor: string | null; lastProductType: string | null; lastTags: string | null;
+    shopifyImages: string | null;
   }>();
   if (allResultSkus.length > 0) {
     try {
@@ -1653,6 +1654,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
           supplierSku: true, shopifyProductId: true,
           lastPrice: true, lastComparePrice: true, lastQuantity: true, lastCost: true,
           lastTitle: true, lastDescription: true, lastVendor: true, lastProductType: true, lastTags: true,
+          shopifyImages: true,
         },
       });
       for (const m of existingMappings) {
@@ -1736,6 +1738,11 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       ? JSON.stringify(meta.images.map((url: string) => ({ mediaId: "", url })))
       : undefined;
 
+    const existingMappingForImages = existingMappingsMap.get(meta.sku);
+    const backfillImages = csvImagesForMapping && existingMappingForImages && !existingMappingForImages.shopifyImages
+      ? csvImagesForMapping
+      : undefined;
+
     await prisma.productMapping.upsert({
       where: { shopDomain_supplierSku: { shopDomain: job.shopDomain, supplierSku: meta.sku } },
       create: {
@@ -1777,7 +1784,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
         postProcessStatus: actuallyNew ? "pending" : "complete",
         postProcessError: null,
         postProcessRetries: 0,
-        ...(csvImagesForMapping ? { shopifyImages: csvImagesForMapping } : {}),
+        ...(backfillImages ? { shopifyImages: backfillImages } : {}),
       },
     });
 
