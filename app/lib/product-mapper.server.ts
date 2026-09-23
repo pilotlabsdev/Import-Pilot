@@ -511,9 +511,9 @@ export function mapCsvRowToProductSetUpdate(
 
   input.productOptions = [{ name: "Title", values: [{ name: "Default Title" }] }];
 
-  if (csvImages.length === 0) {
-    delete input.files;
-  }
+  // productSet `files` has REPLACE semantics — never send on UPDATE.
+  // Images are handled incrementally post-mutation via imageQueue + incrementalImageUpdate.
+  delete input.files;
 
   return input;
 }

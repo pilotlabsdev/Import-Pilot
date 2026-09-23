@@ -1482,7 +1482,9 @@ async function prepareAndLaunch(
       if (matchMode === "update" && inputObj.variants?.[0]) {
         delete inputObj.variants[0].sku;
       }
-      meta.images = inputObj.files?.map((f: any) => f.originalSource) || [];
+      // meta.images already set above from csvImageUrls (line ~1462).
+      // Do NOT overwrite from inputObj.files — files are excluded from UPDATE productSet
+      // (replace semantics) so inputObj.files is always undefined here.
       await pushUpdate(inputObj, meta, { id: match.productId });
     } else {
       const inputObj = mapCsvRowToProductSet(

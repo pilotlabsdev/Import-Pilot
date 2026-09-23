@@ -149,14 +149,26 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         })).filter((img: any) => img.url);
         const currentImages: StoredImage[] = mapping.shopifyImages ? JSON.parse(mapping.shopifyImages) : [];
         const currentByMediaId = new Map(currentImages.map((i) => [i.mediaId, i.url]));
-        const merged = webhookImages.map((img) => ({
-          mediaId: img.mediaId,
-          url: currentByMediaId.get(img.mediaId) || img.url,
-        }));
-        const currentUrls = currentImages.map((i) => i.url);
-        const mergedUrls = merged.map((i) => i.url);
-        if (JSON.stringify(currentUrls) !== JSON.stringify(mergedUrls)) {
-          patch.shopifyImages = JSON.stringify(merged);
+
+        // Match webhook mediaIds against stored entries to preserve supplier URLs.
+        // If NO mediaId matches (e.g. DB still has mediaId:"" from create path),
+        // skip image sync — overwriting with CDN URLs would break change detection.
+        const matchCount = webhookImages.filter((img) => img.mediaId && currentByMediaId.has(img.mediaId)).length;
+        const hasUnknownCurrent = currentImages.length > 0 && currentImages.some((i) => !i.mediaId);
+
+        if (currentImages.length === 0 || matchCount > 0) {
+          const merged = webhookImages.map((img) => ({
+            mediaId: img.mediaId,
+            url: currentByMediaId.get(img.mediaId) || img.url,
+          }));
+          const currentUrls = currentImages.map((i) => i.url);
+          const mergedUrls = merged.map((i) => i.url);
+          if (JSON.stringify(currentUrls) !== JSON.stringify(mergedUrls)) {
+            patch.shopifyImages = JSON.stringify(merged);
+          }
+        } else if (hasUnknownCurrent) {
+          // DB has supplier URLs but empty mediaIds — preserve URLs, don't clobber with CDN.
+          // mediaIds will be filled by create path's queryProductMedia.
         }
       } else if (payload.images === null || (Array.isArray(payload.images) && payload.images.length === 0)) {
         if (mapping.shopifyImages) {
