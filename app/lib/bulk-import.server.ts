@@ -1116,6 +1116,18 @@ async function prepareAndLaunch(
     }
   }
 
+  // Pre-load shopifyImages for all mappings of this config (for image change detection)
+  const imagesBySku = new Map<string, string | null>();
+  {
+    const allMappings = await prisma.productMapping.findMany({
+      where: { shopDomain: job.shopDomain, configId: job.configId },
+      select: { supplierSku: true, shopifyImages: true },
+    });
+    for (const m of allMappings) {
+      imagesBySku.set(m.supplierSku, m.shopifyImages);
+    }
+  }
+
   const flush = async (type: "create" | "update") => {
     if (type === "create") {
       if (createLines.length === 0) return;
@@ -1405,12 +1417,15 @@ async function prepareAndLaunch(
         tagDebugCount++;
       }
 
-      // Detect image changes: compare CSV image URLs against Shopify's current images
+      // Detect image changes: compare CSV supplier URLs against DB's stored supplier URLs
+      // (each mediaId in DB is paired with its original supplier URL — NOT Shopify CDN URLs)
       const csvImageUrls: string[] = [];
       if (effectiveOpts.has("images")) {
         for (let i = 1; i <= 5; i++) { const img = getField(row, columnMaps, `image${i}`); if (img) csvImageUrls.push(img.trim()); }
       }
-      const shopifyUrls = (match.shopifyImages || []).map((img: StoredImage) => img.url).filter(Boolean);
+      const dbImagesRaw = imagesBySku.get(sku);
+      const dbImages: StoredImage[] = dbImagesRaw ? JSON.parse(dbImagesRaw) : [];
+      const shopifyUrls = dbImages.map((img) => img.url).filter(Boolean);
       const imagesChanged = effectiveOpts.has("images") && csvImageUrls.length > 0 && (
         csvImageUrls.length !== shopifyUrls.length || csvImageUrls.some((url, i) => url !== shopifyUrls[i])
       );

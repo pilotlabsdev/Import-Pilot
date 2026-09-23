@@ -235,42 +235,22 @@ export async function incrementalImageUpdate(
   // 1. Query current Shopify media
   const currentMedia = await queryProductMedia(admin, shopifyProductId);
 
-  // 2. Diff: compare CSV URLs vs Shopify URLs (normalized to ignore query params / CDN prefixes)
+  // 2. Diff: only ADD missing images — never delete (supplier may temporarily drop images)
   const csvUrls = csvFiles.map((f) => f.originalSource);
   const csvUrlSet = new Set(csvUrls.map(normalizeImageUrl));
   const shopifyUrlSet = new Set(currentMedia.map((m) => normalizeImageUrl(m.url)));
 
-  // Match by normalized URL — if Shopify CDN URL normalizes to same path as CSV, treat as same
-  const toDelete = currentMedia.filter((m) => !csvUrlSet.has(normalizeImageUrl(m.url)));
   const toAdd = csvFiles.filter((f) => !shopifyUrlSet.has(normalizeImageUrl(f.originalSource)));
-  const toKeep = currentMedia.filter((m) => csvUrlSet.has(normalizeImageUrl(m.url)));
+  const toKeep = currentMedia;
 
-  // Skip if nothing changed
-  if (toDelete.length === 0 && toAdd.length === 0) {
+  // Skip if nothing to add
+  if (toAdd.length === 0) {
     return { changed: false, newImages: currentMedia };
   }
 
-  console.log(`[Import] Images ${label}: keep=${toKeep.length}, delete=${toDelete.length}, add=${toAdd.length}`);
+  console.log(`[Import] Images ${label}: keep=${toKeep.length}, add=${toAdd.length} (never delete)`);
 
-  // 3. Delete images that are in Shopify but not in CSV
-  if (toDelete.length > 0) {
-    try {
-      await graphqlWithRetry(admin,
-        `#graphql
-        mutation fileDelete($files: [ID!]!) {
-          fileDelete(files: $files) {
-            deletedFiles
-            userErrors { field message code }
-          }
-        }`,
-        { files: toDelete.map((d) => d.mediaId) },
-      );
-    } catch (delErr: any) {
-      console.error(`[Import] Images ${label}: fileDelete error:`, delErr?.message);
-    }
-  }
-
-  // 4. Add images that are in CSV but not in Shopify
+  // 3. Add images that are in CSV but not in Shopify
   const newMedia: StoredImage[] = [...toKeep];
   if (toAdd.length > 0) {
     const productUpdateRes = await graphqlWithRetry(admin,
