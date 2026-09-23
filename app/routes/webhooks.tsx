@@ -116,7 +116,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
     case "PRODUCTS_UPDATE": {
       // Skip during active bulk imports — bulk op already updates mappings (0 DB queries)
-      if (isBulkActive(shop)) break;
+      if (isBulkActive(shop)) {
+        // Log only when it matters for image debugging (PRODUCTS_UPDATE is otherwise silent)
+        console.log(`[Webhook] PRODUCTS_UPDATE SKIPPED (bulk active): shop=${shop}`);
+        break;
+      }
 
       const productId = payload.id ? `gid://shopify/Product/${payload.id}` : null;
       if (!productId) break;
@@ -141,26 +145,34 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // Image sync: ONLY detect manual deletions from Shopify admin.
       // Additions are handled by the next import (incrementalImageUpdate).
       // Flow: webhook sees fewer images → update DB → next import re-adds the missing one.
-      const newImages = (payload.images as any[]) || [];
+      const payloadImages = payload.images;
+      const newImages: any[] = Array.isArray(payloadImages) ? payloadImages : [];
       const patch: any = {};
 
       const currentImages: StoredImage[] = mapping.shopifyImages ? JSON.parse(mapping.shopifyImages) : [];
 
       if (currentImages.length > 0) {
-        if (newImages.length === 0 && (payload.images === null || Array.isArray(payload.images))) {
-          // All images manually deleted
+        if (Array.isArray(payloadImages) && payloadImages.length === 0) {
+          // All images manually deleted (explicit empty array)
           patch.shopifyImages = JSON.stringify([]);
+          console.log(`[Webhook] IMAGE DELETE-ALL SKU=${mapping.supplierSku}: db=${currentImages.length} → 0`);
         } else if (newImages.length > 0 && newImages.length < currentImages.length) {
           // Deletion detected: Shopify has fewer images than DB.
           // Keep only DB entries whose mediaId still exists in Shopify (preserve supplier URLs).
           const shopifyMediaIds = new Set(
-            newImages.map((img: any) => (img.id ? `gid://shopify/MediaImage/${img.id}` : "")).filter(Boolean)
+            newImages.map((img: any) => (img?.id ? `gid://shopify/MediaImage/${img.id}` : "")).filter(Boolean)
           );
-          const remaining = currentImages.filter((i) => shopifyMediaIds.has(i.mediaId));
-          // Only update if we actually removed something (mediaIds matched)
-          if (remaining.length < currentImages.length && remaining.length === newImages.length) {
+          const remaining = currentImages.filter((i) => i.mediaId && shopifyMediaIds.has(i.mediaId));
+          // Update if we actually removed something (at least one DB entry gone)
+          if (remaining.length < currentImages.length) {
             patch.shopifyImages = JSON.stringify(remaining);
+            console.log(`[Webhook] IMAGE DELETE SKU=${mapping.supplierSku}: db=${currentImages.length} → ${remaining.length} (shopify=${newImages.length})`);
+          } else {
+            console.log(`[Webhook] IMAGE DELETE SKIP SKU=${mapping.supplierSku}: no mediaId match (db=${currentImages.length}, shopify=${newImages.length})`);
           }
+        } else if (payloadImages === undefined) {
+          // Shopify omitted images field — can't determine, skip safely
+          console.log(`[Webhook] IMAGE SKIP SKU=${mapping.supplierSku}: payload.images undefined (db=${currentImages.length})`);
         }
         // newImages.length >= currentImages.length → nothing deleted, skip (import handles additions)
       }
