@@ -3,6 +3,7 @@ import { authenticate } from "~/shopify.server";
 import { prisma, ensureSingleSession } from "~/lib/db.server";
 import shopify from "~/shopify.server";
 import { handleBulkOperationFinish } from "~/lib/bulk-import.server";
+import type { StoredImage } from "~/lib/import-engine.server";
 import { isBulkActive } from "~/lib/bulk-active-cache.server";
 import { enforcePlanLimits, upsertSubscription } from "~/lib/billing.server";
 import crypto from "node:crypto";
@@ -142,15 +143,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const patch: any = {};
 
       if (newImages.length > 0) {
-        const storedImages = newImages.map((img: any) => ({
+        const webhookImages = newImages.map((img: any) => ({
           mediaId: img.id ? `gid://shopify/MediaImage/${img.id}` : "",
           url: img.src || "",
         })).filter((img: any) => img.url);
-        const currentImages = mapping.shopifyImages ? JSON.parse(mapping.shopifyImages) : [];
-        const currentUrls = currentImages.map((i: any) => i.url);
-        const newUrls = storedImages.map((i: any) => i.url);
-        if (JSON.stringify(currentUrls) !== JSON.stringify(newUrls)) {
-          patch.shopifyImages = JSON.stringify(storedImages);
+        const currentImages: StoredImage[] = mapping.shopifyImages ? JSON.parse(mapping.shopifyImages) : [];
+        const currentByMediaId = new Map(currentImages.map((i) => [i.mediaId, i.url]));
+        const merged = webhookImages.map((img) => ({
+          mediaId: img.mediaId,
+          url: currentByMediaId.get(img.mediaId) || img.url,
+        }));
+        const currentUrls = currentImages.map((i) => i.url);
+        const mergedUrls = merged.map((i) => i.url);
+        if (JSON.stringify(currentUrls) !== JSON.stringify(mergedUrls)) {
+          patch.shopifyImages = JSON.stringify(merged);
         }
       } else if (payload.images === null || (Array.isArray(payload.images) && payload.images.length === 0)) {
         if (mapping.shopifyImages) {
