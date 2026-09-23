@@ -138,42 +138,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const compareUnchanged = newCompare != null && mapping.lastComparePrice === newCompare;
       const qtyUnchanged = newQty != null && mapping.lastQuantity === newQty;
 
-      // Sync images even when price/qty unchanged (e.g. manual image delete from admin)
+      // Image sync: ONLY detect manual deletions from Shopify admin.
+      // Additions are handled by the next import (incrementalImageUpdate).
+      // Flow: webhook sees fewer images → update DB → next import re-adds the missing one.
       const newImages = (payload.images as any[]) || [];
       const patch: any = {};
 
-      if (newImages.length > 0) {
-        const webhookImages = newImages.map((img: any) => ({
-          mediaId: img.id ? `gid://shopify/MediaImage/${img.id}` : "",
-          url: img.src || "",
-        })).filter((img: any) => img.url);
-        const currentImages: StoredImage[] = mapping.shopifyImages ? JSON.parse(mapping.shopifyImages) : [];
-        const currentByMediaId = new Map(currentImages.map((i) => [i.mediaId, i.url]));
+      const currentImages: StoredImage[] = mapping.shopifyImages ? JSON.parse(mapping.shopifyImages) : [];
 
-        // Match webhook mediaIds against stored entries to preserve supplier URLs.
-        // If NO mediaId matches (e.g. DB still has mediaId:"" from create path),
-        // skip image sync — overwriting with CDN URLs would break change detection.
-        const matchCount = webhookImages.filter((img) => img.mediaId && currentByMediaId.has(img.mediaId)).length;
-        const hasUnknownCurrent = currentImages.length > 0 && currentImages.some((i) => !i.mediaId);
-
-        if (currentImages.length === 0 || matchCount > 0) {
-          const merged = webhookImages.map((img) => ({
-            mediaId: img.mediaId,
-            url: currentByMediaId.get(img.mediaId) || img.url,
-          }));
-          const currentUrls = currentImages.map((i) => i.url);
-          const mergedUrls = merged.map((i) => i.url);
-          if (JSON.stringify(currentUrls) !== JSON.stringify(mergedUrls)) {
-            patch.shopifyImages = JSON.stringify(merged);
-          }
-        } else if (hasUnknownCurrent) {
-          // DB has supplier URLs but empty mediaIds — preserve URLs, don't clobber with CDN.
-          // mediaIds will be filled by create path's queryProductMedia.
-        }
-      } else if (payload.images === null || (Array.isArray(payload.images) && payload.images.length === 0)) {
-        if (mapping.shopifyImages) {
+      if (currentImages.length > 0) {
+        if (newImages.length === 0 && (payload.images === null || Array.isArray(payload.images))) {
+          // All images manually deleted
           patch.shopifyImages = JSON.stringify([]);
+        } else if (newImages.length > 0 && newImages.length < currentImages.length) {
+          // Deletion detected: Shopify has fewer images than DB.
+          // Keep only DB entries whose mediaId still exists in Shopify (preserve supplier URLs).
+          const shopifyMediaIds = new Set(
+            newImages.map((img: any) => (img.id ? `gid://shopify/MediaImage/${img.id}` : "")).filter(Boolean)
+          );
+          const remaining = currentImages.filter((i) => shopifyMediaIds.has(i.mediaId));
+          // Only update if we actually removed something (mediaIds matched)
+          if (remaining.length < currentImages.length && remaining.length === newImages.length) {
+            patch.shopifyImages = JSON.stringify(remaining);
+          }
         }
+        // newImages.length >= currentImages.length → nothing deleted, skip (import handles additions)
       }
 
       if (priceUnchanged && compareUnchanged && qtyUnchanged && Object.keys(patch).length === 0) break;
