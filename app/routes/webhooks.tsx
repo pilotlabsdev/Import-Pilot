@@ -160,15 +160,27 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           // Deletion detected: Shopify has fewer images than DB.
           // Keep only DB entries whose mediaId still exists in Shopify (preserve supplier URLs).
           const shopifyMediaIds = new Set(
-            newImages.map((img: any) => (img?.id ? `gid://shopify/MediaImage/${img.id}` : "")).filter(Boolean)
+            newImages.map((img: any) => {
+              if (img?.admin_graphql_api_id) return String(img.admin_graphql_api_id);
+              if (img?.id) return `gid://shopify/MediaImage/${img.id}`;
+              return "";
+            }).filter(Boolean)
           );
           const remaining = currentImages.filter((i) => i.mediaId && shopifyMediaIds.has(i.mediaId));
-          // Update if we actually removed something (at least one DB entry gone)
-          if (remaining.length < currentImages.length) {
+
+          if (remaining.length > 0 && remaining.length < currentImages.length) {
+            // Normal case: matched some/all surviving images by mediaId
             patch.shopifyImages = JSON.stringify(remaining);
             console.log(`[Webhook] IMAGE DELETE SKU=${mapping.supplierSku}: db=${currentImages.length} → ${remaining.length} (shopify=${newImages.length})`);
+          } else if (remaining.length === 0 && newImages.length > 0) {
+            // No mediaId match — DO NOT wipe. Fallback: keep first N DB entries by order.
+            // Shopify webhook image order generally matches product image order.
+            const kept = currentImages.slice(0, newImages.length);
+            patch.shopifyImages = JSON.stringify(kept);
+            console.log(`[Webhook] IMAGE DELETE FALLBACK SKU=${mapping.supplierSku}: no mediaId match, keep first ${kept.length} by order (db=${currentImages.length}, shopify=${newImages.length})`);
+            console.log(`[Webhook] IMAGE DEBUG SKU=${mapping.supplierSku}: webhookIds=${JSON.stringify([...shopifyMediaIds].slice(0, 3))} dbIds=${JSON.stringify(currentImages.slice(0, 3).map((i) => i.mediaId))}`);
           } else {
-            console.log(`[Webhook] IMAGE DELETE SKIP SKU=${mapping.supplierSku}: no mediaId match (db=${currentImages.length}, shopify=${newImages.length})`);
+            console.log(`[Webhook] IMAGE DELETE SKIP SKU=${mapping.supplierSku}: db=${currentImages.length}, shopify=${newImages.length}, matched=${remaining.length}`);
           }
         } else if (payloadImages === undefined) {
           // Shopify omitted images field — can't determine, skip safely
