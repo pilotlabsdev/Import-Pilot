@@ -1288,26 +1288,37 @@ async function prepareAndLaunch(
       if (existingDup && !selfEanMappings.has(ean)) {
         // === CASE: Same EAN from another app-tracked supplier ===
         if (duplicatePolicy === "priority") {
-          const priorityList = shopSettings?.supplierPriority ? JSON.parse(shopSettings.supplierPriority) : [];
+          let priorityList: string[] = [];
+          try {
+            priorityList = shopSettings?.supplierPriority ? JSON.parse(shopSettings.supplierPriority) : [];
+          } catch {
+            priorityList = [];
+          }
           const currentIndex = priorityList.indexOf(config.id);
           const existingIndex = priorityList.indexOf(existingDup.configId);
-          if (currentIndex === -1 || (existingIndex !== -1 && existingIndex <= currentIndex)) {
-            await logDuplicate(job.shopDomain, ean, { supplierSku: existingDup.supplierSku, configId: existingDup.configId, config: { name: existingDup.configName }, shopifyProductId: "" }, config.id, sku);
-            duplicateSkippedCount++;
-            continue;
-          }
-          // Current supplier has HIGHER priority — replace old supplier's product
-          priorityReplaceMappingId = existingDup.mappingId;
-          priorityReplaceConfigId = existingDup.configId;
-          // Track for post-processing: delete old mapping if it has a DIFFERENT SKU
-          // (if same SKU, the upsert will reassign configId automatically)
-          if (existingDup.supplierSku !== sku) {
-            priorityReplacements.push({
-              mappingId: existingDup.mappingId,
-              oldConfigId: existingDup.configId,
-              newSku: sku,
-              newEan: ean,
-            });
+          const fallThrough = priorityList.length === 0 || (currentIndex === -1 && existingIndex === -1);
+          // Empty priority list (or neither supplier assigned) — same as chunks checkDuplicate:
+          // NOT a duplicate. Row falls through to the UPDATE path (match found via byBarcode),
+          // fields filtered by updateOptions, SKU per matchMode. No duplicate logged.
+          if (!fallThrough) {
+            if (currentIndex === -1 || (existingIndex !== -1 && existingIndex <= currentIndex)) {
+              await logDuplicate(job.shopDomain, ean, { supplierSku: existingDup.supplierSku, configId: existingDup.configId, config: { name: existingDup.configName }, shopifyProductId: "" }, config.id, sku);
+              duplicateSkippedCount++;
+              continue;
+            }
+            // Current supplier has HIGHER priority — replace old supplier's product
+            priorityReplaceMappingId = existingDup.mappingId;
+            priorityReplaceConfigId = existingDup.configId;
+            // Track for post-processing: delete old mapping if it has a DIFFERENT SKU
+            // (if same SKU, the upsert will reassign configId automatically)
+            if (existingDup.supplierSku !== sku) {
+              priorityReplacements.push({
+                mappingId: existingDup.mappingId,
+                oldConfigId: existingDup.configId,
+                newSku: sku,
+                newEan: ean,
+              });
+            }
           }
         } else {
           // skip_existing
