@@ -2139,7 +2139,18 @@ async function processProduct({
     const overwriteModeEarly = (shopSettings0?.matchMode || "overwrite") === "overwrite";
     const skuChangedEarly = overwriteModeEarly && existing.shopifyVariantId && sku && sku !== (liveVariantSku || existing.supplierSku);
     if (!priceChanged && !stockChanged && !costChanged && !titleChanged && !descriptionChanged && !vendorChanged && !productTypeChanged && !tagsChanged && !skuChangedEarly) {
-      result.unchanged++;
+      if (newShopifyImages4) {
+        // Only images changed — save pairing and count as updated (not unchanged)
+        try {
+          await prisma.productMapping.update({
+            where: { id: existing.id },
+            data: { lastSyncAt: new Date(), shopifyImages: newShopifyImages4 },
+          });
+        } catch {}
+        result.updated++;
+      } else {
+        result.unchanged++;
+      }
       return;
     }
 
