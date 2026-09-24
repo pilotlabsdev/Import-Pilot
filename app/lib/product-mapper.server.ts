@@ -481,7 +481,6 @@ export function mapCsvRowToProductSetUpdate(
     optionValues: [{ optionName: "Title", name: "Default Title" }],
     sku: sku || undefined,
     barcode: ean,
-    inventoryQuantities: [],
     inventoryPolicy: "DENY",
   };
 
@@ -490,9 +489,10 @@ export function mapCsvRowToProductSetUpdate(
     if (prices.compareAtPrice) variant.compareAtPrice = String(prices.compareAtPrice);
   }
 
-  if (opts.has("stock")) {
-    variant.inventoryQuantities = [{ locationId, name: "available", quantity: stockQty }];
-  }
+  // UPDATE: nunca enviar inventoryQuantities. productSet solo puede setear stock en
+  // variantes ya stockeadas en esa ubicación; en updates cruzados de proveedor falla con
+  // "48125: not stocked at the location". El stock de updates se aplica en finalizeBulkImport
+  // (activación + inventorySetQuantities). El CREATE (mapCsvRowToProductSet) sí lo envía.
 
   if (costNum > 0) {
     variant.inventoryItem = { tracked: true, cost: String(costNum) };
