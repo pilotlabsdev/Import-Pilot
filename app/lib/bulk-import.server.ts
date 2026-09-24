@@ -1433,8 +1433,13 @@ async function prepareAndLaunch(
       const dbImagesRaw = imagesBySku.get(sku);
       const dbImages: StoredImage[] = dbImagesRaw ? JSON.parse(dbImagesRaw) : [];
       const shopifyUrls = dbImages.map((img) => img.url).filter(Boolean);
+      // Compare as sets — order may differ (re-added image is appended to DB)
+      const csvUrlSet = new Set(csvImageUrls);
+      const dbUrlSet = new Set(shopifyUrls);
       const imagesChanged = effectiveOpts.has("images") && csvImageUrls.length > 0 && (
-        csvImageUrls.length !== shopifyUrls.length || csvImageUrls.some((url, i) => url !== shopifyUrls[i])
+        csvImageUrls.length !== shopifyUrls.length ||
+        csvImageUrls.some((url) => !dbUrlSet.has(url)) ||
+        shopifyUrls.some((url) => !csvUrlSet.has(url))
       );
       const skuChanged = matchMode === "overwrite" && match.sku && match.sku !== sku;
 
