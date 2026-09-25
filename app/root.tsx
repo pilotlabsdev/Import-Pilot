@@ -16,6 +16,7 @@ import ptPolaris from "@shopify/polaris/locales/pt-BR.json";
 import frPolaris from "@shopify/polaris/locales/fr.json";
 import dePolaris from "@shopify/polaris/locales/de.json";
 import itPolaris from "@shopify/polaris/locales/it.json";
+import { AppBridgeBounce } from "~/components/AppBridgeBounce";
 
 const polarisTranslations: Record<string, any> = {
   es: esPolaris, en: enPolaris, pt: ptPolaris, fr: frPolaris, de: dePolaris, it: itPolaris,
@@ -167,6 +168,28 @@ export function ErrorBoundary() {
         <body style={{ fontFamily: "'Inter', sans-serif", display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh", margin: 0, background: "#f6f6f7" }}>
           <p>Redirigiendo...</p>
           <AutoRedirect url={redirectUrl} />
+        </body>
+      </html>
+    );
+  }
+
+  const isAppBridgeHtml = isRouteErrorResponse(error)
+    && error.status === 200
+    && typeof error.data === "string"
+    && error.data.includes("app-bridge");
+
+  if (isAppBridgeHtml) {
+    console.error("[Root ErrorBoundary] App Bridge bounce HTML (sesión embedded perdida) — entregando al navegador para recuperación");
+    return (
+      <html lang="en">
+        <head>
+          <meta charSet="utf-8" />
+          <meta name="viewport" content="width=device-width,initial-scale=1" />
+          <title>Import Pilot</title>
+        </head>
+        <body style={{ fontFamily: "'Inter', sans-serif", margin: 0, background: "#f6f6f7" }}>
+          <AppBridgeBounce html={error.data} />
+          <Scripts />
         </body>
       </html>
     );

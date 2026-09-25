@@ -13,6 +13,7 @@ import { TutorialProvider, stopTutorial } from "~/components/TutorialProvider";
 import { CrispChat } from "~/components/CrispChat";
 import { requireSubscription, getSubscriptionInfo } from "~/lib/billing.server";
 import { ReconnectingOverlay, triggerReconnect } from "~/components/ReconnectingOverlay";
+import { AppBridgeBounce } from "~/components/AppBridgeBounce";
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
@@ -243,13 +244,8 @@ export function ErrorBoundary() {
   }
 
   if (isAppBridgeHtml) {
-    console.log("[App ErrorBoundary] App Bridge redirect (status=200) → /app");
-    return (
-      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "60vh" }}>
-        <p style={{ fontSize: "14px", color: "#6d7175" }}>Cargando...</p>
-        <AutoRedirect url="/app" />
-      </div>
-    );
+    console.error("[App ErrorBoundary] App Bridge bounce HTML (sesión embedded perdida) — entregando al navegador para recuperación");
+    return <AppBridgeBounce html={typeof error.data === "string" ? error.data : ""} />;
   }
 
   const errorText = isRouteErrorResponse(error)
