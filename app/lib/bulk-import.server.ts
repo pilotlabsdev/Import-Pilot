@@ -413,7 +413,7 @@ const LOOKUP_QUERY = `{
               sku
               barcode
               price
-              inventoryItem { id unitCost { amount } }
+              inventoryItem { id unitCost { amount } inventoryLevels(first: 10) { nodes { location { id } quantities(names: ["available"]) { name quantity } } } }
             }
           }
         }
@@ -428,6 +428,7 @@ interface LookupMatch {
   inventoryItemId: string;
   shopifyCost: number;
   shopifyPrice?: number | null;
+  shopifyQuantities?: Record<string, number>;
   sku: string;
   shopifyTitle?: string;
   shopifyDescription?: string;
@@ -435,6 +436,19 @@ interface LookupMatch {
   shopifyProductType?: string;
   shopifyTags?: string[];
   shopifyImages?: StoredImage[];
+}
+
+function parseInventoryLevels(levels: any): Record<string, number> | undefined {
+  const nodes = levels?.nodes;
+  if (!Array.isArray(nodes) || nodes.length === 0) return undefined;
+  const out: Record<string, number> = {};
+  for (const n of nodes) {
+    const locId = n?.location?.id;
+    if (!locId) continue;
+    const q = Array.isArray(n?.quantities) ? n.quantities.find((x: any) => x?.name === "available") : null;
+    if (q && typeof q.quantity === "number") out[locId] = q.quantity;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 interface MetaLine {
@@ -456,6 +470,8 @@ interface MetaLine {
   inventoryItemId?: string;
   priceChanged?: boolean;
   stockChanged?: boolean;
+  priceBaselineLive?: boolean;
+  stockBaselineLive?: boolean;
   costChanged?: boolean;
   titleChanged?: boolean;
   descriptionChanged?: boolean;
@@ -629,7 +645,7 @@ export async function runBulkImport({
                 images(first: 5) { edges { node { id url } } }
                 variants(first: 5) {
                   edges {
-                    node { id sku barcode price inventoryItem { id unitCost { amount } } }
+                    node { id sku barcode price inventoryItem { id unitCost { amount } inventoryLevels(first: 10) { nodes { location { id } quantities(names: ["available"]) { name quantity } } } } }
                   }
                 }
               }
@@ -658,6 +674,7 @@ export async function runBulkImport({
               inventoryItemId: v.inventoryItem?.id || "",
               shopifyCost: parseFloat(v.inventoryItem?.unitCost?.amount ?? "0") || 0,
               shopifyPrice: v.price != null && !Number.isNaN(parseFloat(v.price)) ? parseFloat(v.price) : undefined,
+              shopifyQuantities: parseInventoryLevels(v.inventoryItem?.inventoryLevels),
               sku: v.sku || "",
               shopifyTitle: productTitle,
               shopifyDescription: productDescription,
@@ -1099,6 +1116,7 @@ async function prepareAndLaunch(
   let duplicateSkippedCount = 0;
   let tagDebugCount = 0;
   let priceDebugCount = 0;
+  let stockDebugCount = 0;
   const priorityReplacements: Array<{ mappingId: string; oldConfigId: string; newSku: string; newEan: string }> = [];
 
   // Pre-load existing EAN mappings from OTHER suppliers for duplicate detection
@@ -1384,12 +1402,16 @@ async function prepareAndLaunch(
     if (match) {
       const mapping = bySkuMapping.get(sku);
 
-      // Price baseline: LIVE Shopify price from lookup (other suppliers/manual edits change it);
-      // fall back to our own last-known price only when the lookup didn't return one.
-      const lastPrice = typeof match.shopifyPrice === "number" && !Number.isNaN(match.shopifyPrice)
-        ? match.shopifyPrice
-        : mapping?.lastPrice ?? null;
-      const lastQty = mapping?.lastQuantity ?? null;
+      // Price/stock baselines: LIVE values from lookup (other suppliers/manual edits change them);
+      // fall back to our own last-known values only when the lookup didn't return them.
+      const livePrice = typeof match.shopifyPrice === "number" && !Number.isNaN(match.shopifyPrice) ? match.shopifyPrice : null;
+      const priceBaselineLive = livePrice !== null;
+      const lastPrice = priceBaselineLive ? livePrice : mapping?.lastPrice ?? null;
+      const liveQty = locationId && match.shopifyQuantities && typeof match.shopifyQuantities[locationId] === "number"
+        ? match.shopifyQuantities[locationId]
+        : null;
+      const stockBaselineLive = liveQty !== null;
+      const lastQty = stockBaselineLive ? liveQty : mapping?.lastQuantity ?? null;
       const lastTitle = mapping?.lastTitle ?? null;
       const lastDescription = mapping?.lastDescription ?? null;
       const lastVendor = mapping?.lastVendor ?? null;
@@ -1412,6 +1434,10 @@ async function prepareAndLaunch(
         priceDebugCount++;
       }
       const stockChanged = effectiveOpts.has("stock") && stockQty >= 0 && (lastQty === null || lastQty !== stockQty);
+      if (stockDebugCount < 5) {
+        console.log(`[Bulk] STOCK DEBUG sku=${sku} liveQty=${liveQty ?? "undefined"} mappingQty=${mapping?.lastQuantity ?? "null"} csv=${stockQty} location=${locationId ?? "none"} changed=${stockChanged}`);
+        stockDebugCount++;
+      }
       const costChanged =
         costPrice > 0 && !!match.inventoryItemId && Math.abs((match.shopifyCost ?? 0) - costPrice) > 0.001;
       const csvHasImages = effectiveOpts.has("images") && (() => {
@@ -1480,6 +1506,8 @@ async function prepareAndLaunch(
       meta.shopifySku = match.sku;
       meta.priceChanged = priceChanged;
       meta.stockChanged = stockChanged;
+      meta.priceBaselineLive = priceBaselineLive;
+      meta.stockBaselineLive = stockBaselineLive;
       meta.costChanged = costChanged;
       meta.titleChanged = titleChanged;
       meta.descriptionChanged = descriptionChanged;
@@ -1775,9 +1803,11 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       const csvCompare = meta.priceApplied !== false ? meta.compareAtPrice : undefined;
       const csvQty = meta.stockApplied !== false ? meta.stockQty : undefined;
       const csvCost = meta.costPrice > 0 ? meta.costPrice : undefined;
-      if (csvPrice !== undefined && csvPrice !== existingMapping.lastPrice) priceChanged = true;
-      if (csvCompare !== undefined && csvCompare !== existingMapping.lastComparePrice) priceChanged = true;
-      if (csvQty !== undefined && csvQty !== existingMapping.lastQuantity) stockChanged = true;
+      // Re-check against our last-known state — only when prepare did NOT have a live
+      // baseline (mapping may be stale/polluted by other suppliers' webhooks)
+      if (!meta.priceBaselineLive && csvPrice !== undefined && csvPrice !== existingMapping.lastPrice) priceChanged = true;
+      if (!meta.priceBaselineLive && csvCompare !== undefined && csvCompare !== existingMapping.lastComparePrice) priceChanged = true;
+      if (!meta.stockBaselineLive && csvQty !== undefined && csvQty !== existingMapping.lastQuantity) stockChanged = true;
       if (csvCost !== undefined && csvCost !== existingMapping.lastCost) costChanged = true;
       if (!titleChanged && meta.title && existingMapping.lastTitle !== null && meta.title !== existingMapping.lastTitle) titleChanged = true;
       if (!descriptionChanged && meta.description && existingMapping.lastDescription !== null && normalizeHtml(meta.description).trim() !== normalizeHtml(existingMapping.lastDescription).trim()) descriptionChanged = true;
@@ -3205,7 +3235,7 @@ async function lookupSkusSync(admin: any, skus: string[], shopDomain?: string): 
               id
               variants(first: 5) {
                 edges {
-                  node { id sku barcode price inventoryItem { id unitCost { amount } } }
+                  node { id sku barcode price inventoryItem { id unitCost { amount } inventoryLevels(first: 10) { nodes { location { id } quantities(names: ["available"]) { name quantity } } } } }
                 }
               }
             }
@@ -3226,6 +3256,7 @@ async function lookupSkusSync(admin: any, skus: string[], shopDomain?: string): 
           inventoryItemId: variant.inventoryItem?.id || "",
           shopifyCost: parseFloat(variant.inventoryItem?.unitCost?.amount ?? "0") || 0,
           shopifyPrice: variant.price != null && !Number.isNaN(parseFloat(variant.price)) ? parseFloat(variant.price) : undefined,
+          shopifyQuantities: parseInventoryLevels(variant.inventoryItem?.inventoryLevels),
           sku: variant.sku || "",
         };
         if (variant.sku) result.set(String(variant.sku), match);
@@ -3305,7 +3336,7 @@ async function queryProductsTargeted(
             images(first: 5) { edges { node { id url } } }
             variants(first: 5) {
               edges {
-                node { id sku barcode price inventoryItem { id unitCost { amount } } }
+                node { id sku barcode price inventoryItem { id unitCost { amount } inventoryLevels(first: 10) { nodes { location { id } quantities(names: ["available"]) { name quantity } } } } }
               }
             }
           }
@@ -3378,7 +3409,7 @@ async function queryProductsTargeted(
           node {
             id sku barcode price
             product { id title vendor productType tags descriptionHtml images(first: 5) { edges { node { id url } } } }
-            inventoryItem { id unitCost { amount } }
+            inventoryItem { id unitCost { amount } inventoryLevels(first: 10) { nodes { location { id } quantities(names: ["available"]) { name quantity } } } }
           }
         }
       }
@@ -3406,6 +3437,7 @@ async function queryProductsTargeted(
             inventoryItemId: v.inventoryItem?.id || "",
             shopifyCost: parseFloat(v.inventoryItem?.unitCost?.amount ?? "0") || 0,
             shopifyPrice: v.price != null && !Number.isNaN(parseFloat(v.price)) ? parseFloat(v.price) : undefined,
+            shopifyQuantities: parseInventoryLevels(v.inventoryItem?.inventoryLevels),
             sku: v.sku || "",
             shopifyTitle: prod.title || undefined,
             shopifyDescription: prod.descriptionHtml || undefined,
@@ -3674,6 +3706,7 @@ async function buildLookupMaps(lookupPath: string): Promise<{
       inventoryItemId: line.inventoryItem?.id || "",
       shopifyCost: parseFloat(line.inventoryItem?.unitCost?.amount ?? "0") || 0,
       shopifyPrice: line.price != null && !Number.isNaN(parseFloat(line.price)) ? parseFloat(line.price) : undefined,
+      shopifyQuantities: parseInventoryLevels(line.inventoryItem?.inventoryLevels),
       sku: skuStr,
     };
 
