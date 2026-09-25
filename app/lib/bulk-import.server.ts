@@ -1098,6 +1098,7 @@ async function prepareAndLaunch(
   const errors: Array<{ sku: string; error: string; lineNumber?: number }> = [];
   let duplicateSkippedCount = 0;
   let tagDebugCount = 0;
+  let priceDebugCount = 0;
   const priorityReplacements: Array<{ mappingId: string; oldConfigId: string; newSku: string; newEan: string }> = [];
 
   // Pre-load existing EAN mappings from OTHER suppliers for duplicate detection
@@ -1406,6 +1407,10 @@ async function prepareAndLaunch(
       // Track as "applied" whenever the option is selected (productSet handles idempotency).
       // Compare against previous values to detect actual changes.
       const priceChanged = effectiveOpts.has("price") && (lastPrice === null || Math.abs(lastPrice - prices.regularPrice) > 0.01);
+      if (priceDebugCount < 5) {
+        console.log(`[Bulk] PRICE DEBUG sku=${sku} live=${match.shopifyPrice ?? "undefined"} mapping=${mapping?.lastPrice ?? "null"} csv=${prices.regularPrice} optsPrice=${effectiveOpts.has("price")} changed=${priceChanged}`);
+        priceDebugCount++;
+      }
       const stockChanged = effectiveOpts.has("stock") && stockQty >= 0 && (lastQty === null || lastQty !== stockQty);
       const costChanged =
         costPrice > 0 && !!match.inventoryItemId && Math.abs((match.shopifyCost ?? 0) - costPrice) > 0.001;
