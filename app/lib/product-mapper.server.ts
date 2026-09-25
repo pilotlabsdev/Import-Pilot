@@ -396,7 +396,8 @@ export function mapCsvRowToProductSetUpdate(
   locationId: string,
   updateOptions?: Set<UpdateOption>,
   defaultTags?: string,
-  categoryTags?: string
+  categoryTags?: string,
+  shopifyProductType?: string | null
 ): ProductSetInput {
   const opts = updateOptions ?? new Set<UpdateOption>(UPDATE_OPTIONS);
   const name = getField(row, columnMaps, "title") || "Sin nombre";
@@ -439,7 +440,7 @@ export function mapCsvRowToProductSetUpdate(
   const input: ProductSetInput = {
     title: name,
     descriptionHtml: description,
-    productType: category,
+    productType: shopifyProductType || category,
     vendor: brand,
     tags,
     productOptions: [{ name: "Title", values: [{ name: "Default Title" }] }],

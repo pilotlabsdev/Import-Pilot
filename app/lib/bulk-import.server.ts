@@ -1492,7 +1492,8 @@ async function prepareAndLaunch(
         locationId!,
         effectiveOpts,
         config.defaultTags || undefined,
-        categoryTags || undefined
+        categoryTags || undefined,
+        shopifyProductType
       );
       // In "update" mode, preserve the existing Shopify SKU — don't send the file's SKU
       if (matchMode === "update" && inputObj.variants?.[0]) {
