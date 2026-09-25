@@ -465,6 +465,24 @@ async function getCurrentStock(admin: any, inventoryItemId: string, locationId: 
 }
 
 async function setStock(admin: any, inventoryItemId: string, locationId: string, targetQuantity: number, sku: string, maxRetries = 3): Promise<void> {
+  try {
+    await graphqlWithRetry(admin,
+      `#graphql
+      mutation inventoryBulkToggleActivation($inventoryItemId: ID!, $inventoryItemUpdates: [InventoryBulkToggleActivationInput!]!) {
+        inventoryBulkToggleActivation(inventoryItemId: $inventoryItemId, inventoryItemUpdates: $inventoryItemUpdates) {
+          inventoryLevels { id location { id name } }
+          userErrors { field message }
+        }
+      }`,
+      {
+        inventoryItemId,
+        inventoryItemUpdates: [{ locationId, activate: true }],
+      }
+    );
+  } catch (e: any) {
+    console.error("[Import] setStock activation error:", e?.message);
+  }
+
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     const idempotencyKey = `inv-set-${inventoryItemId}-${locationId}-${targetQuantity}-${Date.now()}`;
     try {
