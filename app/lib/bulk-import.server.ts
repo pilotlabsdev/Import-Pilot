@@ -412,6 +412,7 @@ const LOOKUP_QUERY = `{
               id
               sku
               barcode
+              price
               inventoryItem { id unitCost { amount } }
             }
           }
@@ -426,6 +427,7 @@ interface LookupMatch {
   variantId: string;
   inventoryItemId: string;
   shopifyCost: number;
+  shopifyPrice?: number | null;
   sku: string;
   shopifyTitle?: string;
   shopifyDescription?: string;
@@ -627,7 +629,7 @@ export async function runBulkImport({
                 images(first: 5) { edges { node { id url } } }
                 variants(first: 5) {
                   edges {
-                    node { id sku barcode inventoryItem { id unitCost { amount } } }
+                    node { id sku barcode price inventoryItem { id unitCost { amount } } }
                   }
                 }
               }
@@ -655,6 +657,7 @@ export async function runBulkImport({
               variantId: v.id,
               inventoryItemId: v.inventoryItem?.id || "",
               shopifyCost: parseFloat(v.inventoryItem?.unitCost?.amount ?? "0") || 0,
+              shopifyPrice: v.price != null && !Number.isNaN(parseFloat(v.price)) ? parseFloat(v.price) : undefined,
               sku: v.sku || "",
               shopifyTitle: productTitle,
               shopifyDescription: productDescription,
@@ -1380,7 +1383,11 @@ async function prepareAndLaunch(
     if (match) {
       const mapping = bySkuMapping.get(sku);
 
-      const lastPrice = mapping?.lastPrice ?? null;
+      // Price baseline: LIVE Shopify price from lookup (other suppliers/manual edits change it);
+      // fall back to our own last-known price only when the lookup didn't return one.
+      const lastPrice = typeof match.shopifyPrice === "number" && !Number.isNaN(match.shopifyPrice)
+        ? match.shopifyPrice
+        : mapping?.lastPrice ?? null;
       const lastQty = mapping?.lastQuantity ?? null;
       const lastTitle = mapping?.lastTitle ?? null;
       const lastDescription = mapping?.lastDescription ?? null;
@@ -3193,7 +3200,7 @@ async function lookupSkusSync(admin: any, skus: string[], shopDomain?: string): 
               id
               variants(first: 5) {
                 edges {
-                  node { id sku barcode inventoryItem { id unitCost { amount } } }
+                  node { id sku barcode price inventoryItem { id unitCost { amount } } }
                 }
               }
             }
@@ -3213,6 +3220,7 @@ async function lookupSkusSync(admin: any, skus: string[], shopDomain?: string): 
           variantId: variant.id,
           inventoryItemId: variant.inventoryItem?.id || "",
           shopifyCost: parseFloat(variant.inventoryItem?.unitCost?.amount ?? "0") || 0,
+          shopifyPrice: variant.price != null && !Number.isNaN(parseFloat(variant.price)) ? parseFloat(variant.price) : undefined,
           sku: variant.sku || "",
         };
         if (variant.sku) result.set(String(variant.sku), match);
@@ -3292,7 +3300,7 @@ async function queryProductsTargeted(
             images(first: 5) { edges { node { id url } } }
             variants(first: 5) {
               edges {
-                node { id sku barcode inventoryItem { id unitCost { amount } } }
+                node { id sku barcode price inventoryItem { id unitCost { amount } } }
               }
             }
           }
@@ -3363,7 +3371,7 @@ async function queryProductsTargeted(
       productVariants(first: 250, query: $q) {
         edges {
           node {
-            id sku barcode
+            id sku barcode price
             product { id title vendor productType tags descriptionHtml images(first: 5) { edges { node { id url } } } }
             inventoryItem { id unitCost { amount } }
           }
@@ -3392,6 +3400,7 @@ async function queryProductsTargeted(
             variantId: v.id,
             inventoryItemId: v.inventoryItem?.id || "",
             shopifyCost: parseFloat(v.inventoryItem?.unitCost?.amount ?? "0") || 0,
+            shopifyPrice: v.price != null && !Number.isNaN(parseFloat(v.price)) ? parseFloat(v.price) : undefined,
             sku: v.sku || "",
             shopifyTitle: prod.title || undefined,
             shopifyDescription: prod.descriptionHtml || undefined,
@@ -3659,6 +3668,7 @@ async function buildLookupMaps(lookupPath: string): Promise<{
       variantId: id,
       inventoryItemId: line.inventoryItem?.id || "",
       shopifyCost: parseFloat(line.inventoryItem?.unitCost?.amount ?? "0") || 0,
+      shopifyPrice: line.price != null && !Number.isNaN(parseFloat(line.price)) ? parseFloat(line.price) : undefined,
       sku: skuStr,
     };
 
