@@ -79,6 +79,7 @@ App embebida Shopify (React Router v7 + Polaris) que importa productos desde arc
 - **Lookup debe completar fully** (removed 30% threshold) — import aborta si cualquier batch falla
 - **Fix finalizing hang**: finalizeBulkImport ahora maneja manifest faltante, log not found, log.status !== running
 - **Reconcile fix**: detecta targeted lookup completado (shopifyOpId=null, status=processed) y re-ejecuta prepareAndLaunch
+- **Fix bucle URL sin `shop`** (commits `4bf7d70`,`7413ab0` + universal link): loader `/app` detecta petición sin `shop` → top-level hace 302 server-side a Shopify (mismo `pathname` dinámico, sin JS → no puede bucear); `AppBridgeBounce` sin `document.referrer`; interceptor: 401+HTML deja renovar nativo, 502 siempre, catch solo `TypeError` de dominio propio; catch-all preserva `location.search`
 
 ### Pendiente
 - **Reconfigurar TODOS los proveedores tras wipe de BD** (precio rules, column mappings, category mappings, exclusion rules, todo se perdió)
@@ -86,6 +87,12 @@ App embebida Shopify (React Router v7 + Polaris) que importa productos desde arc
 - Prueba con credenciales reales (túnel HTTPS, OAuth, webhooks)
 
 ## Decisiones clave
+
+### Recuperación de URL sin `shop` (deep-link a admin)
+- Cadena en `buildAdminAppUrl(shop, path)`: cookie `ip_last_shop` → `admin.shopify.com/store/{tienda}/apps/{handle}{path}`; sin shop → **link universal** `admin.shopify.com/apps/{handle}{path}` (admin resuelve tienda activa; verificado en navegador). Jamás `admin.shopify.com` a secas
+- **Cookies particionadas**: `ip_last_shop` se setea en el iframe (contexto cross-site) → navegadores la particionan (3rd-party) → NO se envía top-level casi nunca → el universal es el fallback NORMAL, no la excepción; la cookie queda como mejora progresiva
+- Log `[App Loader] URL sin shop ... (fuente: cookie|db-unico|universal)` para diagnóstico
+- Patrón verificado: `admin.shopify.com/apps/{handle}{ruta-app}` abre la app en esa ruta (mismo patrón store-agnostic documentado para POS); con prefijo `/app` incluido (la ruta es la del iframe, no relativa a application_url)
 
 ### Modo bulk (async por webhook)
 - Orquestación: job persistido en `BulkJob`/`BulkJobOp`; fallback polling `reconcileStaleBulkJobs()` cada 60s

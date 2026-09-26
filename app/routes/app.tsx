@@ -50,14 +50,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const embedded = dest === "iframe" || referer.startsWith(ADMIN_ORIGIN);
     if (!embedded) {
       let shop = shopFromCookieHeader(request.headers.get("Cookie"));
+      let source = shop ? "cookie" : null;
       if (!shop) {
         try {
           const rows = await prisma.session.findMany({ select: { shop: true }, distinct: ["shop"] });
-          if (rows.length === 1) shop = rows[0].shop;
+          if (rows.length === 1) { shop = rows[0].shop; source = "db-unico"; }
         } catch {}
       }
-      console.error(`[App Loader] URL sin shop en ${url.pathname} → 302 a Shopify admin (misma página)`);
-      return redirect(buildAdminAppUrl(shop, `${url.pathname}${url.search}`));
+      const target = buildAdminAppUrl(shop, `${url.pathname}${url.search}`);
+      console.error(`[App Loader] URL sin shop en ${url.pathname} → 302 a ${target} (fuente: ${source || "universal"})`);
+      return redirect(target);
     }
   }
 

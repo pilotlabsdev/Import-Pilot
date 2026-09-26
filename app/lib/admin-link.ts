@@ -12,14 +12,19 @@ export function storeHandleFromShop(shop: string | null | undefined): string | n
   return handle || null;
 }
 
-// appPath: ruta de la app (ej. "/app/supplier/x/logs"). El admin la abre dentro
-// del iframe — mismo formato espejado que la barra de direcciones del admin
-// (".../apps/import-pilot-official/app/duplicates") y las admin link extensions.
+// appPath: ruta de la app (ej. "/app/supplier/x/logs") — se pasa desde la URL
+// de la petición, sin hardcodear. Formatos verificados en navegador:
+// - Con tienda:  admin.shopify.com/store/{tienda}/apps/{handle}{ruta}
+// - Sin tienda:  admin.shopify.com/apps/{handle}{ruta}  (link universal — el
+//   admin resuelve la tienda activa de la sesión; nunca la home de admin).
+// Ojo con las cookies: ip_last_shop se crea en el iframe y los navegadores la
+// particionan (3rd-party) → casi nunca llega top-level, por eso el universal
+// es el fallback normal.
 export function buildAdminAppUrl(shop: string | null | undefined, appPath?: string | null): string {
-  const store = storeHandleFromShop(shop);
-  if (!store) return ADMIN_ORIGIN;
   const path = appPath && appPath.startsWith("/") ? appPath : "";
-  return `${ADMIN_ORIGIN}/store/${store}/apps/${APP_HANDLE}${path}`;
+  const store = storeHandleFromShop(shop);
+  if (store) return `${ADMIN_ORIGIN}/store/${store}/apps/${APP_HANDLE}${path}`;
+  return `${ADMIN_ORIGIN}/apps/${APP_HANDLE}${path}`;
 }
 
 export function shopFromCookieHeader(cookieHeader: string | null | undefined): string | null {
