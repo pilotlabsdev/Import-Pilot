@@ -10,6 +10,12 @@ import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prism
 import { redirect } from "react-router";
 import { prisma } from "~/lib/db.server";
 import { PLAN_HANDLES, PLAN_LIMITS } from "~/lib/plans";
+import { EventEmitter } from "node:events";
+
+// Aviso conocido de Node: BrotliCompress (compresión HTTP de Railway) supera los
+// 10 listeners por emitter. process.setMaxListeners NO sirve para esto (solo
+// afecta al emitter `process`) — hay que subir el default por emitter.
+EventEmitter.defaultMaxListeners = 50;
 
 export { PLAN_HANDLES, PLAN_LIMITS };
 
