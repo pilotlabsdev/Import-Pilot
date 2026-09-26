@@ -1350,16 +1350,23 @@ async function prepareAndLaunch(
         }
       } else if (maps.byBarcode.has(ean) && !selfEanMappings.has(ean)) {
         // === CASE: Same EAN found in Shopify but not from current supplier (external product) ===
-        if (duplicatePolicy === "skip_existing") {
-          const matchInfo = maps.byBarcode.get(ean);
-          await logExternalDuplicate(job.shopDomain, ean, matchInfo?.productId || "", sku, config.id, config.name || "Proveedor");
+        const matchInfo = maps.byBarcode.get(ean);
+        const foundSku = (matchInfo?.sku || "").trim();
+        // Same SKU (or SKU-less product) = same product (e.g. manually created) → NOT a
+        // duplicate: fall through to UPDATE path, finalize adopts the mapping.
+        // Parity with chunks (import-engine: only skip when the Shopify SKU differs).
+        const sameSkuProduct = !foundSku || foundSku === sku;
+        if (sameSkuProduct) {
+          if (foundSku) {
+            console.log(`[Bulk] External same-SKU adopt: EAN=${ean} SKU=${sku} → falling through to UPDATE for product ${matchInfo?.productId || ""}`);
+          }
+        } else if (duplicatePolicy === "skip_existing") {
+          await logExternalDuplicate(job.shopDomain, ean, matchInfo?.productId || "", sku, config.id, config.name || "Proveedor", foundSku);
           duplicateSkippedCount++;
           continue;
-        }
-        // priority + applyToExternal disabled: skip external products
-        if (duplicatePolicy === "priority" && shopSettings?.applyToExternal === false) {
-          const matchInfo = maps.byBarcode.get(ean);
-          await logExternalDuplicate(job.shopDomain, ean, matchInfo?.productId || "", sku, config.id, config.name || "Proveedor");
+        } else if (duplicatePolicy === "priority" && shopSettings?.applyToExternal === false) {
+          // priority + applyToExternal disabled: skip external products
+          await logExternalDuplicate(job.shopDomain, ean, matchInfo?.productId || "", sku, config.id, config.name || "Proveedor", foundSku);
           duplicateSkippedCount++;
           continue;
         }
