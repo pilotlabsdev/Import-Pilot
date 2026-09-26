@@ -56,8 +56,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           if (rows.length === 1) shop = rows[0].shop;
         } catch {}
       }
-      console.error(`[App Loader] URL sin shop en ${url.pathname} → 302 a Shopify admin`);
-      return redirect(buildAdminAppUrl(shop));
+      console.error(`[App Loader] URL sin shop en ${url.pathname} → 302 a Shopify admin (misma página)`);
+      return redirect(buildAdminAppUrl(shop, `${url.pathname}${url.search}`));
     }
   }
 

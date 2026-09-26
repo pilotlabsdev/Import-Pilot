@@ -47,9 +47,12 @@ export function AppBridgeBounce({ html }: { html: string }) {
     }
     if (embedded) return;
 
-    // Top-level (caso borde): destino único determinístico, sin referrer.
-    window.location.replace(buildAdminAppUrl(shopFromCookieHeader(document.cookie)));
-  }, [html, hasShop]);
+    // Top-level (caso borde): destino único determinístico — la misma página en
+    // el admin, sin referrer.
+    window.location.replace(
+      buildAdminAppUrl(shopFromCookieHeader(document.cookie), `${location.pathname}${location.search}`)
+    );
+  }, [html, hasShop, location.pathname, location.search]);
 
   return <div dangerouslySetInnerHTML={{ __html: html }} />;
 }

@@ -12,9 +12,14 @@ export function storeHandleFromShop(shop: string | null | undefined): string | n
   return handle || null;
 }
 
-export function buildAdminAppUrl(shop: string | null | undefined): string {
+// appPath: ruta de la app (ej. "/app/supplier/x/logs"). El admin la abre dentro
+// del iframe — mismo formato espejado que la barra de direcciones del admin
+// (".../apps/import-pilot-official/app/duplicates") y las admin link extensions.
+export function buildAdminAppUrl(shop: string | null | undefined, appPath?: string | null): string {
   const store = storeHandleFromShop(shop);
-  return store ? `${ADMIN_ORIGIN}/store/${store}/apps/${APP_HANDLE}` : ADMIN_ORIGIN;
+  if (!store) return ADMIN_ORIGIN;
+  const path = appPath && appPath.startsWith("/") ? appPath : "";
+  return `${ADMIN_ORIGIN}/store/${store}/apps/${APP_HANDLE}${path}`;
 }
 
 export function shopFromCookieHeader(cookieHeader: string | null | undefined): string | null {
