@@ -1,5 +1,5 @@
 import type { LoaderFunctionArgs } from "react-router";
-import { data, Links, Meta, Outlet, Scripts, ScrollRestoration, useLoaderData, useRouteError, isRouteErrorResponse } from "react-router";
+import { data, Links, Meta, Outlet, Scripts, ScrollRestoration, useLoaderData, useRouteError, isRouteErrorResponse, useLocation } from "react-router";
 import { Suspense, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AppProvider as PolarisAppProvider } from "@shopify/polaris";
@@ -145,6 +145,7 @@ function AutoRedirect({ url, delayMs }: { url: string; delayMs?: number }) {
 
 export function ErrorBoundary() {
   const error = useRouteError();
+  const location = useLocation();
 
   const rrStatus = isRouteErrorResponse(error) ? error.status : 0;
   const rawStatus = error instanceof Response ? error.status : 0;
@@ -219,7 +220,7 @@ export function ErrorBoundary() {
         </div>
         <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
         <Scripts />
-        <AutoRedirect url="/app" delayMs={2000} />
+        <AutoRedirect url={`/app${location.search}`} delayMs={2000} />
       </body>
     </html>
   );

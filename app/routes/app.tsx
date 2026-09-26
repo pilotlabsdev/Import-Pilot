@@ -1,5 +1,5 @@
 import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { Outlet, useLoaderData, useRouteError, isRouteErrorResponse } from "react-router";
+import { data, redirect, Outlet, useLoaderData, useRouteError, isRouteErrorResponse, useLocation } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { NavMenu } from "@shopify/app-bridge-react";
@@ -14,6 +14,7 @@ import { CrispChat } from "~/components/CrispChat";
 import { requireSubscription, getSubscriptionInfo } from "~/lib/billing.server";
 import { ReconnectingOverlay, triggerReconnect } from "~/components/ReconnectingOverlay";
 import { AppBridgeBounce } from "~/components/AppBridgeBounce";
+import { ADMIN_ORIGIN, SHOP_COOKIE, buildAdminAppUrl, shopFromCookieHeader } from "~/lib/admin-link";
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
@@ -36,10 +37,34 @@ function ClientOnly({ children }: { children: React.ReactNode }) {
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const url = new URL(request.url);
+
+  // URL sin parámetros `shop` (deep-link borrado, pestaña restaurada, etc.).
+  // - Petición embebida (iframe de admin): dejar caer en el bounce oficial de
+  //   App Bridge (HTML status 200) — el script recupera el contexto del padre.
+  // - Petición de documento top-level: 302 server-side al admin de Shopify.
+  //   Sin JS en el navegador → este estado no puede bucear.
+  if (!url.searchParams.get("shop")) {
+    const dest = (request.headers.get("Sec-Fetch-Dest") || "").toLowerCase();
+    const referer = request.headers.get("Referer") || "";
+    const embedded = dest === "iframe" || referer.startsWith(ADMIN_ORIGIN);
+    if (!embedded) {
+      let shop = shopFromCookieHeader(request.headers.get("Cookie"));
+      if (!shop) {
+        try {
+          const rows = await prisma.session.findMany({ select: { shop: true }, distinct: ["shop"] });
+          if (rows.length === 1) shop = rows[0].shop;
+        } catch {}
+      }
+      console.error(`[App Loader] URL sin shop en ${url.pathname} → 302 a Shopify admin`);
+      return redirect(buildAdminAppUrl(shop));
+    }
+  }
+
   const { session } = await withTimeout(safeAuthenticate(request), 15000, "safeAuthenticate");
   const shopDomain = session.shop;
+  const shopCookie = `${SHOP_COOKIE}=${encodeURIComponent(shopDomain)}; Path=/; Max-Age=31536000; SameSite=Lax; Secure`;
 
-  const url = new URL(request.url);
   const isBillingPage = url.pathname === "/app/billing";
   const isTutorialPage = url.pathname.startsWith("/app/tutorial");
 
@@ -80,24 +105,24 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       subscription.isTrial ? `${subscription.planHandle} (trial)` :
       subscription.hasActiveSubscription ? subscription.planHandle : null;
 
-    return {
+    return data({
       apiKey: process.env.SHOPIFY_API_KEY || "",
       shopDomain,
       unresolvedCount,
       queueCount,
       planLabel,
       hasPlan,
-    };
+    }, { headers: { "Set-Cookie": shopCookie } });
   } catch (error: any) {
     console.error(`[App Loader] Error (returning defaults): ${error?.message}`);
-    return {
+    return data({
       apiKey: process.env.SHOPIFY_API_KEY || "",
       shopDomain,
       unresolvedCount: 0,
       queueCount: 0,
       planLabel: null,
       hasPlan: (isBillingPage || isTutorialPage) ? true : false,
-    };
+    }, { headers: { "Set-Cookie": shopCookie } });
   }
 };
 
@@ -129,19 +154,38 @@ export default function App() {
     window.fetch = async (...args) => {
       try {
         const res = await origFetch(...args);
-        if ((res.status === 401 || res.status === 502) && Date.now() - lastReconnect > DEBOUNCE_MS) {
-          lastReconnect = Date.now();
-          console.warn(`[Network] HTTP ${res.status} detected. Triggering reconnect...`);
-          triggerReconnect();
+        if (Date.now() - lastReconnect > DEBOUNCE_MS) {
+          if (res.status === 502) {
+            // Error de infra (Railway en deploy/devuelto HTML) — siempre recuperar
+            lastReconnect = Date.now();
+            console.warn(`[Network] HTTP 502 detected. Triggering reconnect...`);
+            triggerReconnect();
+          } else if (res.status === 401) {
+            const ct = res.headers.get("content-type") || "";
+            if (ct.includes("text/html")) {
+              // Página de auth/bounce HTML de Shopify — que App Bridge renueve el
+              // token nativamente, sin nuestro overlay
+              console.warn("[Network] HTTP 401 HTML (auth bounce) — dejando renovación nativa a App Bridge");
+            } else {
+              lastReconnect = Date.now();
+              console.warn(`[Network] HTTP 401 detected. Triggering reconnect...`);
+              triggerReconnect();
+            }
+          }
         }
         return res;
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") throw err;
-        const url = typeof args[0] === "string" ? args[0] : args[0] instanceof URL ? args[0].toString() : (args[0] as any)?.url || "";
-        if ((url.includes(".data") || url.includes("/app")) && Date.now() - lastReconnect > DEBOUNCE_MS) {
-          lastReconnect = Date.now();
-          console.warn(`[Network] Fetch failed for ${url}. Triggering reconnect...`);
-          triggerReconnect();
+        if (err instanceof TypeError && Date.now() - lastReconnect > DEBOUNCE_MS) {
+          // Solo fallos de red de endpoints propios (relativos u origen actual);
+          // un tercero caído no debe recargar nuestra app en bucle
+          const target = typeof args[0] === "string" ? args[0] : args[0] instanceof URL ? args[0].toString() : (args[0] as any)?.url || "";
+          const isOwn = target === "" || target.startsWith("/") || target.startsWith(window.location.origin);
+          if (isOwn) {
+            lastReconnect = Date.now();
+            console.warn(`[Network] Fetch failed for ${target || "?"} (network error). Triggering reconnect...`);
+            triggerReconnect();
+          }
         }
         throw err;
       }
@@ -217,6 +261,7 @@ function AutoRedirect({ url, delayMs }: { url: string; delayMs?: number }) {
 
 export function ErrorBoundary() {
   const error = useRouteError();
+  const location = useLocation();
 
   const rrStatus = isRouteErrorResponse(error) ? error.status : 0;
   const rawStatus = error instanceof Response ? error.status : 0;
@@ -265,7 +310,7 @@ export function ErrorBoundary() {
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         <p style={{ fontSize: "14px" }}>Cargando...</p>
       </div>
-      <AutoRedirect url="/app" delayMs={2000} />
+      <AutoRedirect url={`/app${location.search}`} delayMs={2000} />
     </div>
   );
 }
