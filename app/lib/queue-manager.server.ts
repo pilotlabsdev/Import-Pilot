@@ -415,6 +415,14 @@ export async function getQueueStatus(shopDomain: string): Promise<{
         priceChanges: true, stockChanges: true, costChanges: true,
         titleChanges: true, descriptionChanges: true, vendorChanges: true,
         productTypeChanges: true, tagsChanges: true,
+        ops: {
+          where: { status: { in: ["pending", "launched", "processing"] }, kind: { in: ["create", "update"] } },
+          select: {
+            kind: true, status: true, progressCount: true, progressTotal: true,
+            shopifyStatus: true, shopifyObjectCount: true,
+          },
+          orderBy: { index: "asc" },
+        },
       },
     }),
   ]);
@@ -513,12 +521,17 @@ export async function getQueueStatus(shopDomain: string): Promise<{
         const errorCount = log.errors ? (JSON.parse(log.errors) as any[]).length : 0;
         const total = bulkJob.totalCount || log.totalProducts || 0;
         const counterDone = (bulkJob.createCount || 0) + (bulkJob.updateCount || 0) + (bulkJob.unchangedCount || 0) + (bulkJob.excludedCount || 0);
+        const activeOp = bulkJob.ops?.[0] || null;
+        const opFrac = activeOp && activeOp.status === "processing" && activeOp.progressTotal
+          ? (activeOp.progressCount || 0) / activeOp.progressTotal
+          : 0;
+        const doneOps = (bulkJob.mutationOpsDone || 0) + opFrac;
 
         let processedProducts = counterDone;
         if (counterDone <= (bulkJob.excludedCount || 0) && bulkJob.totalMutationOps > 0 && (bulkJob.mutationOpsDone || 0) > 0 && total > 0) {
           const excluded = bulkJob.excludedCount || 0;
           const importable = total - excluded;
-          processedProducts = excluded + Math.round((bulkJob.mutationOpsDone / bulkJob.totalMutationOps) * importable);
+          processedProducts = excluded + Math.round((doneOps / bulkJob.totalMutationOps) * importable);
         }
 
         progress = {
@@ -534,6 +547,16 @@ export async function getQueueStatus(shopDomain: string): Promise<{
           phase: bulkJob.phase,
           mutationOpsDone: bulkJob.mutationOpsDone || 0,
           totalMutationOps: bulkJob.totalMutationOps || 0,
+          activeOp: activeOp
+            ? {
+                kind: activeOp.kind,
+                status: activeOp.status,
+                progressCount: activeOp.progressCount,
+                progressTotal: activeOp.progressTotal,
+                shopifyStatus: activeOp.shopifyStatus,
+                shopifyObjectCount: activeOp.shopifyObjectCount,
+              }
+            : null,
         };
       }
     }
@@ -676,10 +699,15 @@ export async function getQueueStatus(shopDomain: string): Promise<{
     const errorCount = log.errors ? (JSON.parse(log.errors) as any[]).length : 0;
     const bulkJob = bulkJobByLogId.get(item.logId);
 
+    const activeOp = bulkJob?.ops?.[0] || null;
+    const opFrac = activeOp && activeOp.status === "processing" && activeOp.progressTotal
+      ? (activeOp.progressCount || 0) / activeOp.progressTotal
+      : 0;
+
     const progress: any = {
       totalProducts: bulkJob?.totalCount || log.totalProducts || 0,
       processedProducts: bulkJob?.mutationOpsDone && bulkJob.totalMutationOps
-        ? Math.round((bulkJob.mutationOpsDone / bulkJob.totalMutationOps) * (bulkJob.totalCount || 0))
+        ? Math.round((((bulkJob.mutationOpsDone + opFrac) / bulkJob.totalMutationOps) * (bulkJob.totalCount || 0)))
         : processed,
       lastSku: log.lastSku || "",
       status: log.status,
@@ -701,6 +729,16 @@ export async function getQueueStatus(shopDomain: string): Promise<{
       progress.vendorChanges = bulkJob.vendorChanges ?? undefined;
       progress.productTypeChanges = bulkJob.productTypeChanges ?? undefined;
       progress.tagsChanges = bulkJob.tagsChanges ?? undefined;
+      progress.activeOp = activeOp
+        ? {
+            kind: activeOp.kind,
+            status: activeOp.status,
+            progressCount: activeOp.progressCount,
+            progressTotal: activeOp.progressTotal,
+            shopifyStatus: activeOp.shopifyStatus,
+            shopifyObjectCount: activeOp.shopifyObjectCount,
+          }
+        : null;
     }
 
     return { ...item, progress };

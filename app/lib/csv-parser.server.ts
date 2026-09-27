@@ -851,9 +851,11 @@ export function parseExcludeFieldRules(raw?: string | null): ExcludeFieldRule[] 
 
 export function getExcludedFields(
   sku: string,
-  rules: ExcludeFieldRule[]
+  rules: ExcludeFieldRule[],
+  ean?: string | null
 ): string[] | null {
   const s = normalize(sku);
-  const rule = rules.find((r) => r.sku === s);
+  const e = ean ? normalize(ean) : "";
+  const rule = rules.find((r) => r.sku === s || (e !== "" && r.sku === e));
   return rule?.skip ?? null;
 }

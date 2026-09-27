@@ -1425,7 +1425,7 @@ async function prepareAndLaunch(
       const lastProductType = mapping?.lastProductType ?? null;
       const lastTags = mapping?.lastTags ?? null;
 
-      const excludedFields = getExcludedFields(sku, fieldRules);
+      const excludedFields = getExcludedFields(sku, fieldRules, ean);
       if (excludedFields) {
       }
       const effectiveOpts = excludedFields
@@ -1662,7 +1662,7 @@ async function prepareAndLaunch(
 async function handleMutationOpFinished(job: any, op: any, admin: any, status: string): Promise<void> {
   const claim = await prisma.bulkJobOp.updateMany({
     where: { id: op.id, status: "launched" },
-    data: { status: "processing", startedAt: new Date() },
+    data: { status: "processing", startedAt: new Date(), progressCount: 0, progressTotal: null, shopifyStatus: null, shopifyObjectCount: null },
   });
   if (claim.count === 0) {
     return;
@@ -1704,6 +1704,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
   const metaPath = path.join(workDir, `${op.kind}-meta-${op.index}.jsonl`);
   const metaLines = await readJsonLines(metaPath);
   const resultLines = await readJsonLines(resultPath);
+  await prisma.bulkJobOp.update({ where: { id: op.id }, data: { progressTotal: metaLines.length } }).catch(() => {});
 
   const errorsPath = manifest.errorsPath;
 
@@ -1758,6 +1759,9 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
   const errorWrites: string[] = [];
 
   for (let i = 0; i < resultLines.length; i++) {
+    if (i > 0 && i % 25 === 0) {
+      await prisma.bulkJobOp.update({ where: { id: op.id }, data: { progressCount: i } }).catch(() => {});
+    }
     try {
     const meta = metaLines[i] as MetaLine | undefined;
     const line = resultLines[i] as any;
@@ -2009,6 +2013,8 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       errorWrites.push(JSON.stringify({ sku: crashSku, error: `loop_crash: ${loopErr?.message}`, lineNumber: 0 }));
     }
   }
+
+  await prisma.bulkJobOp.update({ where: { id: op.id }, data: { progressCount: resultLines.length } }).catch(() => {});
 
   await fs.appendFile(errorsPath, errorWrites.length ? errorWrites.join("\n") + "\n" : "");
 
@@ -2265,15 +2271,20 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
     // productSet does NOT reliably set inventoryQuantities for UPDATES (only for creates).
     // We must set stock explicitly using inventorySetQuantities with absolute values from the CSV.
     const skuStockMap = new Map<string, number>();
+    // Reglas por-SKU vivas: respetar "Omitir stock" aunque el prepare corrió con otra config
+    const liveConfig = await prisma.importConfig.findUnique({ where: { id: job.configId }, select: { excludeFieldRules: true } });
+    const liveFieldRules = parseExcludeFieldRules(liveConfig?.excludeFieldRules);
     for (const metaPath of manifest.updateFiles || []) {
       try {
         const metaFile = metaPath.replace("-input-", "-meta-");
         const metaLines = await readJsonLines(metaFile);
         for (const ml of metaLines) {
           const meta = ml as MetaLine;
-          if (meta.sku && meta.stockQty !== undefined) {
-            skuStockMap.set(meta.sku, meta.stockQty);
-          }
+          if (!meta.sku || meta.stockQty === undefined) continue;
+          if (meta.skipStock === true || meta.stockApplied === false) continue;
+          const liveSkip = getExcludedFields(meta.sku, liveFieldRules, meta.ean);
+          if (liveSkip && liveSkip.includes("stock")) continue;
+          skuStockMap.set(meta.sku, meta.stockQty);
         }
       } catch {}
     }
@@ -2985,6 +2996,14 @@ async function reconcileMutationsPhase(job: any): Promise<void> {
 
     const bulk = await getBulkOperation(admin, op.shopifyOpId, job.shopDomain);
     if (!bulk) continue;
+
+    await prisma.bulkJobOp.update({
+      where: { id: op.id },
+      data: {
+        shopifyStatus: bulk.status || null,
+        shopifyObjectCount: typeof bulk.objectCount === "number" ? bulk.objectCount : null,
+      },
+    }).catch(() => {});
 
     const status = (bulk.status || "").toLowerCase();
     if (["completed", "failed", "canceled"].includes(status)) {

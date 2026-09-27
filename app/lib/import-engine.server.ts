@@ -749,7 +749,7 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
         result.lastSku = sku;
 
         try {
-          const excludedFields = getExcludedFields(sku, fieldRules);
+          const excludedFields = getExcludedFields(sku, fieldRules, getField(row, columnMaps, "ean") || row["ean"] || row["EAN"] || "");
           const effectiveOpts = excludedFields
             ? new Set([...updateOpts].filter((o) => !excludedFields.includes(o)))
             : updateOpts;
@@ -776,7 +776,7 @@ export async function runImport({ shopDomain, admin, filterType, filterSkus, fil
           for (let attempt = 1; attempt <= config.maxRetries; attempt++) {
             await new Promise((r) => setTimeout(r, 2000));
             try {
-              const excludedFields = getExcludedFields(sku, fieldRules);
+              const excludedFields = getExcludedFields(sku, fieldRules, getField(row, columnMaps, "ean") || row["ean"] || row["EAN"] || "");
               const effectiveOpts = excludedFields
                 ? new Set([...updateOpts].filter((o) => !excludedFields.includes(o)))
                 : updateOpts;

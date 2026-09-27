@@ -459,7 +459,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       if (exclusion.excluded) errors.push(`Excluido: ${exclusion.reason}`);
       if (csvQuantity <= 0 && config.skipZeroStockCreate) errors.push("Skip stock 0");
 
-      const excludedFields = getExcludedFields(sku, fieldRules);
+      const excludedFields = getExcludedFields(sku, fieldRules, ean);
       if (excludedFields) {
         if (excludedFields.includes("price")) errors.push("Regla: sin actualización precio");
         if (excludedFields.includes("stock")) errors.push("Regla: sin actualización stock");

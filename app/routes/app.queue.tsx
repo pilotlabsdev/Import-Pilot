@@ -107,6 +107,30 @@ export default function QueuePage() {
     );
   };
 
+  const bulkProgressText = (progress: any) => {
+    if (progress.phase === "finalizing") return t("queue.finalizingInventory");
+    const parts: string[] = [];
+    if (progress.totalMutationOps > 0) {
+      parts.push(t("queue.opsProgress", { done: progress.mutationOpsDone || 0, total: progress.totalMutationOps }));
+    }
+    parts.push(`${progress.processedProducts} / ${progress.totalProducts} ${t("queue.products")}`);
+    if ((progress.created || 0) > 0 || (progress.updated || 0) > 0 || (progress.unchanged || 0) > 0) {
+      parts.push(`${t("common.created")}: ${progress.created || 0} · ${t("common.updated")}: ${progress.updated || 0} · ${t("common.unchanged")}: ${progress.unchanged || 0}`);
+    }
+    if ((progress.excluded || 0) > 0) parts.push(`${t("common.excluded")}: ${progress.excluded}`);
+    const op = progress.activeOp;
+    if (op && op.status === "processing" && op.progressTotal) {
+      parts.push(t("queue.postProcess", { done: op.progressCount || 0, total: op.progressTotal }));
+    } else if (op && op.status === "launched" && op.shopifyStatus) {
+      parts.push(
+        op.shopifyObjectCount != null
+          ? t("queue.shopifyStatusWithCount", { status: op.shopifyStatus, count: op.shopifyObjectCount })
+          : t("queue.shopifyStatus", { status: op.shopifyStatus })
+      );
+    }
+    return parts.join(" · ");
+  };
+
 
 
   const active = queueData?.active || [];
@@ -152,14 +176,7 @@ export default function QueuePage() {
                             <InlineStack gap="300" blockAlign="center">
                               {item.importMode === "bulk" ? (
                                 <Text as="span" variant="bodySm" tone="subdued">
-                                  {progress.phase === "finalizing"
-                                    ? t("queue.finalizingInventory")
-                                    : progress.totalMutationOps > 0
-                                      ? progress.created > 0 || progress.updated > 0 || progress.unchanged > 0
-                                        ? `${progress.processedProducts} / ${progress.totalProducts} ${t("queue.products")} · ${t("common.created")}: ${progress.created || 0} · ${t("common.updated")}: ${progress.updated || 0} · ${t("common.unchanged")}: ${progress.unchanged || 0}${progress.excluded > 0 ? ` · ${t("common.excluded")}: ${progress.excluded}` : ""}`
-                                        : `${t("queue.opsProgress", { done: progress.mutationOpsDone, total: progress.totalMutationOps })} · ${progress.processedProducts} / ${progress.totalProducts} ${t("queue.products")}${progress.excluded > 0 ? ` · ${t("common.excluded")}: ${progress.excluded}` : ""}`
-                                      : `${progress.processedProducts} / ${progress.totalProducts} ${t("queue.products")}${progress.excluded > 0 ? ` · ${t("common.excluded")}: ${progress.excluded}` : ""}`
-                                  }
+                                  {bulkProgressText(progress)}
                                 </Text>
                               ) : (
                                 <>

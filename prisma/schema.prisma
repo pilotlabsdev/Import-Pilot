@@ -290,6 +290,10 @@ model BulkJobOp {
   index       Int      @default(0)
   status      String?  // pending | launched | processing | processed | failed
   startedAt   DateTime?
+  progressCount    Int? // progreso vivo del post-proceso (handleMutationOpFinished)
+  progressTotal    Int? // total de lineas de la op (meta lines)
+  shopifyStatus    String? // ultimo status consultado en reconcile (RUNNING/COMPLETED/...)
+  shopifyObjectCount Int? // objectCount de la op en Shopify (reconcile)
   createdAt   DateTime @default(now())
   job         BulkJob  @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
