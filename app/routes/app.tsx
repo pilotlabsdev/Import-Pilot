@@ -1,5 +1,5 @@
 import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { data, redirect, Outlet, useLoaderData, useRouteError, isRouteErrorResponse, useLocation } from "react-router";
+import { data, redirect, Outlet, useLoaderData, useRouteError, isRouteErrorResponse, useLocation, useNavigate } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { NavMenu } from "@shopify/app-bridge-react";
@@ -27,6 +27,27 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 
 function handleNavClick(e: React.MouseEvent<HTMLAnchorElement>) {
   stopTutorial();
+}
+
+// --- Restauración de ruta tras rebote de auth (solo pestaña inactiva) ---
+// safeAuthenticate redirige a "/" cuando el token caduca; eso desmonta y
+// remonta el layout App (las únicas rutas fuera de /app son raíz), y el
+// usuario aterriza en /app (dashboard). Guardamos la última ruta de este
+// documento y la restauramos SOLO si App remonta dentro del mismo documento
+// (rebote). Cargas de documento nuevas (abrir desde admin, F5, NavMenu que
+// usa <a>) resetean los flags → nunca restauran.
+const LAST_ROUTE_KEY = "ip_last_route";
+const VOLATILE_PARAMS = ["shop", "host", "id_token", "session_token", "hmac", "timestamp", "locale", "embedded", "session", "billing_id"];
+const RESTORE_COOLDOWN_MS = 30_000;
+let docLoaded = false;
+let lastRestoreAt = 0;
+
+function stripVolatileParams(search: string): string {
+  if (!search) return "";
+  const params = new URLSearchParams(search);
+  for (const key of VOLATILE_PARAMS) params.delete(key);
+  const out = params.toString();
+  return out ? `?${out}` : "";
 }
 
 function ClientOnly({ children }: { children: React.ReactNode }) {
@@ -226,6 +247,39 @@ export default function App() {
 
     return () => { window.fetch = origFetch; perfObserver.disconnect(); };
   }, []);
+
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // Guardar ruta actual y restaurarla tras rebote de auth (ver bloques superiores)
+  useEffect(() => {
+    if (!location.pathname.startsWith("/app")) return;
+
+    const current = `${location.pathname}${stripVolatileParams(location.search)}`;
+    const isRemount = docLoaded;
+    docLoaded = true;
+
+    if (isRemount && location.pathname === "/app") {
+      const saved = sessionStorage.getItem(LAST_ROUTE_KEY);
+      if (
+        saved &&
+        saved !== "/app" &&
+        saved.startsWith("/app") &&
+        Date.now() - lastRestoreAt > RESTORE_COOLDOWN_MS
+      ) {
+        lastRestoreAt = Date.now();
+        sessionStorage.removeItem(LAST_ROUTE_KEY);
+        console.log(`[RouteRestore] Rebote de auth detectado → restaurando ${saved}`);
+        navigate(saved, { replace: true });
+        return;
+      }
+    }
+
+    // También en el primer monte: una apertura nueva (F5 en dashboard, NavMenu)
+    // debe sobrescribir la ruta guardada para que un rebote posterior no
+    // restaure una página que ya no es la última visitada.
+    sessionStorage.setItem(LAST_ROUTE_KEY, current);
+  }, [location.pathname, location.search, navigate]);
 
   if (!hasPlan) {
     return (
