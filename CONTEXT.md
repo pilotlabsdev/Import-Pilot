@@ -56,7 +56,7 @@ App embebida Shopify (React Router v7 + Polaris) que importa productos desde arc
 - EAN→barcode, `brand`→vendor, `short_description`→SEO description, `description`→descriptionHtml, `tipo_producto`→`custom:tipo_producto`, `estado_producto`→`custom:google_condition`, `precio_mediamax_b`→`custom:costo`
 - Mapeo de columnas y categoría→colección configurables vía UI (dropdowns)
 - **updateOptions (multi-select)**: el usuario elige qué campos actualizar en productos existentes (name, description, price, stock, images, vendor, productType, tags, metafields, collections); los no seleccionados se conservan en UPDATE
-- **Exclusiones**: el usuario define reglas para omitir productos (por palabras en título, SKU con wildcards, EAN) y reglas por-SKU para omitir campos específicos (precio, stock, ambos) en updates
+- **Exclusiones**: el usuario define reglas para omitir productos (por palabras en título, SKU con wildcards, EAN) y reglas por-SKU/EAN para omitir campos específicos (precio, stock, ambos) en updates
 
 ## Stack y arquitectura
 - React Router v7 (`@react-router/dev` + `@react-router/serve`), `vite`, `vite-tsconfig-paths`
@@ -84,6 +84,7 @@ App embebida Shopify (React Router v7 + Polaris) que importa productos desde arc
 - **Proveedores reconfigurados tras wipe de BD** (verificado en BD prod 2026-09-27): las 5 configs presentes con 16 columnMaps cada una, price rules (Mediamax 1, Aseuropa 2, "3" 1, Inpex 1, Mayor2010 0), category maps (1/2/1/3/0), `excludeFieldRules`, ShopSettings en las 2 tiendas, imports `completed` recientes. Configs con `isActive=false` y Mayor2010 sin price/category maps → **intencional del usuario**
 - **Checkpoint/resume implementado** (ambos modos): bulk — `bulk-import.server.ts:1214-1257` guarda `resumeFromLine` cada 500 filas, `:1222` salta líneas ya procesadas, `:1577` limpia al terminar streaming; chunks — `queue-manager.server.ts:218-244` (extrae `lastSku` del ImportLog huérfano) → `import-engine.server.ts:671-682` (`resumeFromSku`)
 - **Fix app en blanco por pestaña stale** (commit `4b676aa`): pestaña con build viejo → `/__manifest` version mismatch → 204 + `X-Remix-Reload-Document` → `window.location.href` recarga documento con URL sin `shop` → `validateShopAndHostParams` → App Bridge HTML status 200 → `AppBridgeBounce` no hacía nada → blanco. Fix: `app.tsx` guarda ctx (`ip_ctx`: shop/host/embedded/locale) en sessionStorage mientras la URL lo trae; `AppBridgeBounce` sin shop en iframe navega la ventana top al admin (`buildAdminAppUrl`, ruta actual) con cooldown 15s + fallback universal; sin tocar tokens/auth
+- **Fix reglas por-SKU/EAN + progreso vivo cola bulk** (commit `537911a`, deploy OK): `getExcludedFields(sku, rules, ean?)` acepta EAN como clave alternativa (regla guardada con `6932554425630` coincidía solo si la fila se buscaba por SKU → precio se enviaba igual) en bulk `:1428`, chunks `:752,:779` y preview `:462`; pase final de stock bulk (`finalizeBulkImport`) ahora respeta `meta.skipStock`/`stockApplied` Y reconsulta `excludeFieldRules` vivas por SKU/EAN antes de `inventorySetQuantities` (los `skipStock/stockApplied` solo se seteaban al preparar → la regla añadida durante el prepare no se aplicaba); `BulkJobOp` +4 columnas aditivas (`progressCount`, `progressTotal`, `shopifyStatus`, `shopifyObjectCount`): progreso del post-proceso cada 25 productos, status/objectCount de la op rellenados por reconcile desde `getBulkOperation`; cola `app.queue.tsx` texto unificado `Op X/Y · N/M productos [· Post-proceso X/Y | · Shopify: STATUS (n)]` + estimado con fracción de op en curso; UI config etiquetas "SKU o EAN" (6 idiomas). NOTA: primera run tras el fix (job `cmujyjwhq` finalizó a las 16:27 UTC con build viejo) SÍ escribió precio+stock del producto de prueba `XIAREDNOT174G6256BL`; la regla omite desde la siguiente run
 
 ### Pendiente
 - Prueba con credenciales reales (túnel HTTPS, OAuth, webhooks)
@@ -138,8 +139,8 @@ App embebida Shopify (React Router v7 + Polaris) que importa productos desde arc
 
 ### Exclusiones
 - **Exclusión de productos**: `isExcluded(row, columnMaps, config, getFieldFn)` evalúa 3 reglas: título (case-insensitive), SKU (wildcards), EAN (wildcards)
-- **Exclusión de campos por-SKU**: `parseExcludeFieldRules(raw)` + `getExcludedFields(sku, rules)` — JSON array de `{ sku, skip: ["price"|"stock"|"price","stock"] }`
-- Configurados en UI: 3 TextField (título, SKU, EAN) + tabla de reglas por-SKU
+- **Exclusión de campos por-SKU/EAN**: `parseExcludeFieldRules(raw)` + `getExcludedFields(sku, rules, ean?)` — JSON array de `{ sku, skip: ["price"|"stock"|"price","stock"] }` (clave = SKU o EAN)
+- Configurados en UI: 3 TextField (título, SKU, EAN) + tabla de reglas por-SKU/EAN
 - **Conteo**: `excludedCount` en `ImportLog` y `BulkJob`
 
 ## Esquema Prisma (notas)
@@ -151,7 +152,7 @@ App embebida Shopify (React Router v7 + Polaris) que importa productos desde arc
 - `ProductMapping`: + `ean`, `shopifyVariantId`, `shopifyInventoryItemId`
 - `ImportLog` + `BulkJob`: + `excludedCount`, `costChanges`
 - `BulkJob`: + `resumeFromLine` (Int?) para checkpoint/resume
-- `BulkJobOp`: `shopifyOpId` nullable, `status`, `startedAt`
+- `BulkJobOp`: `shopifyOpId` nullable, `status`, `startedAt`, + `progressCount`/`progressTotal` (progreso vivo post-proceso), + `shopifyStatus`/`shopifyObjectCount` (reconcile)
 - `BulkJob.phase`: lookup | mutations | finalizing | done | failed
 - 3 composite indices: `BulkJobOp(jobId, status)`, `BulkJob(configId, phase)`, `ImportLog(configId, status)`
 
