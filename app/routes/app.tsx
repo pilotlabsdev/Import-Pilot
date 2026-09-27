@@ -40,15 +40,25 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
 
   // URL sin parámetros `shop` (deep-link borrado, pestaña restaurada, etc.).
-  // - Petición embebida (iframe de admin): dejar caer en el bounce oficial de
-  //   App Bridge (HTML status 200) — el script recupera el contexto del padre.
-  // - Petición de documento top-level: 302 server-side al admin de Shopify.
-  //   Sin JS en el navegador → este estado no puede bucear.
+  // SOLO se redirige un documento top-level de verdad — las peticiones .data de
+  // navegación SPA tampoco llevan `shop` (los params viven en el documento
+  // actual, no en el destino del link) y redirigirlas a admin hacía que el
+  // router navegase el iframe a admin.shopify.com → X-Frame-Options deny.
+  // - dest=document / mode=navigate top-level → 302 server-side al admin
+  // - dest=iframe o Referer=admin → bounce oficial de App Bridge
+  // - .data / prefetch (dest=empty, mode=cors) → authenticate normal (token)
   if (!url.searchParams.get("shop")) {
     const dest = (request.headers.get("Sec-Fetch-Dest") || "").toLowerCase();
+    const mode = (request.headers.get("Sec-Fetch-Mode") || "").toLowerCase();
+    const accept = request.headers.get("Accept") || "";
     const referer = request.headers.get("Referer") || "";
     const embedded = dest === "iframe" || referer.startsWith(ADMIN_ORIGIN);
-    if (!embedded) {
+    const isTopLevelDocument = !embedded && (
+      dest === "document" ||
+      mode === "navigate" ||
+      (dest === "" && mode === "" && accept.includes("text/html"))
+    );
+    if (isTopLevelDocument) {
       let shop = shopFromCookieHeader(request.headers.get("Cookie"));
       let source = shop ? "cookie" : null;
       if (!shop) {
@@ -58,7 +68,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         } catch {}
       }
       const target = buildAdminAppUrl(shop, `${url.pathname}${url.search}`);
-      console.error(`[App Loader] URL sin shop en ${url.pathname} → 302 a ${target} (fuente: ${source || "universal"})`);
+      console.error(`[App Loader] URL sin shop en ${url.pathname} → 302 a ${target} (fuente: ${source || "universal"}, dest=${dest || "-"}, mode=${mode || "-"})`);
       return redirect(target);
     }
   }
