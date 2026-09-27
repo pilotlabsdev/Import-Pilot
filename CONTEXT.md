@@ -81,10 +81,11 @@ App embebida Shopify (React Router v7 + Polaris) que importa productos desde arc
 - **Reconcile fix**: detecta targeted lookup completado (shopifyOpId=null, status=processed) y re-ejecuta prepareAndLaunch
 - **Fix bucle URL sin `shop`** (commits `4bf7d70`,`7413ab0` + universal link): loader `/app` detecta petición sin `shop` → top-level hace 302 server-side a Shopify (mismo `pathname` dinámico, sin JS → no puede bucear); `AppBridgeBounce` sin `document.referrer`; interceptor: 401+HTML deja renovar nativo, 502 siempre, catch solo `TypeError` de dominio propio; catch-all preserva `location.search`
 - **Fix rebote a dashboard por inactividad** (commit `3544126`): `safeAuthenticate` hace `redirect("/")` al caducar token → desmonta/remonta layout `App` (única ruta raíz fuera de `/app`) → dashboard. `app.tsx` guarda última ruta en `sessionStorage` (`ip_last_route`, params volátiles strip) y la restaura SOLO si `App` remonta dentro del mismo documento (rebote) en `/app`; cargas de documento nuevo (F5, NavMenu `<a>`, apertura desde admin) resetean flag `docLoaded` → nunca restauran; cooldown 30s anti-bucle; sin tocar tokens/auth
+- **Proveedores reconfigurados tras wipe de BD** (verificado en BD prod 2026-09-27): las 5 configs presentes con 16 columnMaps cada una, price rules (Mediamax 1, Aseuropa 2, "3" 1, Inpex 1, Mayor2010 0), category maps (1/2/1/3/0), `excludeFieldRules`, ShopSettings en las 2 tiendas, imports `completed` recientes. Configs con `isActive=false` y Mayor2010 sin price/category maps → **intencional del usuario**
+- **Checkpoint/resume implementado** (ambos modos): bulk — `bulk-import.server.ts:1214-1257` guarda `resumeFromLine` cada 500 filas, `:1222` salta líneas ya procesadas, `:1577` limpia al terminar streaming; chunks — `queue-manager.server.ts:218-244` (extrae `lastSku` del ImportLog huérfano) → `import-engine.server.ts:671-682` (`resumeFromSku`)
+- **Fix app en blanco por pestaña stale** (commit `4b676aa`): pestaña con build viejo → `/__manifest` version mismatch → 204 + `X-Remix-Reload-Document` → `window.location.href` recarga documento con URL sin `shop` → `validateShopAndHostParams` → App Bridge HTML status 200 → `AppBridgeBounce` no hacía nada → blanco. Fix: `app.tsx` guarda ctx (`ip_ctx`: shop/host/embedded/locale) en sessionStorage mientras la URL lo trae; `AppBridgeBounce` sin shop en iframe navega la ventana top al admin (`buildAdminAppUrl`, ruta actual) con cooldown 15s + fallback universal; sin tocar tokens/auth
 
 ### Pendiente
-- **Reconfigurar TODOS los proveedores tras wipe de BD** (precio rules, column mappings, category mappings, exclusion rules, todo se perdió)
-- Checkpoint/resume del streaming phase (resumeFromLine en BulkJob schema listo, falta implementar en prepareAndLaunch)
 - Prueba con credenciales reales (túnel HTTPS, OAuth, webhooks)
 
 ## Decisiones clave
@@ -110,9 +111,10 @@ App embebida Shopify (React Router v7 + Polaris) que importa productos desde arc
 - `reconcileStaleBulkJobs` reintenta el job en el próximo ciclo (cada 60s)
 - Cuando el auth esté estable → lookup completo → import seguro, 0 duplicados
 
-### Checkpoint/resume (Option 2 - en progreso)
-- `BulkJob.resumeFromLine` (Int?) en schema — listo para usar
-- Falta implementar: guardar checkpoint cada 500 SKUs durante streaming, saltar SKUs procesados en resume
+### Checkpoint/resume (implementado)
+- `BulkJob.resumeFromLine` (Int?) en schema
+- **Bulk**: checkpoint cada 500 filas durante streaming en `prepareAndLaunch` (`bulk-import.server.ts:1214-1257`), skip de líneas procesadas (`:1222`), se limpia al completar el streaming (`:1577`)
+- **Chunks**: `ImportLog.lastSku` como checkpoint → `queue-manager.server.ts:218-244` lo extrae del log huérfano y relanza con `resumeFromSku` → `import-engine.server.ts:671-682` salta hasta ese SKU
 
 ### Resume / recovery de jobs bulk
 - Estados `BulkJob.phase`: lookup → mutations → finalizing → done/failed
@@ -178,6 +180,4 @@ App embebida Shopify (React Router v7 + Polaris) que importa productos desde arc
 - `prisma/schema.prisma`: schema completo
 
 ## Siguientes pasos
-- **URGENTE**: Reconfigurar proveedores en la UI tras wipe de BD
 - Tunnel HTTPS + credenciales; verificar OAuth y registro de webhooks
-- Implementar checkpoint/resume completo en prepareAndLaunch (resumeFromLine)
