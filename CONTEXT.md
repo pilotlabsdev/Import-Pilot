@@ -80,6 +80,7 @@ App embebida Shopify (React Router v7 + Polaris) que importa productos desde arc
 - **Fix finalizing hang**: finalizeBulkImport ahora maneja manifest faltante, log not found, log.status !== running
 - **Reconcile fix**: detecta targeted lookup completado (shopifyOpId=null, status=processed) y re-ejecuta prepareAndLaunch
 - **Fix bucle URL sin `shop`** (commits `4bf7d70`,`7413ab0` + universal link): loader `/app` detecta petición sin `shop` → top-level hace 302 server-side a Shopify (mismo `pathname` dinámico, sin JS → no puede bucear); `AppBridgeBounce` sin `document.referrer`; interceptor: 401+HTML deja renovar nativo, 502 siempre, catch solo `TypeError` de dominio propio; catch-all preserva `location.search`
+- **Fix rebote a dashboard por inactividad** (commit `3544126`): `safeAuthenticate` hace `redirect("/")` al caducar token → desmonta/remonta layout `App` (única ruta raíz fuera de `/app`) → dashboard. `app.tsx` guarda última ruta en `sessionStorage` (`ip_last_route`, params volátiles strip) y la restaura SOLO si `App` remonta dentro del mismo documento (rebote) en `/app`; cargas de documento nuevo (F5, NavMenu `<a>`, apertura desde admin) resetean flag `docLoaded` → nunca restauran; cooldown 30s anti-bucle; sin tocar tokens/auth
 
 ### Pendiente
 - **Reconfigurar TODOS los proveedores tras wipe de BD** (precio rules, column mappings, category mappings, exclusion rules, todo se perdió)
