@@ -206,10 +206,11 @@ interface BulkImageTask {
   label: string;
 }
 
-async function processBulkImageQueue(admin: any, queue: BulkImageTask[], shopDomain?: string, concurrency = 10): Promise<void> {
+async function processBulkImageQueue(admin: any, queue: BulkImageTask[], shopDomain?: string, concurrency = 10, onBatch?: () => Promise<void>): Promise<void> {
   if (queue.length === 0) return;
 
   for (let i = 0; i < queue.length; i += concurrency) {
+    if (onBatch) await onBatch().catch(() => {});
     const batch = queue.slice(i, i + concurrency);
     const promises = batch.map(async (task) => {
       try {
@@ -1660,19 +1661,27 @@ async function prepareAndLaunch(
 }
 
 async function handleMutationOpFinished(job: any, op: any, admin: any, status: string): Promise<void> {
+  // Token de reclamo: solo la pasada que lo obtiene puede escribir en la op.
+  // Si un heartbeat/reconcile resetea la op y otra pasada la reclama, el token
+  // anterior queda invalidado → la pasada vieja NO escribe contadores (evita el doble conteo).
+  const myClaimToken = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   const claim = await prisma.bulkJobOp.updateMany({
     where: { id: op.id, status: "launched" },
-    data: { status: "processing", startedAt: new Date(), progressCount: 0, progressTotal: null, shopifyStatus: null, shopifyObjectCount: null },
+    data: {
+      status: "processing", startedAt: new Date(), progressCount: 0, progressTotal: null,
+      shopifyStatus: null, shopifyObjectCount: null,
+      progressUpdatedAt: new Date(), claimToken: myClaimToken,
+    },
   });
   if (claim.count === 0) {
     return;
   }
+  // Escritura gated por token: todo write de esta pasada sobre la op pasa por aqui.
+  const beatOp = (data: any) =>
+    prisma.bulkJobOp.updateMany({ where: { id: op.id, claimToken: myClaimToken }, data });
 
   if (status.toLowerCase() !== "completed") {
-    await prisma.bulkJobOp.update({
-      where: { id: op.id },
-      data: { status: "failed" },
-    });
+    await beatOp({ status: "failed" });
     await failJob(job, `systemError.op_bad_status`);
     return;
   }
@@ -1684,7 +1693,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
     manifest = JSON.parse(await fs.readFile(job.manifestPath, "utf-8"));
   } catch (e: any) {
     console.error(`[Bulk] handleMutationOpFinished: manifest not readable at ${job.manifestPath}: ${e?.message}`);
-    await prisma.bulkJobOp.update({ where: { id: op.id }, data: { status: "failed" } });
+    await beatOp({ status: "failed" });
     return;
   }
   const workDir = job.workDir;
@@ -1694,17 +1703,34 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
     await downloadOperationResult(admin, op.shopifyOpId, resultPath, job.shopDomain);
   } catch (e: any) {
     console.error(`[Bulk] Download FAILED: ${e?.message}`);
-    await prisma.bulkJobOp.update({
-      where: { id: op.id },
-      data: { status: "launched", startedAt: null },
-    });
+    await beatOp({ status: "launched", startedAt: null });
     return;
   }
 
   const metaPath = path.join(workDir, `${op.kind}-meta-${op.index}.jsonl`);
   const metaLines = await readJsonLines(metaPath);
   const resultLines = await readJsonLines(resultPath);
-  await prisma.bulkJobOp.update({ where: { id: op.id }, data: { progressTotal: metaLines.length } }).catch(() => {});
+  await beatOp({ progressTotal: metaLines.length, progressUpdatedAt: new Date() }).catch(() => {});
+
+  // Checkpoint por fila: si una pasada anterior murio a mitad del post-proceso (o fue reseteada
+  // por stale) y otra pasada reclamo la op, las filas ya completadas se re-saltan y sus contadores
+  // se restauran — sin reprocesar Shopify y sin reclasificar "create" como "update".
+  // El nombre incluye op.id: si prepareAndLaunch recrea las ops, los checkpoints viejos quedan
+  // huérfanos (limpiados con el workDir) y nunca se aplican a un result file nuevo.
+  const processedPath = path.join(workDir, `${op.kind}-processed-${op.id}.jsonl`);
+  const processedRecords = new Map<number, any>();
+  try {
+    for (const rec of await readJsonLines(processedPath)) {
+      if (rec && typeof rec.i === "number") processedRecords.set(rec.i, rec);
+    }
+  } catch {
+    // primer arranque / sin checkpoint todavía
+  }
+  if (processedRecords.size > 0) {
+    console.log(`[Bulk] handleMutationOpFinished op ${op.id}: reanudando — ${processedRecords.size} filas ya completadas en pasada anterior (checkpoint)`);
+  }
+  const appendCheckpoint = (rec: any) =>
+    fs.appendFile(processedPath, JSON.stringify(rec) + "\n").catch(() => {});
 
   const errorsPath = manifest.errorsPath;
 
@@ -1760,12 +1786,45 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
 
   for (let i = 0; i < resultLines.length; i++) {
     if (i > 0 && i % 25 === 0) {
-      await prisma.bulkJobOp.update({ where: { id: op.id }, data: { progressCount: i } }).catch(() => {});
+      await beatOp({ progressCount: i, progressUpdatedAt: new Date() }).catch(() => {});
     }
     try {
     const meta = metaLines[i] as MetaLine | undefined;
     const line = resultLines[i] as any;
     if (!meta) continue;
+
+    // Replay de checkpoint: fila completada por una pasada anterior → restaurar contadores
+    // (con los flags reales grabados en esa pasada) y re-encolar trabajos post-loop idempotentes.
+    const prior = processedRecords.get(i);
+    if (prior) {
+      if (prior.actuallyNew) {
+        createdCount++;
+      } else {
+        updatedCount++;
+        if (prior.priceChanged) priceChanges++;
+        if (prior.stockChanged) stockChanges++;
+        if (prior.costChanged) costChanges++;
+        if (prior.titleChanged) titleChanges++;
+        if (prior.descriptionChanged) descChanges++;
+        if (prior.vendorChanged) vendorChanges++;
+        if (prior.productTypeChanged) ptChanges++;
+        if (prior.tagsChanged) tagChanges++;
+        if (prior.imagesChanged) {
+          imgChanges++;
+          if (meta.images && meta.images.length > 0 && prior.productId) {
+            imageQueue.push({
+              productId: prior.productId,
+              files: meta.images.map((url: string) => ({ originalSource: url, mediaContentType: "IMAGE" as any })),
+              label: `SKU=${meta.sku} (bulk post-process)`,
+            });
+          }
+        }
+        if (matchMode === "overwrite" && meta.sku && meta.shopifySku && prior.variantId && meta.shopifySku !== meta.sku) {
+          skuOverwriteQueue.push({ productId: prior.productId, variantId: prior.variantId, newSku: meta.sku });
+        }
+      }
+      continue;
+    }
 
     if (i === 0) {
     }
@@ -2006,6 +2065,16 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
         skuOverwriteQueue.push({ productId: product.id, variantId: variant.id, newSku: meta.sku });
       }
     }
+    // Checkpoint de la fila completada (flags finales + ids) — al FINAL del try: si la fila
+    // hizo continue antes (error/transient/sin producto) NO se registra y se reprocesa en reentrada.
+    await appendCheckpoint({
+      i,
+      actuallyNew,
+      priceChanged, stockChanged, costChanged, titleChanged, descriptionChanged,
+      vendorChanged, productTypeChanged, tagsChanged, imagesChanged,
+      productId: product.id,
+      variantId: variant?.id ?? null,
+    });
     } catch (loopErr: any) {
       console.error(`[Bulk] handleMutationOpFinished iteration ${i} CRASH: ${loopErr?.message}\n${loopErr?.stack}`);
       opErrors++;
@@ -2014,16 +2083,20 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
     }
   }
 
-  await prisma.bulkJobOp.update({ where: { id: op.id }, data: { progressCount: resultLines.length } }).catch(() => {});
+  await beatOp({ progressCount: resultLines.length, progressUpdatedAt: new Date() }).catch(() => {});
 
   await fs.appendFile(errorsPath, errorWrites.length ? errorWrites.join("\n") + "\n" : "");
 
   // SKU overwrite: productSet ignores sku in variants for existing products,
   // so we must use REST API to set the SKU after the mutation completes
+  await beatOp({ progressUpdatedAt: new Date() }).catch(() => {});
   if (skuOverwriteQueue.length > 0) {
     let skuOverwriteSuccess = 0;
     let skuOverwriteFailed = 0;
+    let skuOverwriteBeat = 0;
     for (const { productId, variantId, newSku } of skuOverwriteQueue) {
+      if (skuOverwriteBeat % 10 === 0) await beatOp({ progressUpdatedAt: new Date() }).catch(() => {});
+      skuOverwriteBeat++;
       try {
         await setVariantSkuViaRest(job.shopDomain, productId, variantId, newSku);
         skuOverwriteSuccess++;
@@ -2036,13 +2109,15 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
     }
     await fs.appendFile(errorsPath, errorWrites.length ? errorWrites.join("\n") + "\n" : "");
     console.log(`[Bulk] SKU overwrite: ${skuOverwriteSuccess} ok, ${skuOverwriteFailed} failed`);
+    await beatOp({ progressUpdatedAt: new Date() }).catch(() => {});
   }
 
   // Process images: incremental update (must run even when skuOverwriteQueue is empty)
   if (imageQueue.length > 0) {
     console.log(`[Bulk] Processing ${imageQueue.length} image updates...`);
-    await processBulkImageQueue(admin, imageQueue, job.shopDomain, 5);
+    await processBulkImageQueue(admin, imageQueue, job.shopDomain, 5, async () => { await beatOp({ progressUpdatedAt: new Date() }).catch(() => {}); });
     console.log(`[Bulk] Image processing complete`);
+    await beatOp({ progressUpdatedAt: new Date() }).catch(() => {});
   }
 
   // Retry transient errors ("currently being modified") via individual productSet mutations.
@@ -2052,11 +2127,15 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
   if (transientRetries.length > 0) {
     const RETRY_DELAYS = [3000, 7000, 15000];
     for (let attempt = 0; attempt <= RETRY_DELAYS.length && transientRetries.length > 0; attempt++) {
+      await beatOp({ progressUpdatedAt: new Date() }).catch(() => {});
       if (attempt > 0) {
         await new Promise((r) => setTimeout(r, RETRY_DELAYS[attempt - 1]));
       }
       const stillPending: typeof transientRetries = [];
+      let transientBeat = 0;
       for (const { meta: rm } of transientRetries) {
+        if (transientBeat % 10 === 0) await beatOp({ progressUpdatedAt: new Date() }).catch(() => {});
+        transientBeat++;
         try {
           const handle = rm.sku ? `ip-${rm.sku.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}` : undefined;
           const identifier = rm.productId ? { id: rm.productId } : handle ? { handle } : undefined;
@@ -2170,10 +2249,13 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
     }
   }
 
-  await prisma.bulkJobOp.update({
-    where: { id: op.id },
-    data: { status: "processed" },
-  });
+  // Escritura final gated por claimToken: si esta pasada fue superada (stale reset + otra
+  // pasada reclamó la op), count===0 → NO escribimos contadores (evita doble conteo de create/update).
+  const finish = await beatOp({ status: "processed", progressUpdatedAt: new Date() });
+  if (finish.count === 0) {
+    console.warn(`[Bulk] handleMutationOpFinished op ${op.id}: claim superseded — otra pasada posee la op; omitiendo escritura de contadores`);
+    return;
+  }
 
   await prisma.bulkJob.update({
     where: { id: job.id },
@@ -2801,6 +2883,10 @@ export async function reconcileStaleBulkJobs(): Promise<void> {
 }
 
 const STALE_PROCESSING_MS = 30 * 60 * 1000;
+// Heartbeat: el post-proceso vivo escribe progressUpdatedAt (claim, progressCount cada 25 filas,
+// beats entre secciones del post-loop). Solo la pasada poseedora beat-ea (gated por claimToken),
+// así que una pasada muerta deja de latir → reset a los 10 min aunque tenga <30 min de edad.
+const STALE_PROGRESS_MS = 10 * 60 * 1000;
 
 // Limpia jobs bulk terminados (done/failed) más antiguos que la retención:
 // borra sus ops de la BD, las filas de BulkJob y los directorios de trabajo del disco.
@@ -2833,9 +2919,22 @@ export async function cleanupFinishedBulkJobs(): Promise<number> {
 
 // Si una op quedó en "processing" (crash a mitad del procesado), la vuelve a "launched"
 // para que un claim atómico pueda retomarla.
+// Stale por heartbeat: usa progressUpdatedAt si existe (pasada con heartbeat, ≥10 min sin
+// latir = muerta — antes, un post-proceso vivo de 58 min se reseteaba a los 30 min y otra
+// pasada reclasificaba los creates como updates). Fallback a startedAt >30 min para ops
+// antiguas/sin heartbeat (lookup, filas de builds previos).
 async function resetStaleProcessing(row: any): Promise<boolean> {
-  if (!row || row.status !== "processing" || !row.startedAt) return false;
-  if (Date.now() - new Date(row.startedAt).getTime() <= STALE_PROCESSING_MS) return false;
+  if (!row || row.status !== "processing") return false;
+  let stale: boolean;
+  if (row.progressUpdatedAt) {
+    stale = Date.now() - new Date(row.progressUpdatedAt).getTime() > STALE_PROGRESS_MS;
+  } else if (row.startedAt) {
+    stale = Date.now() - new Date(row.startedAt).getTime() > STALE_PROCESSING_MS;
+  } else {
+    return false;
+  }
+  if (!stale) return false;
+  console.warn(`[Bulk] resetStaleProcessing: op ${row.id} (${row.kind}) stale (progressUpdatedAt=${row.progressUpdatedAt ?? "n/a"}, startedAt=${row.startedAt ?? "n/a"}) → relanzando`);
   await prisma.bulkJobOp.update({
     where: { id: row.id },
     data: { status: "launched", startedAt: null },
