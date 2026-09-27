@@ -37,3 +37,18 @@ export function shopFromCookieHeader(cookieHeader: string | null | undefined): s
     return null;
   }
 }
+
+// Contexto volatile guardado en sessionStorage del navegador (por pestaña),
+// NO en la BD. Lo escribe app.tsx mientras la URL trae `shop` y lo lee
+// AppBridgeBounce si una recarga deja el documento sin params (deploy,
+// F5, navegación SPA que borra la query).
+export const CTX_KEY = "ip_ctx";
+export const CTX_RETRY_KEY = "ip_ctx_last_try";
+
+export function readStoredShop(): string | null {
+  try {
+    return new URLSearchParams(sessionStorage.getItem(CTX_KEY) || "").get("shop");
+  } catch {
+    return null;
+  }
+}

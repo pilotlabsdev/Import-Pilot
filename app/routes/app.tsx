@@ -14,7 +14,7 @@ import { CrispChat } from "~/components/CrispChat";
 import { requireSubscription, getSubscriptionInfo } from "~/lib/billing.server";
 import { ReconnectingOverlay, triggerReconnect } from "~/components/ReconnectingOverlay";
 import { AppBridgeBounce } from "~/components/AppBridgeBounce";
-import { ADMIN_ORIGIN, SHOP_COOKIE, buildAdminAppUrl, shopFromCookieHeader } from "~/lib/admin-link";
+import { ADMIN_ORIGIN, SHOP_COOKIE, buildAdminAppUrl, shopFromCookieHeader, CTX_KEY } from "~/lib/admin-link";
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
@@ -280,6 +280,26 @@ export default function App() {
     // restaure una página que ya no es la última visitada.
     sessionStorage.setItem(LAST_ROUTE_KEY, current);
   }, [location.pathname, location.search, navigate]);
+
+  // Guardar el contexto volatile mientras la URL lo trae. Si después una
+  // recarga de documento deja la URL sin `shop`/`host` (deploy con pestaña
+  // abierta, F5, URL SPA desnuda), AppBridgeBounce lo lee para volver al
+  // admin con la ruta actual y que Shopify re-embeda con params frescos.
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const shop = params.get("shop");
+    if (!shop) return;
+    const ctx = new URLSearchParams();
+    ctx.set("shop", shop);
+    for (const key of ["host", "locale"]) {
+      const value = params.get(key);
+      if (value) ctx.set(key, value);
+    }
+    if (params.get("embedded") === "1") ctx.set("embedded", "1");
+    try {
+      sessionStorage.setItem(CTX_KEY, ctx.toString());
+    } catch {}
+  }, [location.search]);
 
   if (!hasPlan) {
     return (
