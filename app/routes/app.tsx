@@ -68,7 +68,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         } catch {}
       }
       const target = buildAdminAppUrl(shop, `${url.pathname}${url.search}`);
-      console.error(`[App Loader] URL sin shop en ${url.pathname} → 302 a ${target} (fuente: ${source || "universal"}, dest=${dest || "-"}, mode=${mode || "-"})`);
+      const refHost = (() => { try { return referer ? new URL(referer).host + new URL(referer).pathname : "-"; } catch { return "-"; } })();
+      console.error(`[App Loader] URL sin shop en ${url.pathname} → 302 a ${target} (fuente: ${source || "universal"}, dest=${dest || "-"}, mode=${mode || "-"}, referer=${refHost})`);
       return redirect(target);
     }
   }
