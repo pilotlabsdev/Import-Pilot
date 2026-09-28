@@ -53,11 +53,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   // All other webhooks: use library authentication (validates HMAC + finds session)
-  let topic: string, shop: string, session: any, payload: any;
+  let topic = topicHeader, shop = "", session: any, payload: any;
   try {
     ({ topic, shop, session, payload } = await authenticate.webhook(request));
   } catch (err: any) {
-    console.warn(`[Webhook] HMAC validation failed: ${err?.message || err}`);
+    const detail = err instanceof Response ? `HTTP ${err.status}` : err?.message || String(err);
+    console.warn(`[Webhook] HMAC validation failed (topic=${topicHeader || "?"}, shop=${shop || "?"}): ${detail}`);
     throw new Response(null, { status: 401 });
   }
   // Only log important webhooks (skip high-frequency PRODUCTS_UPDATE/INVENTORY webhooks to prevent Railway rate limit)

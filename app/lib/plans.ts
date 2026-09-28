@@ -18,6 +18,9 @@ export const PLAN_LIMITS: Record<string, number> = {
   "pro-annual": 3,
   "business-monthly": 5,
   "business-annual": 5,
+  // Plan privado $0/mes del Partner Dashboard (solo tiendas seleccionadas).
+  // Límite alto para que la tienda propia del partner no quede bloqueada.
+  "shopify-test": 5,
 };
 
 export const PLAN_BASE_HANDLES: Record<string, string> = {

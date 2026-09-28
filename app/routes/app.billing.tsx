@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
-import { useLoaderData, useFetcher, useRouteError, useRevalidator, redirect } from "react-router";
-import { useState, useEffect } from "react";
+import { useLoaderData, useRouteError, redirect } from "react-router";
+import { useState } from "react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import {
   Card,
@@ -14,15 +14,15 @@ import {
 } from "@shopify/polaris";
 import { useTranslation } from "react-i18next";
 
-import { authenticate, safeAuthenticate } from "~/shopify.server";
-import { PLAN_HANDLES, PLAN_LIMITS, PLAN_INFO } from "~/lib/plans";
+import { safeAuthenticate } from "~/shopify.server";
+import { PLAN_INFO } from "~/lib/plans";
 import {
   getSubscriptionInfo,
   upsertSubscription,
-  calculateTrialDays,
-  calculateCarryoverTrialDays,
-  enforcePlanLimits,
+  confirmSubscriptionReturn,
+  cancelSubscription,
 } from "~/lib/billing.server";
+import { buildPlansUrl } from "~/lib/admin-link";
 
 const FEATURES = [
   { label: "billing.suppliers", values: ["1", "2", "3", "5"] },
@@ -39,59 +39,33 @@ const FEATURES = [
 ];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { billing, session } = await safeAuthenticate(request);
-  const shopDomain = session.shop;
-
   const url = new URL(request.url);
-  const planHandle = url.searchParams.get("plan_handle");
-  const chargeId = url.searchParams.get("charge_id");
+  const planHandleParam = url.searchParams.get("plan_handle");
+  const shopParam = url.searchParams.get("shop");
 
-  if (planHandle) {
-    const currentSubscription = await getSubscriptionInfo(shopDomain);
-
-    if (chargeId && !currentSubscription.isDeveloper) {
-      try {
-        const { hasActivePayment, appSubscriptions } = await billing.check({
-          plans: [planHandle as any],
-        });
-        if (!hasActivePayment) {
-          console.log(`[Billing] Loader: charge ${chargeId} not approved for ${shopDomain}`);
-          return redirect("/app/billing?error=payment_failed");
-        }
-        // Save the Shopify subscription ID
-        const shopifySubId = appSubscriptions?.[0]?.id || null;
-        const trialDaysRemaining = calculateCarryoverTrialDays(currentSubscription);
-        const newTrialDays = calculateTrialDays(shopDomain, currentSubscription, trialDaysRemaining > 0 ? trialDaysRemaining : 14);
-        const billingType = planHandle.endsWith("-annual") ? "annual" : "monthly";
-        const isTrial = newTrialDays > 0;
-        const status = isTrial ? "trial" : "active";
-        const trialEndsAt = isTrial ? new Date(Date.now() + newTrialDays * 24 * 60 * 60 * 1000) : undefined;
-        await upsertSubscription(shopDomain, planHandle, status, trialEndsAt, billingType, shopifySubId || undefined);
-        await enforcePlanLimits(shopDomain);
-        return redirect("/app/billing");
-      } catch (error: any) {
-        console.log(`[Billing] Loader: billing.check failed for ${shopDomain}:`, error?.message);
-        return redirect("/app/billing?error=verification_failed");
+  // Retorno del welcome link de Shopify App Pricing: plan_handle + shop,
+  // sin `host` (authenticate.admin rechazaría esa petición). Verificamos el
+  // contrato en la Partner API ANTES de autenticar.
+  if (planHandleParam && shopParam && /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i.test(shopParam)) {
+    // El helper de redirect de la app copia los query params actuales al
+    // destino cuando es mismo origen: sin marcar `plan_handle=` vacío, un
+    // redirect limpio re-añadiría plan_handle → bucle de verificación.
+    try {
+      const ok = await confirmSubscriptionReturn(shopParam, planHandleParam);
+      if (ok) {
+        return redirect("/app/billing?plan_handle=");
       }
+      return redirect("/app/billing?plan_handle=&error=verification_failed");
+    } catch (error: any) {
+      console.error(`[Billing] Error verificando retorno de ${shopParam}:`, error?.message || error);
+      return redirect("/app/billing?plan_handle=&error=verification_failed");
     }
-
-    const trialDaysRemaining = calculateCarryoverTrialDays(currentSubscription);
-    const newTrialDays = calculateTrialDays(shopDomain, currentSubscription, trialDaysRemaining > 0 ? trialDaysRemaining : 14);
-    const billingType = planHandle.endsWith("-annual") ? "annual" : "monthly";
-
-    const isTrial = newTrialDays > 0;
-    const status = isTrial ? "trial" : "active";
-    const trialEndsAt = isTrial
-      ? new Date(Date.now() + newTrialDays * 24 * 60 * 60 * 1000)
-      : undefined;
-
-    await upsertSubscription(shopDomain, planHandle, status, trialEndsAt, billingType);
-    await enforcePlanLimits(shopDomain);
-    return redirect("/app/billing");
   }
 
-  const errorParam = url.searchParams.get("error");
+  const { session } = await safeAuthenticate(request);
+  const shopDomain = session.shop;
 
+  const errorParam = url.searchParams.get("error");
   const subscription = await getSubscriptionInfo(shopDomain);
 
   return {
@@ -99,61 +73,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     subscription,
     plans: PLAN_INFO,
     errorParam,
+    hostedPlansUrl: buildPlansUrl(shopDomain),
   };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  console.log("[Billing Action] Called");
-  const { billing, session } = await safeAuthenticate(request);
-  console.log("[Billing Action] Session:", session.shop);
+  const { session } = await safeAuthenticate(request);
   const formData = await request.formData();
   const intent = formData.get("intent") as string;
   const shopDomain = session.shop;
-  console.log("[Billing Action] Intent:", intent, "Plan:", formData.get("planHandle"));
-
-  if (intent === "subscribe") {
-    const planHandle = formData.get("planHandle") as string;
-    const billingType = planHandle.endsWith("-annual") ? "annual" : "monthly";
-
-    const currentSubscription = await getSubscriptionInfo(shopDomain);
-    const trialDaysRemaining = calculateCarryoverTrialDays(currentSubscription);
-    const newTrialDays = calculateTrialDays(shopDomain, currentSubscription, trialDaysRemaining > 0 ? trialDaysRemaining : 14);
-
-    const isTest = currentSubscription.isDeveloper;
-
-    console.log("[Billing Action] Calling billing.request:", { planHandle, isTest, trialDays: newTrialDays });
-    try {
-      await billing.request({
-        plan: planHandle as any,
-        isTest,
-        trialDays: newTrialDays,
-        returnUrl: `${process.env.SHOPIFY_APP_URL}/app/billing?plan_handle=${encodeURIComponent(planHandle)}`,
-      });
-    } catch (error: any) {
-      console.log("[Billing Action] billing.request catch:", error?.constructor?.name, error?.message);
-
-      if (error instanceof Response) {
-        throw error;
-      }
-
-      if (currentSubscription.isDeveloper) {
-        console.log("[Billing Action] Dev store — activando suscripción de prueba sin cobro real");
-        const isTrial = newTrialDays > 0;
-        const status = isTrial ? "trial" : "active";
-        const trialEndsAt = isTrial
-          ? new Date(Date.now() + newTrialDays * 24 * 60 * 60 * 1000)
-          : undefined;
-        await upsertSubscription(shopDomain, planHandle, status, trialEndsAt, billingType);
-        await enforcePlanLimits(shopDomain);
-        return { success: true };
-      }
-
-      console.error("[Billing Action] Error en billing.request:", error.message);
-      return { success: false, error: "billing.paymentError" };
-    }
-
-    return { success: true };
-  }
 
   if (intent === "cancel") {
     const subscription = await getSubscriptionInfo(shopDomain);
@@ -161,21 +89,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return { success: false, error: "billing.devStoreNotice" };
     }
 
-    // Cancel on Shopify if we have the subscription ID
-    if (subscription.shopifySubscriptionId) {
-      try {
-        await billing.cancel({
-          subscriptionId: subscription.shopifySubscriptionId,
-          isTest: false,
-          prorate: true,
-        });
-        console.log(`[Billing] Cancelled Shopify subscription ${subscription.shopifySubscriptionId} for ${shopDomain}`);
-      } catch (error: any) {
-        console.error(`[Billing] Failed to cancel Shopify subscription for ${shopDomain}:`, error?.message);
+    // Shopify App Pricing → cancelación vía Partner API (Billing API legacy
+    // está bloqueada). Al final del ciclo, sin prorrateo.
+    try {
+      const result = await cancelSubscription(shopDomain);
+      if (!result.ok) {
+        console.error(`[Billing] appSubscriptionCancel falló para ${shopDomain}: ${result.error}`);
         return { success: false, error: "billing.cancelFailed" };
       }
-    } else {
-      console.warn(`[Billing] No shopifySubscriptionId for ${shopDomain} — skipping Shopify cancel`);
+      console.log(`[Billing] Suscripción cancelada vía Partner API para ${shopDomain}`);
+    } catch (error: any) {
+      console.error(`[Billing] Error cancelando para ${shopDomain}:`, error?.message || error);
+      return { success: false, error: "billing.cancelFailed" };
     }
 
     await upsertSubscription(shopDomain, subscription.planHandle, "cancelled");
@@ -194,20 +119,9 @@ function CheckIcon() {
 }
 
 export default function BillingPage() {
-  const { subscription, plans, errorParam } = useLoaderData<typeof loader>();
-  const fetcher = useFetcher();
-  const { revalidate } = useRevalidator();
+  const { subscription, plans, errorParam, hostedPlansUrl } = useLoaderData<typeof loader>();
   const [isAnnual, setIsAnnual] = useState(false);
   const { t } = useTranslation();
-
-  const isLoading = fetcher.state !== "idle";
-  const loadingPlan = fetcher.formData?.get("planHandle") as string | null;
-
-  useEffect(() => {
-    if (fetcher.data?.success) {
-      revalidate();
-    }
-  }, [fetcher.data, revalidate]);
 
   return (
     <Page title={t("billing.title")}>
@@ -225,11 +139,6 @@ export default function BillingPage() {
         {subscription.paymentFailed && (
           <Banner tone="critical" title={t("billing.paymentFailed")}>
             <p>{t("billing.paymentFailedDetail")}</p>
-          </Banner>
-        )}
-        {fetcher.data?.error === "billing.paymentError" && (
-          <Banner tone="critical" title={t("billing.paymentError")}>
-            <p>{t("billing.paymentErrorDetail")}</p>
           </Banner>
         )}
         {subscription.hasActiveSubscription && (
@@ -270,22 +179,14 @@ export default function BillingPage() {
             </InlineStack>
             <div style={{ marginTop: "12px" }}>
                 {isAnnual && subscription.billingType === "monthly" && subscription.planHandle.endsWith("-monthly") && (
-                  <fetcher.Form method="post" style={{ display: "inline" }}>
-                    <input type="hidden" name="intent" value="subscribe" />
-                    <input type="hidden" name="planHandle" value={subscription.planHandle.replace("-monthly", "-annual")} />
-                    <Button submit size="slim" variant="primary" loading={loadingPlan === subscription.planHandle.replace("-monthly", "-annual")}>
-                      {t("billing.switchAnnual")}
-                    </Button>
-                  </fetcher.Form>
+                  <Button url={hostedPlansUrl} target="_top" size="slim">
+                    {t("billing.switchAnnual")}
+                  </Button>
                 )}
                 {!isAnnual && subscription.billingType === "annual" && subscription.planHandle.endsWith("-annual") && (
-                  <fetcher.Form method="post" style={{ display: "inline" }}>
-                    <input type="hidden" name="intent" value="subscribe" />
-                    <input type="hidden" name="planHandle" value={subscription.planHandle.replace("-annual", "-monthly")} />
-                    <Button submit size="slim" loading={loadingPlan === subscription.planHandle.replace("-annual", "-monthly")}>
-                      {t("billing.switchMonthly")}
-                    </Button>
-                  </fetcher.Form>
+                  <Button url={hostedPlansUrl} target="_top" size="slim">
+                    {t("billing.switchMonthly")}
+                  </Button>
                 )}
               </div>
           </Card>
@@ -393,18 +294,14 @@ export default function BillingPage() {
                         </Text>
 
                         {!isCurrent && (
-                          <fetcher.Form method="post">
-                            <input type="hidden" name="intent" value="subscribe" />
-                            <input type="hidden" name="planHandle" value={plan.handle} />
-                            <Button
-                              submit
-                              variant="primary"
-                              size="slim"
-                              loading={loadingPlan === plan.handle}
-                            >
-                              {t("billing.selectPlan", { planName: plan.name })}
-                            </Button>
-                          </fetcher.Form>
+                          <Button
+                            url={hostedPlansUrl}
+                            target="_top"
+                            variant="primary"
+                            size="slim"
+                          >
+                            {t("billing.selectPlan", { planName: plan.name })}
+                          </Button>
                         )}
                       </BlockStack>
                     </div>

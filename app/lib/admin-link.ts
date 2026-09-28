@@ -27,6 +27,15 @@ export function buildAdminAppUrl(shop: string | null | undefined, appPath?: stri
   return `${ADMIN_ORIGIN}/apps/${APP_HANDLE}${path}`;
 }
 
+// Página de planes alojada de Shopify App Pricing (Shopify la sirve; misma
+// ruta que el campo "Redirect URL" de los planes en el Partner Dashboard).
+// Se usa con target="_top" desde el iframe: no existe en nuestra app.
+export function buildPlansUrl(shop: string | null | undefined): string {
+  const store = storeHandleFromShop(shop);
+  if (store) return `${ADMIN_ORIGIN}/store/${store}/charges/${APP_HANDLE}/pricing_plans`;
+  return `${ADMIN_ORIGIN}/apps/${APP_HANDLE}`;
+}
+
 export function shopFromCookieHeader(cookieHeader: string | null | undefined): string | null {
   if (!cookieHeader) return null;
   const m = cookieHeader.match(/(?:^|;\s*)ip_last_shop=([^;]*)/);

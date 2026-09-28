@@ -14,7 +14,7 @@ import { CrispChat } from "~/components/CrispChat";
 import { requireSubscription, getSubscriptionInfo } from "~/lib/billing.server";
 import { ReconnectingOverlay, triggerReconnect } from "~/components/ReconnectingOverlay";
 import { AppBridgeBounce } from "~/components/AppBridgeBounce";
-import { ADMIN_ORIGIN, SHOP_COOKIE, buildAdminAppUrl, shopFromCookieHeader, CTX_KEY } from "~/lib/admin-link";
+import { ADMIN_ORIGIN, SHOP_COOKIE, buildAdminAppUrl, buildPlansUrl, shopFromCookieHeader, CTX_KEY } from "~/lib/admin-link";
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
@@ -95,7 +95,23 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }
   }
 
-  const { session } = await withTimeout(safeAuthenticate(request), 15000, "safeAuthenticate");
+  // Retorno del welcome link de Shopify App Pricing: llega como documento
+  // top-level con plan_handle+shop pero SIN `host` — authenticate.admin lo
+  // rechazaría en validateShopAndHostParams y perderíamos la verificación del
+  // plan. Datos benignos aquí; el loader de app/billing verifica el contrato
+  // con la Partner API y redirige a /app/billing limpio.
+  if (url.searchParams.get("plan_handle")) {
+    return data({
+      apiKey: process.env.SHOPIFY_API_KEY || "",
+      shopDomain: url.searchParams.get("shop") || "",
+      unresolvedCount: 0,
+      queueCount: 0,
+      planLabel: null,
+      hasPlan: true,
+    });
+  }
+
+  const { session, redirect: appRedirect } = await withTimeout(safeAuthenticate(request), 15000, "safeAuthenticate");
   const shopDomain = session.shop;
   const shopCookie = `${SHOP_COOKIE}=${encodeURIComponent(shopDomain)}; Path=/; Max-Age=31536000; SameSite=Lax; Secure`;
 
@@ -104,6 +120,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   try {
     const hasPlan = (isBillingPage || isTutorialPage) ? true : await withTimeout(requireSubscription(shopDomain), 8000, "requireSubscription");
+
+    // Shopify App Pricing: sin contrato → fuera de la app, a la página de
+    // planes alojada de Shopify (target _top sale del iframe). Solo documentos
+    // reales: las peticiones .data siguen su curso (navegación SPA) — el
+    // gate volverá a aplicar en la próxima carga de documento.
+    if (!hasPlan && !url.pathname.endsWith(".data")) {
+      const plansUrl = buildPlansUrl(shopDomain);
+      console.log(`[App Loader] Sin plan activo (${shopDomain}) → redirect a planes alojados`);
+      throw appRedirect(plansUrl, { target: "_top" });
+    }
 
     const [unresolvedCount, queueCount, subscription] = await withTimeout(Promise.all([
       hasPlan ? prisma.duplicateLog.count({
@@ -148,6 +174,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       hasPlan,
     }, { headers: { "Set-Cookie": shopCookie } });
   } catch (error: any) {
+    // Redirects/respuestas del helper `redirect` (gate a planes alojados,
+    // App Bridge bounce) deben propagarse, no devolver defaults.
+    if (error instanceof Response) throw error;
     console.error(`[App Loader] Error (returning defaults): ${error?.message}`);
     return data({
       apiKey: process.env.SHOPIFY_API_KEY || "",
