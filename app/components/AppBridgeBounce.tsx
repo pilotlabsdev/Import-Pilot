@@ -26,7 +26,7 @@ export function AppBridgeBounce({ html }: { html: string }) {
     if (hasShop) {
       // SSR: scripts already executed when the document was parsed.
       // Client-side boundary renders don't execute innerHTML scripts — recreate them.
-      if (document.querySelector("script[data-api-key]")) return;
+      if (document.querySelector("script[data-api-key], script[data-plans-gate]")) return;
       try {
         const doc = new DOMParser().parseFromString(html, "text/html");
         doc.querySelectorAll("script").forEach((old) => {

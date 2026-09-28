@@ -111,15 +111,43 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     });
   }
 
+  // Gate a planes lo antes posible: requireSubscription se lanza EN PARALELO
+  // con safeAuthenticate usando el shop de la URL (authenticate valida después
+  // que el id_token pertenece a esa tienda; si no cuadra, auth falla y el
+  // resultado especulativo se descarta). Partner API cachea 5min/15s.
+  const isBillingPage = url.pathname === "/app/billing";
+  const isTutorialPage = url.pathname.startsWith("/app/tutorial");
+  const needsPlanGate = !isBillingPage && !isTutorialPage;
+  const shopParam = (url.searchParams.get("shop") || "").toLowerCase();
+  const looksLikeRealDoc =
+    (url.searchParams.get("embedded") === "1" ||
+      url.searchParams.has("id_token") ||
+      url.searchParams.has("session_token")) &&
+    /^[a-z0-9][a-z0-9_-]*\.myshopify\.com$/.test(shopParam);
+  const specSub =
+    needsPlanGate && looksLikeRealDoc
+      ? requireSubscription(shopParam).catch((err: any) => {
+          console.warn(`[App Loader] requireSubscription paralelo falló (${shopParam}): ${err?.message || err}`);
+          return null;
+        })
+      : null;
+
   const { session, redirect: appRedirect } = await withTimeout(safeAuthenticate(request), 15000, "safeAuthenticate");
   const shopDomain = session.shop;
   const shopCookie = `${SHOP_COOKIE}=${encodeURIComponent(shopDomain)}; Path=/; Max-Age=31536000; SameSite=Lax; Secure`;
 
-  const isBillingPage = url.pathname === "/app/billing";
-  const isTutorialPage = url.pathname.startsWith("/app/tutorial");
-
   try {
-    const hasPlan = (isBillingPage || isTutorialPage) ? true : await withTimeout(requireSubscription(shopDomain), 8000, "requireSubscription");
+    let hasPlan: boolean;
+    if (!needsPlanGate) {
+      hasPlan = true;
+    } else if (specSub) {
+      const value = await specSub;
+      hasPlan = value !== null
+        ? value
+        : await withTimeout(requireSubscription(shopDomain), 8000, "requireSubscription");
+    } else {
+      hasPlan = await withTimeout(requireSubscription(shopDomain), 8000, "requireSubscription");
+    }
 
     // Shopify App Pricing: sin contrato → fuera de la app, a la página de
     // planes alojada de Shopify (target _top sale del iframe). Solo documentos
@@ -127,7 +155,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // gate volverá a aplicar en la próxima carga de documento.
     if (!hasPlan && !url.pathname.endsWith(".data")) {
       const plansUrl = buildPlansUrl(shopDomain);
-      console.log(`[App Loader] Sin plan activo (${shopDomain}) → redirect a planes alojados`);
+      console.log(`[App Loader] Sin plan activo (${shopDomain}) → bounce a planes alojados`);
+      const isEmbeddedDoc =
+        url.searchParams.get("embedded") === "1" &&
+        request.method.toUpperCase() === "GET" &&
+        !request.headers.get("authorization");
+      if (isEmbeddedDoc) {
+        // Bounce inline: navega la ventana top en el PRIMER parse del
+        // documento, sin cargar el script de App Bridge (CDN) — antes el
+        // iframe esperaba a cdn.shopify.com y parecía un refresco lento.
+        // location.replace no crea entrada de historial: Back no re-dispara
+        // el gate. Fallback al patrón oficial window.open(..., "_top").
+        throw new Response(
+          `<script data-plans-gate>try{window.top.location.replace(${JSON.stringify(plansUrl)})}catch(e){window.open(${JSON.stringify(plansUrl)},"_top")}</script>`,
+          { headers: { "content-type": "text/html;charset=utf-8", "cache-control": "no-store" } }
+        );
+      }
       throw appRedirect(plansUrl, { target: "_top" });
     }
 
@@ -392,7 +435,7 @@ export function ErrorBoundary() {
   const isAppBridgeHtml = isRouteErrorResponse(error)
     && error.status === 200
     && typeof error.data === "string"
-    && error.data.includes("app-bridge");
+    && (error.data.includes("app-bridge") || error.data.includes("data-plans-gate"));
 
   if (redirectUrl) {
     console.log(`[App ErrorBoundary] Redirect detected → ${redirectUrl}`);
@@ -405,7 +448,7 @@ export function ErrorBoundary() {
   }
 
   if (isAppBridgeHtml) {
-    console.error("[App ErrorBoundary] App Bridge bounce HTML (sesión embedded perdida) — entregando al navegador para recuperación");
+    console.log("[App ErrorBoundary] Bounce HTML (App Bridge o gate de planes) — entregando al navegador");
     return <AppBridgeBounce html={typeof error.data === "string" ? error.data : ""} />;
   }
 
