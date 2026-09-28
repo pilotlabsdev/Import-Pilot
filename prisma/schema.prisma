@@ -296,6 +296,10 @@ model BulkJobOp {
   shopifyObjectCount Int? // objectCount de la op en Shopify (reconcile)
   progressUpdatedAt DateTime? // heartbeat del post-proceso vivo (claim + progressCount + beats)
   claimToken  String?  // token de la pasada que posee la op (evita doble escritura de contadores)
+  // Contadores en vivo de la pasada poseedora (se pliegan en la cola mientras la op está processing)
+  liveCreatedCount   Int?
+  liveUpdatedCount   Int?
+  liveUnchangedCount Int?
   createdAt   DateTime @default(now())
   job         BulkJob  @relation(fields: [jobId], references: [id], onDelete: Cascade)
 

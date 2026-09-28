@@ -265,6 +265,25 @@ async function processBulkImageQueue(admin: any, queue: BulkImageTask[], shopDom
   }
 }
 
+// Espera a que Shopify materialice el media recién creado: polling con backoff (400ms → 5s,
+// cap 17s) en vez de dormir 3s fijos. Productos actualizados → media visible al primer intento
+// (~400ms); recién creados → se detecta en cuanto aparece, sin esperas ciegas de 3s por fila.
+// Si nunca aparece devuelve [] (misma semántica que antes: no se escribe shopifyImages).
+const MEDIA_POLL_MAX_MS = 17_000;
+async function pollProductMediaForImages(admin: any, productId: string): Promise<StoredImage[]> {
+  const start = Date.now();
+  let delay = 400;
+  for (;;) {
+    await new Promise((r) => setTimeout(r, delay));
+    try {
+      const media = await queryProductMedia(admin, productId);
+      if (media.length > 0) return media;
+    } catch {}
+    if (Date.now() - start >= MEDIA_POLL_MAX_MS) return [];
+    delay = Math.min(Math.round(delay * 1.7), 5000);
+  }
+}
+
 // Like gql() but auto-refreshes token on 401 and retries with new admin client.
 // Used in long-running operations (bulk mutations, chunks) where token may expire mid-import.
 async function gqlWithRefresh(shopDomain: string, adminRef: { current: any }, query: string, varsOrOptions?: any): Promise<any> {
@@ -1670,6 +1689,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
     data: {
       status: "processing", startedAt: new Date(), progressCount: 0, progressTotal: null,
       shopifyStatus: null, shopifyObjectCount: null,
+      liveCreatedCount: 0, liveUpdatedCount: 0, liveUnchangedCount: 0,
       progressUpdatedAt: new Date(), claimToken: myClaimToken,
     },
   });
@@ -1729,8 +1749,16 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
   if (processedRecords.size > 0) {
     console.log(`[Bulk] handleMutationOpFinished op ${op.id}: reanudando — ${processedRecords.size} filas ya completadas en pasada anterior (checkpoint)`);
   }
-  const appendCheckpoint = (rec: any) =>
-    fs.appendFile(processedPath, JSON.stringify(rec) + "\n").catch(() => {});
+  // Serializa los appends: con filas en paralelo, varios checkpoints pueden encolarse a la vez
+  // y esta cadena garantiza que cada línea se escriba completa (appendFile con 'a' es atómico
+  // por línea, pero la cadena elimina cualquier riesgo de intercalado).
+  let checkpointChain: Promise<void> = Promise.resolve();
+  const appendCheckpoint = (rec: any) => {
+    checkpointChain = checkpointChain
+      .then(() => fs.appendFile(processedPath, JSON.stringify(rec) + "\n"))
+      .catch(() => {});
+    return checkpointChain;
+  };
 
   const errorsPath = manifest.errorsPath;
 
@@ -1784,14 +1812,31 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
   await ensureFreshTokenForBulk(job.shopDomain);
   const errorWrites: string[] = [];
 
-  for (let i = 0; i < resultLines.length; i++) {
-    if (i > 0 && i % 25 === 0) {
-      await beatOp({ progressCount: i, progressUpdatedAt: new Date() }).catch(() => {});
-    }
+  // Anti-zombi + contadores en vivo. beatLive escribe el trío (created/updated/unchanged) y el
+  // heartbeat en UNA sola escritura gated por claimToken; si el count sale 0, otra pasada reclamó
+  // la op (stale reset) → claimLost y esta pasada abandona sin escribir contadores (antes una
+  // pasada huérfana seguía decenas de minutos rehaciendo filas ya hechas).
+  let claimLost = false;
+  let rowsProcessed = 0;
+  let rowsSinceBeat = 0;
+  let lastBeatAt = Date.now();
+  const beatLive = async (extra: any = {}) => {
+    const res = await beatOp({
+      liveCreatedCount: createdCount,
+      liveUpdatedCount: updatedCount,
+      liveUnchangedCount: unchangedCount,
+      progressUpdatedAt: new Date(),
+      ...extra,
+    }).catch(() => null);
+    if (res && res.count === 0) claimLost = true;
+    return res;
+  };
+
+  const processRow = async (i: number): Promise<void> => {
     try {
     const meta = metaLines[i] as MetaLine | undefined;
     const line = resultLines[i] as any;
-    if (!meta) continue;
+    if (!meta) return;
 
     // Replay de checkpoint: fila completada por una pasada anterior → restaurar contadores
     // (con los flags reales grabados en esa pasada) y re-encolar trabajos post-loop idempotentes.
@@ -1823,10 +1868,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
           skuOverwriteQueue.push({ productId: prior.productId, variantId: prior.variantId, newSku: meta.sku });
         }
       }
-      continue;
-    }
-
-    if (i === 0) {
+      return;
     }
 
     const userErrors = extractUserErrors(line);
@@ -1841,7 +1883,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
           JSON.stringify({ sku: meta.sku, error: errMsg, lineNumber: 0 })
         );
       }
-      continue;
+      return;
     }
 
     const product = line.data?.productSet?.product || line.data?.productCreate?.product || line.data?.productUpdate?.product;
@@ -1849,7 +1891,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
     if (!product?.id) {
       opErrors++;
       errorWrites.push(JSON.stringify({ sku: meta.sku, error: "systemError.no_product_id" }));
-      continue;
+      return;
     }
 
     const isNewProduct = op.kind === "create";
@@ -2026,8 +2068,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
 
         if (meta.images?.length) {
           try {
-            await new Promise(r => setTimeout(r, 3000));
-            const media = await queryProductMedia(admin, product.id);
+            const media = await pollProductMediaForImages(admin, product.id);
             if (media.length > 0) {
               const stored: StoredImage[] = media.map((m, i) => ({
                 mediaId: m.mediaId,
@@ -2081,21 +2122,54 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       const crashSku = (metaLines[i] as any)?.sku || `unknown-${i}`;
       errorWrites.push(JSON.stringify({ sku: crashSku, error: `loop_crash: ${loopErr?.message}`, lineNumber: 0 }));
     }
+  };
+
+  // Filas en paralelo (concurrencia configurable, default 4): cada fila es independiente
+  // (upsert + GraphQL rate-limited por el token-bucket global de rateLimitedGraphql, contadores
+  // incrementados de forma síncrona en el event loop, checkpoints serializados por checkpointChain).
+  const rowConcurrency = Math.max(1, Math.min(8, Number(process.env.BULK_ROW_CONCURRENCY) || 4));
+  let nextRowIndex = 0;
+  const rowWorker = async (): Promise<void> => {
+    for (;;) {
+      if (claimLost) return;
+      const i = nextRowIndex++;
+      if (i >= resultLines.length) return;
+      // Heartbeat con contadores vivos: cada 25 filas completadas o como máximo cada 45s
+      // (muy por debajo del umbral stale de 10 min — antes filas lentas de ~26s rompían
+      // la cadencia de 25 filas y disparen un falso stale).
+      if (rowsSinceBeat >= 25 || Date.now() - lastBeatAt >= 45_000) {
+        rowsSinceBeat = 0;
+        lastBeatAt = Date.now();
+        await beatLive({ progressCount: rowsProcessed });
+        if (claimLost) return;
+      }
+      await processRow(i);
+      rowsProcessed++;
+      rowsSinceBeat++;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(rowConcurrency, Math.max(resultLines.length, 1)) }, () => rowWorker()));
+  await checkpointChain; // drena checkpoints pendientes antes de decidir por el claim
+  if (claimLost) {
+    console.warn(`[Bulk] handleMutationOpFinished op ${op.id}: claim perdido durante el loop (otra pasada posee la op) — abandonando sin escribir contadores`);
+    return;
   }
 
-  await beatOp({ progressCount: resultLines.length, progressUpdatedAt: new Date() }).catch(() => {});
+  await beatLive({ progressCount: resultLines.length });
+  if (claimLost) return;
 
   await fs.appendFile(errorsPath, errorWrites.length ? errorWrites.join("\n") + "\n" : "");
 
   // SKU overwrite: productSet ignores sku in variants for existing products,
   // so we must use REST API to set the SKU after the mutation completes
-  await beatOp({ progressUpdatedAt: new Date() }).catch(() => {});
+  await beatLive();
+  if (claimLost) return;
   if (skuOverwriteQueue.length > 0) {
     let skuOverwriteSuccess = 0;
     let skuOverwriteFailed = 0;
     let skuOverwriteBeat = 0;
     for (const { productId, variantId, newSku } of skuOverwriteQueue) {
-      if (skuOverwriteBeat % 10 === 0) await beatOp({ progressUpdatedAt: new Date() }).catch(() => {});
+      if (skuOverwriteBeat % 10 === 0) { await beatLive(); if (claimLost) return; }
       skuOverwriteBeat++;
       try {
         await setVariantSkuViaRest(job.shopDomain, productId, variantId, newSku);
@@ -2109,15 +2183,17 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
     }
     await fs.appendFile(errorsPath, errorWrites.length ? errorWrites.join("\n") + "\n" : "");
     console.log(`[Bulk] SKU overwrite: ${skuOverwriteSuccess} ok, ${skuOverwriteFailed} failed`);
-    await beatOp({ progressUpdatedAt: new Date() }).catch(() => {});
+    await beatLive();
+    if (claimLost) return;
   }
 
   // Process images: incremental update (must run even when skuOverwriteQueue is empty)
   if (imageQueue.length > 0) {
     console.log(`[Bulk] Processing ${imageQueue.length} image updates...`);
-    await processBulkImageQueue(admin, imageQueue, job.shopDomain, 5, async () => { await beatOp({ progressUpdatedAt: new Date() }).catch(() => {}); });
+    await processBulkImageQueue(admin, imageQueue, job.shopDomain, 5, async () => { await beatLive(); });
     console.log(`[Bulk] Image processing complete`);
-    await beatOp({ progressUpdatedAt: new Date() }).catch(() => {});
+    await beatLive();
+    if (claimLost) return;
   }
 
   // Retry transient errors ("currently being modified") via individual productSet mutations.
@@ -2127,14 +2203,15 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
   if (transientRetries.length > 0) {
     const RETRY_DELAYS = [3000, 7000, 15000];
     for (let attempt = 0; attempt <= RETRY_DELAYS.length && transientRetries.length > 0; attempt++) {
-      await beatOp({ progressUpdatedAt: new Date() }).catch(() => {});
+      await beatLive();
+      if (claimLost) return;
       if (attempt > 0) {
         await new Promise((r) => setTimeout(r, RETRY_DELAYS[attempt - 1]));
       }
       const stillPending: typeof transientRetries = [];
       let transientBeat = 0;
       for (const { meta: rm } of transientRetries) {
-        if (transientBeat % 10 === 0) await beatOp({ progressUpdatedAt: new Date() }).catch(() => {});
+        if (transientBeat % 10 === 0) { await beatLive(); if (claimLost) return; }
         transientBeat++;
         try {
           const handle = rm.sku ? `ip-${rm.sku.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}` : undefined;
@@ -2251,9 +2328,9 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
 
   // Escritura final gated por claimToken: si esta pasada fue superada (stale reset + otra
   // pasada reclamó la op), count===0 → NO escribimos contadores (evita doble conteo de create/update).
-  const finish = await beatOp({ status: "processed", progressUpdatedAt: new Date() });
-  if (finish.count === 0) {
-    console.warn(`[Bulk] handleMutationOpFinished op ${op.id}: claim superseded — otra pasada posee la op; omitiendo escritura de contadores`);
+  const finish = await beatLive({ status: "processed" });
+  if (!finish || finish.count === 0) {
+    console.warn(`[Bulk] handleMutationOpFinished op ${op.id}: claim superseded (o error de BD) — otra pasada posee la op; omitiendo escritura de contadores`);
     return;
   }
 

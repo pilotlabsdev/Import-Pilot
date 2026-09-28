@@ -114,7 +114,11 @@ export default function QueuePage() {
       parts.push(t("queue.opsProgress", { done: progress.mutationOpsDone || 0, total: progress.totalMutationOps }));
     }
     parts.push(`${progress.processedProducts} / ${progress.totalProducts} ${t("queue.products")}`);
-    if ((progress.created || 0) > 0 || (progress.updated || 0) > 0 || (progress.unchanged || 0) > 0) {
+    if (progress.createdPending) {
+      // Op en curso sin ningún contador aún (Shopify aún no ha devuelto resultados) → evita
+      // mostrar "Creados: 0" durante los primeros minutos del post-proceso.
+      parts.push(`${t("common.created")}: —`);
+    } else if ((progress.created || 0) > 0 || (progress.updated || 0) > 0 || (progress.unchanged || 0) > 0) {
       parts.push(`${t("common.created")}: ${progress.created || 0} · ${t("common.updated")}: ${progress.updated || 0} · ${t("common.unchanged")}: ${progress.unchanged || 0}`);
     }
     if ((progress.excluded || 0) > 0) parts.push(`${t("common.excluded")}: ${progress.excluded}`);

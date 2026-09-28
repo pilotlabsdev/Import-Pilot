@@ -420,6 +420,7 @@ export async function getQueueStatus(shopDomain: string): Promise<{
           select: {
             kind: true, status: true, progressCount: true, progressTotal: true,
             shopifyStatus: true, shopifyObjectCount: true,
+            liveCreatedCount: true, liveUpdatedCount: true, liveUnchangedCount: true,
           },
           orderBy: { index: "asc" },
         },
@@ -520,7 +521,16 @@ export async function getQueueStatus(shopDomain: string): Promise<{
       if (log) {
         const errorCount = log.errors ? (JSON.parse(log.errors) as any[]).length : 0;
         const total = bulkJob.totalCount || log.totalProducts || 0;
-        const counterDone = (bulkJob.createCount || 0) + (bulkJob.updateCount || 0) + (bulkJob.unchangedCount || 0) + (bulkJob.excludedCount || 0);
+        // Contadores en vivo: la op en processing publica su avance por heartbeat (c/25 filas o
+        // c/45s) → la cola muestra creados/actualizados reales sin esperar al finish de la op.
+        const processingOps = bulkJob.ops.filter((o: any) => o.status === "processing");
+        const liveCreated = processingOps.reduce((s: number, o: any) => s + (o.liveCreatedCount || 0), 0);
+        const liveUpdated = processingOps.reduce((s: number, o: any) => s + (o.liveUpdatedCount || 0), 0);
+        const liveUnchanged = processingOps.reduce((s: number, o: any) => s + (o.liveUnchangedCount || 0), 0);
+        const created = (bulkJob.createCount || log.created || 0) + liveCreated;
+        const updated = (bulkJob.updateCount || log.updated || 0) + liveUpdated;
+        const unchanged = (bulkJob.unchangedCount || log.unchanged || 0) + liveUnchanged;
+        const counterDone = created + updated + unchanged + (bulkJob.excludedCount || 0);
         const activeOp = bulkJob.ops?.[0] || null;
         const opFrac = activeOp && activeOp.status === "processing" && activeOp.progressTotal
           ? (activeOp.progressCount || 0) / activeOp.progressTotal
@@ -540,9 +550,13 @@ export async function getQueueStatus(shopDomain: string): Promise<{
           lastSku: log.lastSku || "",
           status: log.status,
           errors: errorCount,
-          created: bulkJob.createCount || log.created || 0,
-          updated: bulkJob.updateCount || log.updated || 0,
-          unchanged: bulkJob.unchangedCount || log.unchanged || 0,
+          created,
+          updated,
+          unchanged,
+          createdPending:
+            (bulkJob.mutationOpsDone || 0) === 0 &&
+            bulkJob.totalMutationOps > 0 &&
+            created + updated + unchanged === 0,
           excluded: bulkJob.excludedCount || log.excludedCount || 0,
           phase: bulkJob.phase,
           mutationOpsDone: bulkJob.mutationOpsDone || 0,
@@ -714,12 +728,22 @@ export async function getQueueStatus(shopDomain: string): Promise<{
       errors: errorCount,
     };
     if (bulkJob) {
+      // Mismo plegado de contadores en vivo que en Loop2 (ops processing → heartbeat)
+      const liveProcessing = (bulkJob.ops || []).filter((o: any) => o.status === "processing");
+      const liveCreated = liveProcessing.reduce((s: number, o: any) => s + (o.liveCreatedCount || 0), 0);
+      const liveUpdated = liveProcessing.reduce((s: number, o: any) => s + (o.liveUpdatedCount || 0), 0);
+      const liveUnchanged = liveProcessing.reduce((s: number, o: any) => s + (o.liveUnchangedCount || 0), 0);
       progress.phase = bulkJob.phase;
       progress.totalMutationOps = bulkJob.totalMutationOps || undefined;
       progress.mutationOpsDone = bulkJob.mutationOpsDone || undefined;
-      progress.created = bulkJob.createCount ?? undefined;
-      progress.updated = bulkJob.updateCount ?? undefined;
-      progress.unchanged = bulkJob.unchangedCount ?? undefined;
+      progress.created = bulkJob.createCount != null ? bulkJob.createCount + liveCreated : undefined;
+      progress.updated = bulkJob.updateCount != null ? bulkJob.updateCount + liveUpdated : undefined;
+      progress.unchanged = bulkJob.unchangedCount != null ? bulkJob.unchangedCount + liveUnchanged : undefined;
+      progress.createdPending =
+        (bulkJob.mutationOpsDone || 0) === 0 &&
+        (bulkJob.totalMutationOps || 0) > 0 &&
+        (bulkJob.createCount || 0) + (bulkJob.updateCount || 0) + (bulkJob.unchangedCount || 0) +
+          liveCreated + liveUpdated + liveUnchanged === 0;
       progress.excluded = bulkJob.excludedCount ?? undefined;
       progress.priceChanges = bulkJob.priceChanges ?? undefined;
       progress.stockChanges = bulkJob.stockChanges ?? undefined;
