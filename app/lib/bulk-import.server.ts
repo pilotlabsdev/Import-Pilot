@@ -67,7 +67,7 @@ export async function getFreshAdminClient(shopDomain: string) {
     throw new Error(`No session found for ${shopDomain}`);
   }
 
-  const endpoint = `https://${shopDomain}/admin/api/2026-01/graphql.json`;
+  const endpoint = `https://${shopDomain}/admin/api/2026-07/graphql.json`;
   let token = session.accessToken;
 
   async function doFetch(query: string, vars: any, accessToken: string) {
