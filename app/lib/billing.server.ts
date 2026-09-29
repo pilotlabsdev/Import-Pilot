@@ -170,6 +170,27 @@ export async function upsertSubscription(
 
   const hasUsedTrial = existing?.hasUsedTrial || (status === "trial" && trialEndsAt != null);
 
+  // PERF: si no cambió nada, no se escribe. getSubscriptionInfo se invoca en
+  // gates/loaders/colas en CADA navegación; el upsert cegado costaba 2 queries
+  // + 1 escritura por llamada (updatedAt se inflaba en cada petición, lo que
+  // además hacía eterna la gracia de cancelación del espejo).
+  if (existing) {
+    const sameTrial = (existing.trialEndsAt?.getTime() ?? null) === (trialEndsAt?.getTime() ?? null);
+    const sameSubId =
+      shopifySubscriptionId === undefined ||
+      (existing.shopifySubscriptionId ?? null) === (shopifySubscriptionId ?? null);
+    if (
+      existing.planHandle === planHandle &&
+      existing.billingType === billingType &&
+      existing.status === status &&
+      sameTrial &&
+      existing.hasUsedTrial === hasUsedTrial &&
+      sameSubId
+    ) {
+      return existing;
+    }
+  }
+
   return prisma.appSubscription.upsert({
     where: { shopDomain },
     create: {

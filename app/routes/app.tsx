@@ -7,11 +7,11 @@ import { useTranslation } from "react-i18next";
 import { useState, useEffect } from "react";
 import { useRevalidator } from "react-router";
 
-import { safeAuthenticate } from "~/shopify.server";
+import { safeAuthenticate, isDeveloperStore } from "~/shopify.server";
 import { prisma } from "~/lib/db.server";
 import { TutorialProvider, stopTutorial } from "~/components/TutorialProvider";
 import { CrispChat } from "~/components/CrispChat";
-import { requireSubscription, getSubscriptionInfo } from "~/lib/billing.server";
+import { getSubscriptionInfo, type SubscriptionInfo } from "~/lib/billing.server";
 import { ReconnectingOverlay, triggerReconnect } from "~/components/ReconnectingOverlay";
 import { AppBridgeBounce } from "~/components/AppBridgeBounce";
 import { ADMIN_ORIGIN, SHOP_COOKIE, buildAdminAppUrl, buildPlansUrl, shopFromCookieHeader, CTX_KEY } from "~/lib/admin-link";
@@ -23,6 +23,53 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
       setTimeout(() => reject(new Error(`[App Loader] Timeout ${label}: ${ms}ms`)), ms)
     ),
   ]);
+}
+
+// Contadores del NavMenu con caché corta: los auto-revalidates (20s) de cada
+// pestaña re-ejecutaban el layout completo (4 queries) y saturaban el pool de
+// la BD → las navegaciones en ráfaga subían a ~5s. TTL 25s > intervalo de
+// revalidate → las ráfagas salen de caché; los badges admiten ≤25s de retraso.
+const navCountsCache = new Map<string, { expires: number; unresolved: number; queue: number }>();
+const NAV_COUNTS_TTL_MS = 25_000;
+
+async function getNavCounts(
+  shopDomain: string,
+  hasPlan: boolean
+): Promise<{ unresolved: number; queue: number }> {
+  if (!hasPlan) return { unresolved: 0, queue: 0 };
+
+  const hit = navCountsCache.get(shopDomain);
+  if (hit && hit.expires > Date.now()) {
+    return { unresolved: hit.unresolved, queue: hit.queue };
+  }
+
+  const [unresolved, queue] = await Promise.all([
+    prisma.duplicateLog.count({ where: { shopDomain, resolved: false } }),
+    (async () => {
+      const [qItems, runningLogs, activeJobs] = await Promise.all([
+        prisma.importQueue.findMany({
+          where: { shopDomain, status: { in: ["queued", "running"] } },
+          select: { configId: true },
+        }),
+        prisma.importLog.findMany({
+          where: { shopDomain, status: "running" },
+          select: { configId: true },
+        }),
+        prisma.bulkJob.findMany({
+          where: { shopDomain, phase: { in: ["lookup", "mutations", "finalizing"] } },
+          select: { configId: true },
+        }),
+      ]);
+      const ids = new Set<string>();
+      for (const x of qItems) ids.add(x.configId);
+      for (const x of runningLogs) ids.add(x.configId);
+      for (const x of activeJobs) ids.add(x.configId);
+      return ids.size;
+    })(),
+  ]);
+
+  navCountsCache.set(shopDomain, { expires: Date.now() + NAV_COUNTS_TTL_MS, unresolved, queue });
+  return { unresolved, queue };
 }
 
 function handleNavClick(e: React.MouseEvent<HTMLAnchorElement>) {
@@ -112,10 +159,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     });
   }
 
-  // Gate a planes lo antes posible: requireSubscription se lanza EN PARALELO
+  // Gate a planes lo antes posible: getSubscriptionInfo se lanza EN PARALELO
   // con safeAuthenticate usando el shop de la URL (authenticate valida después
   // que el id_token pertenece a esa tienda; si no cuadra, auth falla y el
   // resultado especulativo se descarta). Partner API cachea 5min/15s.
+  // PERF: antes el loader hacía getSubscriptionInfo DOS veces por navegación
+  // (gate vía requireSubscription + counts) ≈6 queries extra a la BD; ahora se
+  // hace UNA y se reutiliza para hasPlan + planLabel + counts.
   const isBillingPage = url.pathname === "/app/billing";
   const isTutorialPage = url.pathname.startsWith("/app/tutorial");
   const needsPlanGate = !isBillingPage && !isTutorialPage;
@@ -125,10 +175,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       url.searchParams.has("id_token") ||
       url.searchParams.has("session_token")) &&
     /^[a-z0-9][a-z0-9_-]*\.myshopify\.com$/.test(shopParam);
-  const specSub =
+  const specInfo =
     needsPlanGate && looksLikeRealDoc
-      ? requireSubscription(shopParam).catch((err: any) => {
-          console.warn(`[App Loader] requireSubscription paralelo falló (${shopParam}): ${err?.message || err}`);
+      ? getSubscriptionInfo(shopParam).catch((err: any) => {
+          console.warn(`[App Loader] getSubscriptionInfo paralelo falló (${shopParam}): ${err?.message || err}`);
           return null;
         })
       : null;
@@ -140,15 +190,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   try {
     let hasPlan: boolean;
+    let gateSub: Promise<SubscriptionInfo> | null = null;
     if (!needsPlanGate) {
       hasPlan = true;
-    } else if (specSub) {
-      const value = await specSub;
-      hasPlan = value !== null
-        ? value
-        : await withTimeout(requireSubscription(shopDomain), 8000, "requireSubscription");
+    } else if (isDeveloperStore(shopDomain)) {
+      // Dev: bypass sin llamada de billing (el planLabel "Dev" no la necesita).
+      hasPlan = true;
     } else {
-      hasPlan = await withTimeout(requireSubscription(shopDomain), 8000, "requireSubscription");
+      const spec = specInfo && shopParam === shopDomain.toLowerCase() ? await specInfo : null;
+      const info = spec ?? (await withTimeout(getSubscriptionInfo(shopDomain), 8000, "getSubscriptionInfo"));
+      gateSub = Promise.resolve(info);
+      hasPlan = info.hasActiveSubscription;
     }
 
     // Shopify App Pricing: sin contrato → fuera de la app, a la página de
@@ -177,35 +229,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }
 
     const tl2 = Date.now();
-    const [unresolvedCount, queueCount, subscription] = await withTimeout(Promise.all([
-      hasPlan ? prisma.duplicateLog.count({
-        where: { shopDomain, resolved: false },
-      }) : Promise.resolve(0),
-      hasPlan ? (async () => {
-        const activeConfigIds = new Set<string>();
-
-        const qItems = await prisma.importQueue.findMany({
-          where: { shopDomain, status: { in: ["queued", "running"] } },
-          select: { configId: true },
-        });
-        for (const q of qItems) activeConfigIds.add(q.configId);
-
-        const runningLogs = await prisma.importLog.findMany({
-          where: { shopDomain, status: "running" },
-          select: { configId: true },
-        });
-        for (const l of runningLogs) activeConfigIds.add(l.configId);
-
-        const activeJobs = await prisma.bulkJob.findMany({
-          where: { shopDomain, phase: { in: ["lookup", "mutations", "finalizing"] } },
-          select: { configId: true },
-        });
-        for (const j of activeJobs) activeConfigIds.add(j.configId);
-
-        return activeConfigIds.size;
-      })() : Promise.resolve(0),
-      getSubscriptionInfo(shopDomain),
-    ]), 10000, "loader Promise.all");
+    const [counts, subscription] = await withTimeout(
+      Promise.all([
+        getNavCounts(shopDomain, hasPlan),
+        gateSub ?? withTimeout(getSubscriptionInfo(shopDomain), 8000, "getSubscriptionInfo"),
+      ]),
+      10000,
+      "loader Promise.all"
+    );
 
     const planLabel = subscription.isDeveloper ? "Dev" :
       subscription.isTrial ? `${subscription.planHandle} (trial)` :
@@ -219,8 +250,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     return data({
       apiKey: process.env.SHOPIFY_API_KEY || "",
       shopDomain,
-      unresolvedCount,
-      queueCount,
+      unresolvedCount: counts.unresolved,
+      queueCount: counts.queue,
       planLabel,
       hasPlan,
     }, { headers: { "Set-Cookie": shopCookie } });
