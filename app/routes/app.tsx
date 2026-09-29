@@ -58,6 +58,7 @@ function ClientOnly({ children }: { children: React.ReactNode }) {
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const tl0 = Date.now();
   const url = new URL(request.url);
 
   // URL sin parámetros `shop` (deep-link borrado, pestaña restaurada, etc.).
@@ -133,6 +134,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       : null;
 
   const { session, redirect: appRedirect } = await withTimeout(safeAuthenticate(request), 15000, "safeAuthenticate");
+  const tl1 = Date.now();
   const shopDomain = session.shop;
   const shopCookie = `${SHOP_COOKIE}=${encodeURIComponent(shopDomain)}; Path=/; Max-Age=31536000; SameSite=Lax; Secure`;
 
@@ -174,6 +176,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       throw appRedirect(plansUrl, { target: "_top" });
     }
 
+    const tl2 = Date.now();
     const [unresolvedCount, queueCount, subscription] = await withTimeout(Promise.all([
       hasPlan ? prisma.duplicateLog.count({
         where: { shopDomain, resolved: false },
@@ -207,6 +210,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const planLabel = subscription.isDeveloper ? "Dev" :
       subscription.isTrial ? `${subscription.planHandle} (trial)` :
       subscription.hasActiveSubscription ? subscription.planHandle : null;
+
+    const tl3 = Date.now();
+    console.log(
+      `[Timing] app-layout ${url.pathname}: auth=${tl1 - tl0} gate=${tl2 - tl1} counts=${tl3 - tl2} total=${tl3 - tl0}`
+    );
 
     return data({
       apiKey: process.env.SHOPIFY_API_KEY || "",

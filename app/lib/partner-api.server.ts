@@ -176,17 +176,23 @@ export async function fetchActiveSubscription(
     if (hit && hit.expires > now) return hit.result;
   }
 
+  const t0 = Date.now();
   const gids = await resolveGids(shopDomain);
   if (!gids) {
+    console.log(`[Timing] partner miss ${shopDomain}: gids=null total=${Date.now() - t0}`);
     const result: PartnerSubResult = { ok: false, error: "sin GIDs (sesión/instalación no disponible)" };
     subCache.set(shopDomain, { expires: now + NEGATIVE_TTL_MS, result });
     return result;
   }
+  const t1 = Date.now();
 
   const res = await partnerFetch(ACTIVE_SUBSCRIPTION_QUERY, {
     appId: gids.appGid,
     shopId: gids.shopGid,
   });
+  console.log(
+    `[Timing] partner miss ${shopDomain}: gids=${t1 - t0} fetch=${Date.now() - t1} total=${Date.now() - t0} ok=${res.ok}${res.ok ? "" : " err=" + res.error}`
+  );
 
   let result: PartnerSubResult;
   if (!res.ok) {

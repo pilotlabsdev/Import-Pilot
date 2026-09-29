@@ -36,10 +36,13 @@ const FREQUENCY_LABELS: Record<string, string> = {
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const t0 = Date.now();
   const { session } = await safeAuthenticate(request);
+  const t1 = Date.now();
   const shopDomain = session.shop;
 
   await enforcePlanLimits(shopDomain);
+  const t2 = Date.now();
 
   const configs = await prisma.importConfig.findMany({
     where: { shopDomain },
@@ -49,6 +52,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     },
     orderBy: { createdAt: "asc" },
   });
+  const t3 = Date.now();
 
   const suppliers = configs.map((c) => ({
     id: c.id,
@@ -68,6 +72,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     getSubscriptionInfo(shopDomain),
     canAddSupplier(shopDomain),
   ]);
+  const t4 = Date.now();
+  console.log(
+    `[Timing] dashboard ${shopDomain}: auth=${t1 - t0} enforce=${t2 - t1} configs=${t3 - t2} subs=${t4 - t3} total=${t4 - t0}`
+  );
 
   return data({ suppliers, subscription, canAdd });
 };

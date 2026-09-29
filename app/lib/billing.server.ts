@@ -204,13 +204,16 @@ export function calculateCarryoverTrialDays(subscription: SubscriptionInfo): num
 }
 
 export async function enforcePlanLimits(shopDomain: string) {
+  const te0 = Date.now();
   const subscription = await getSubscriptionInfo(shopDomain);
+  const te1 = Date.now();
   const limit = subscription.supplierLimit;
 
   const configs = await prisma.importConfig.findMany({
     where: { shopDomain },
     orderBy: { createdAt: "asc" },
   });
+  const te2 = Date.now();
 
   const allNonPaused = configs.filter((c) => !c.planPaused);
   const excessConfigs = allNonPaused.slice(limit);
@@ -243,6 +246,9 @@ export async function enforcePlanLimits(shopDomain: string) {
       console.log(`[Billing] ${shopDomain}: ${toResume.length} proveedor(es) reactivado(s)`);
     }
   }
+  console.log(
+    `[Timing] enforce ${shopDomain}: sub=${te1 - te0} find1=${te2 - te1} total=${Date.now() - te0}`
+  );
 }
 
 export async function requireSubscription(shopDomain: string): Promise<boolean> {
