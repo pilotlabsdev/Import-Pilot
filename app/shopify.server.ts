@@ -5,7 +5,7 @@ import {
   DeliveryMethod,
   shopifyApp,
 } from "@shopify/shopify-app-react-router/server";
-import type { BillingConfigRecurringLineItem } from "@shopify/shopify-api";
+import { shopifyApi, type BillingConfigRecurringLineItem } from "@shopify/shopify-api";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import { redirect } from "react-router";
 import { prisma } from "~/lib/db.server";
@@ -62,13 +62,28 @@ export function isDeveloperStore(shopDomain: string): boolean {
   return stores.includes(shopDomain);
 }
 
-const shopify = shopifyApp({
+// Config API compartida. shopifyApp() NO expone .utils/.api en su objeto
+// retornado, así que se crea además una instancia OFICIAL de
+// @shopify/shopify-api con la misma config para usar utils.sanitizeShop y
+// utils.sanitizeHost (validación de parámetros shop/host en safeAuthenticate).
+// Esa instancia SOLO se usa para eso: auth/webhooks van por shopifyApp().
+const SHOPIFY_API_CONFIG = {
   apiKey: process.env.SHOPIFY_API_KEY!,
   apiSecretKey: process.env.SHOPIFY_API_SECRET!,
   scopes: process.env.SCOPES?.split(",") ?? [],
   appUrl: process.env.SHOPIFY_APP_URL!,
-  distribution: AppDistribution.AppStore,
   apiVersion: ApiVersion.July26,
+};
+
+const shopifyCore = shopifyApi({
+  ...SHOPIFY_API_CONFIG,
+  hostName: new URL(SHOPIFY_API_CONFIG.appUrl).host,
+  isEmbeddedApp: true,
+});
+
+const shopify = shopifyApp({
+  ...SHOPIFY_API_CONFIG,
+  distribution: AppDistribution.AppStore,
   sessionStorage: new PrismaSessionStorage(prisma),
   billing: BILLING_PLANS,
   future: {
@@ -180,18 +195,39 @@ export const addDocumentResponseHeaders = shopify.addDocumentResponseHeaders;
  */
 export async function safeAuthenticate(request: Request) {
   try {
-    // Pre-validación del parámetro shop: la librería lanza Response 500 para
-    // shops garbleados (fuzzing de revisión/scanners) en validateShopAndHostParams.
-    const rawShop = new URL(request.url).searchParams.get("shop");
-    if (rawShop) {
-      const clean = rawShop.replace(/^https?:\/\//, "").replace(/\/+$/, "").toLowerCase();
-      if (!/^[a-z0-9][a-z0-9_-]*\.myshopify\.com$/.test(clean)) {
+    // Pre-validación con los helpers OFICIALES utils.sanitizeShop/sanitizeHost
+    // (solo se llaman si el parámetro está presente). Sin ella, shops/hosts de
+    // fuzzing de revisión provocan HTML App Bridge inútil o TypeError
+    // (ERR_INVALID_URL) en sanitizeHost que React Router responde como 500.
+    const params = new URL(request.url).searchParams;
+    const rawShop = params.get("shop");
+    if (rawShop !== null) {
+      const cleanShop = shopifyCore.utils.sanitizeShop(rawShop);
+      if (!cleanShop) {
         console.warn(`[Auth] shop inválido descartado: ${rawShop.slice(0, 80)}`);
         throw new Response("Invalid shop parameter", { status: 400 });
       }
     }
+    const rawHost = params.get("host");
+    if (rawHost !== null) {
+      let cleanHost: string | null = null;
+      try {
+        cleanHost = shopifyCore.utils.sanitizeHost(rawHost);
+      } catch {
+        cleanHost = null;
+      }
+      if (!cleanHost) {
+        console.warn(`[Auth] host inválido descartado`);
+        throw new Response("Invalid host parameter", { status: 400 });
+      }
+    }
     return await authenticate.admin(request);
   } catch (res: any) {
+    // Fallback: cualquier TypeError de URL interna de la librería → 400.
+    if (!(res instanceof Response) && (res?.code === "ERR_INVALID_URL" || res instanceof TypeError)) {
+      console.warn(`[Auth] parámetros inválidos: ${String(res?.message || res).slice(0, 120)}`);
+      throw new Response("Invalid request parameters", { status: 400 });
+    }
     if (res instanceof Response) {
       // Follow any redirect (302/307 OAuth redirects, 401 session expiry, etc.)
       const location = res.headers.get("Location");
