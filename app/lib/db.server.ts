@@ -2,70 +2,37 @@ import { PrismaClient } from "@prisma/client";
 
 declare global {
   var prisma: PrismaClient | undefined;
-  var __dbDiagRan: boolean | undefined;
 }
+
+// Red interna de Railway (postgres.railway.internal) en vez del TCP proxy
+// público (switchback.proxy.rlwy.net): handshake TLS 373-649ms + ráfagas de
+// ~700ms/query en la ruta pública vs [48,1,2]ms medidos en la interna.
+// Mismo constructo que la sonda [DBDiag] verificó en producción (sin
+// pgbouncer=true: es Postgres directo, el pool lo hace Prisma).
+// Si DATABASE_UNPOOLED_URL no existiera, Prisma cae a DATABASE_URL (pública).
+function buildDataSourceUrl(): string | undefined {
+  const raw = process.env.DATABASE_UNPOOLED_URL;
+  if (!raw) return undefined;
+  try {
+    const u = new URL(raw);
+    if (!u.searchParams.has("connection_limit")) u.searchParams.set("connection_limit", "40");
+    if (!u.searchParams.has("pool_timeout")) u.searchParams.set("pool_timeout", "60");
+    if (!u.searchParams.has("connect_timeout")) u.searchParams.set("connect_timeout", "10");
+    return u.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+const internalUrl = buildDataSourceUrl();
 
 const prisma = global.prisma || new PrismaClient({
   log: ["error", "warn"],
+  ...(internalUrl ? { datasourceUrl: internalUrl } : {}),
 });
 
 if (process.env.NODE_ENV !== "production") {
   global.prisma = prisma;
-}
-
-// TEMPORAL (diagnóstico latencia BD): una vez por proceso, compara la latencia
-// de la ruta pública actual (DATABASE_URL → proxy TCP switchback) contra la red
-// interna (DATABASE_UNPOOLED_URL → postgres.railway.internal). Solo lectura,
-// fire-and-forget, no bloquea el arranque. Se elimina tras evaluar el switch.
-if (!globalThis.__dbDiagRan) {
-  globalThis.__dbDiagRan = true;
-  void (async () => {
-    const runTimes = async (client: PrismaClient, n: number): Promise<number[]> => {
-      const out: number[] = [];
-      for (let i = 0; i < n; i++) {
-        const t0 = Date.now();
-        await client.$queryRaw`SELECT 1`;
-        out.push(Date.now() - t0);
-      }
-      return out;
-    };
-    const err = (e: unknown) => (e instanceof Error ? e.message : String(e));
-
-    let pub = "?";
-    try {
-      pub = JSON.stringify(await runTimes(prisma, 3)) + "ms";
-    } catch (e) {
-      pub = "err: " + err(e);
-    }
-
-    let internal = "?";
-    const internalUrl = process.env.DATABASE_UNPOOLED_URL;
-    if (!internalUrl) {
-      internal = "sin DATABASE_UNPOOLED_URL";
-    } else {
-      const u = new URL(internalUrl);
-      u.searchParams.set("connection_limit", "40");
-      u.searchParams.set("pool_timeout", "60");
-      u.searchParams.set("connect_timeout", "10");
-      const diag = new PrismaClient({ datasourceUrl: u.toString(), log: [] });
-      try {
-        internal = JSON.stringify(
-          await Promise.race([
-            runTimes(diag, 3),
-            new Promise<number[]>((_, reject) =>
-              setTimeout(() => reject(new Error("timeout 10s")), 10000)
-            ),
-          ])
-        ) + "ms";
-      } catch (e) {
-        internal = "err: " + err(e);
-      } finally {
-        await diag.$disconnect().catch(() => {});
-      }
-    }
-
-    console.log(`[DBDiag] publico=${pub} interno=${internal}`);
-  })();
 }
 
 export { prisma };
