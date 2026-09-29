@@ -52,13 +52,44 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     throw new Response(null, { status: 200 });
   }
 
+  // APP_UNINSTALLED: con expiringOfflineAccessTokens el token ya puede estar
+  // revocado cuando llega la entrega → ensureValidOfflineSession de la librería
+  // falla con 500 y la limpieza NUNCA se ejecutaba (Shopify reintentaba en
+  // bucle). Se valida HMAC a mano (mismo helper) y se limpia SIN sesión.
+  if (topicHeader.toLowerCase() === "app/uninstalled") {
+    const rawBody = await request.text();
+    if (!verifyHmac(rawBody, hmacHeader)) {
+      console.warn(`[Webhook] app/uninstalled HMAC inválido — descartado`);
+      throw new Response(null, { status: 401 });
+    }
+    const payload = JSON.parse(rawBody);
+    const shop =
+      payload.shop_domain ||
+      request.headers.get("X-Shopify-Shop-Domain") ||
+      "";
+    if (shop) {
+      await prisma.shopSettings.upsert({
+        where: { shopDomain: shop },
+        update: { active: false, uninstalledAt: new Date() },
+        create: { shopDomain: shop, active: false, uninstalledAt: new Date() },
+      });
+      await prisma.session.deleteMany({ where: { shop } });
+      await prisma.importQueue.updateMany({
+        where: { shopDomain: shop, status: { in: ["queued", "running"] } },
+        data: { status: "cancelled", finishedAt: new Date() },
+      });
+      console.log(`[Webhook] APP_UNINSTALLED: ${shop} marcado como inactivo, sesiones y cola eliminadas`);
+    }
+    throw new Response(null, { status: 200 });
+  }
+
   // All other webhooks: use library authentication (validates HMAC + finds session)
   let topic = topicHeader, shop = "", session: any, payload: any;
   try {
     ({ topic, shop, session, payload } = await authenticate.webhook(request));
   } catch (err: any) {
     const detail = err instanceof Response ? `HTTP ${err.status}` : err?.message || String(err);
-    console.warn(`[Webhook] HMAC validation failed (topic=${topicHeader || "?"}, shop=${shop || "?"}): ${detail}`);
+    console.warn(`[Webhook] validación/auth fallida (topic=${topicHeader || "?"}, ${detail})`);
     throw new Response(null, { status: 401 });
   }
   // Only log important webhooks (skip high-frequency PRODUCTS_UPDATE/INVENTORY webhooks to prevent Railway rate limit)

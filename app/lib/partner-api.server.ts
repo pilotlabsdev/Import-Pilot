@@ -8,6 +8,7 @@
 // (Partner Dashboard → Settings → Partner API clients; permisos:
 //  View financials + Manage apps.)
 import shopify from "~/shopify.server";
+import { prisma } from "~/lib/db.server";
 
 const PARTNER_API_VERSION = "2026-07";
 
@@ -101,6 +102,16 @@ async function partnerFetch(
 async function getShopGid(shopDomain: string): Promise<string | null> {
   const cached = shopGidCache.get(shopDomain);
   if (cached) return cached;
+  // Sin sesión local no hay con qué llamar a la Admin API (probes/cross-shop
+  // de la revisión) — se omite sin generar excepción ni warn.
+  const hasSession = await prisma.session.findFirst({
+    where: { shop: shopDomain },
+    select: { id: true },
+  });
+  if (!hasSession) {
+    console.log(`[PartnerAPI] getShopGid sin sesión local para ${shopDomain} — se omite (probable probe)`);
+    return null;
+  }
   try {
     const { admin } = await shopify.unauthenticated.admin(shopDomain);
     // admin.graphql() de shopify-app-react-router devuelve un Response

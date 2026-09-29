@@ -180,6 +180,16 @@ export const addDocumentResponseHeaders = shopify.addDocumentResponseHeaders;
  */
 export async function safeAuthenticate(request: Request) {
   try {
+    // Pre-validación del parámetro shop: la librería lanza Response 500 para
+    // shops garbleados (fuzzing de revisión/scanners) en validateShopAndHostParams.
+    const rawShop = new URL(request.url).searchParams.get("shop");
+    if (rawShop) {
+      const clean = rawShop.replace(/^https?:\/\//, "").replace(/\/+$/, "").toLowerCase();
+      if (!/^[a-z0-9][a-z0-9_-]*\.myshopify\.com$/.test(clean)) {
+        console.warn(`[Auth] shop inválido descartado: ${rawShop.slice(0, 80)}`);
+        throw new Response("Invalid shop parameter", { status: 400 });
+      }
+    }
     return await authenticate.admin(request);
   } catch (res: any) {
     if (res instanceof Response) {
