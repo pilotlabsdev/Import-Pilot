@@ -128,7 +128,8 @@ export async function getSubscriptionInfo(
       isTrial ? "trial" : "active",
       isTrial ? sub.trialEndsAt! : undefined,
       billingType,
-      sub.legacySubscriptionId || undefined
+      sub.legacySubscriptionId || undefined,
+      row
     );
     return infoFromRow(mirrored, false);
   }
@@ -162,11 +163,17 @@ export async function upsertSubscription(
   status: string = "active",
   trialEndsAt?: Date,
   billingType: string = "monthly",
-  shopifySubscriptionId?: string
+  shopifySubscriptionId?: string,
+  // Si el llamante YA tiene la fila (getSubscriptionInfo la consulta justo
+  // antes), se reutiliza: ahorra 1 query por llamada (~700ms con la latencia
+  // actual del proxy de BD).
+  prefetchedRow?: { id: string; planHandle: string; billingType: string; status: string; trialEndsAt: Date | null; hasUsedTrial: boolean; shopifySubscriptionId: string | null } | null
 ) {
-  const existing = await prisma.appSubscription.findUnique({
-    where: { shopDomain },
-  });
+  const existing = prefetchedRow !== undefined
+    ? prefetchedRow
+    : await prisma.appSubscription.findUnique({
+        where: { shopDomain },
+      });
 
   const hasUsedTrial = existing?.hasUsedTrial || (status === "trial" && trialEndsAt != null);
 

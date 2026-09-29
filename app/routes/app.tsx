@@ -108,13 +108,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const tl0 = Date.now();
   const url = new URL(request.url);
 
-  // TEMPORAL (diagnóstico auth≈820ms): sonda de latencia BD aislada.
-  const tdProbe = Date.now();
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-  } catch {}
-  console.log(`[Timing] dbprobe: ${Date.now() - tdProbe}ms`);
-
   // URL sin parámetros `shop` (deep-link borrado, pestaña restaurada, etc.).
   // SOLO se redirige un documento top-level de verdad — las peticiones .data de
   // navegación SPA tampoco llevan `shop` (los params viven en el documento
