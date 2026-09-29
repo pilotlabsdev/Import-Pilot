@@ -103,8 +103,15 @@ async function getShopGid(shopDomain: string): Promise<string | null> {
   if (cached) return cached;
   try {
     const { admin } = await shopify.unauthenticated.admin(shopDomain);
-    const res: any = await admin.graphql(`query { shop { id } }`);
-    const gid = res?.data?.shop?.id;
+    // admin.graphql() de shopify-app-react-router devuelve un Response
+    // (new Response(JSON.stringify(body))) — hay que hacer .json().
+    const res = await admin.graphql(`query { shop { id } }`);
+    const json: any = await res.json();
+    if (Array.isArray(json?.errors) && json.errors.length > 0) {
+      console.warn(`[PartnerAPI] getShopGid errores GraphQL (${shopDomain}): ${JSON.stringify(json.errors).slice(0, 300)}`);
+      return null;
+    }
+    const gid = json?.data?.shop?.id;
     if (typeof gid === "string" && gid) {
       shopGidCache.set(shopDomain, gid);
       return gid;
@@ -119,8 +126,13 @@ async function getShopGid(shopDomain: string): Promise<string | null> {
 async function getAppGid(admin: any): Promise<string | null> {
   if (appGidCache) return appGidCache;
   try {
-    const res: any = await admin.graphql(`query { currentAppInstallation { app { id } } }`);
-    const gid = res?.data?.currentAppInstallation?.app?.id;
+    const res = await admin.graphql(`query { currentAppInstallation { app { id } } }`);
+    const json: any = await res.json();
+    if (Array.isArray(json?.errors) && json.errors.length > 0) {
+      console.warn(`[PartnerAPI] getAppGid errores GraphQL: ${JSON.stringify(json.errors).slice(0, 300)}`);
+      return null;
+    }
+    const gid = json?.data?.currentAppInstallation?.app?.id;
     if (typeof gid === "string" && gid) {
       appGidCache = gid;
       return gid;
