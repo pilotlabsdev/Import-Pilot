@@ -32,10 +32,33 @@ async function fetchAsLocalUrl(filePath: string): Promise<string> {
     ".csv": "text/csv",
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".xls": "application/vnd.ms-excel",
-    ".ods": "application/vnd.oasis.opendocument.spreadsheet",
+    ".ods": "application/vnd.oasis.opendocument.spreadsheetml.sheet",
   };
   const blob = new Blob([content], { type: mimeTypes[ext] || "text/csv" });
   return URL.createObjectURL(blob);
+}
+
+// Timeout SOLO para la fase de conexión/primeiros bytes (TTFB). El timer se
+// cancela en cuanto fetch() resuelve, así el streaming del cuerpo (imports
+// bulk/chunks) queda intacto — este fusible solo evita esperar 5min (default
+// de undici) a un servidor del feed que no responde.
+const TTFB_TIMEOUT_MS = 30_000;
+
+async function fetchWithTtfbTimeout(url: string): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TTFB_TIMEOUT_MS);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function toFriendlyError(error: any): Error {
+  if (error?.name === "AbortError") {
+    return new Error(`El servidor del feed no respondió tras ${TTFB_TIMEOUT_MS / 1000}s`);
+  }
+  return error;
 }
 
 export function parseCSVLine(line: string, delimiter: string = "|"): string[] {
@@ -119,7 +142,7 @@ export async function* streamCSV(
   let lastError: Error | null = null;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      const response = await fetch(url);
+      const response = await fetchWithTtfbTimeout(url);
       if (!response.ok) {
         throw new Error(`Error descargando CSV: ${response.status} ${response.statusText}`);
       }
@@ -230,7 +253,7 @@ export async function* streamCSV(
 
       return; // Success, exit retry loop
     } catch (error: any) {
-      lastError = error;
+      lastError = toFriendlyError(error);
       if (attempt < maxRetries) {
         const wait = attempt * 2000;
         await new Promise((r) => setTimeout(r, wait));
@@ -372,7 +395,7 @@ export async function* streamExcel(
   let lastError: Error | null = null;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      const response = await fetch(url);
+      const response = await fetchWithTtfbTimeout(url);
       if (!response.ok) {
         throw new Error(`Error descargando Excel: ${response.status} ${response.statusText}`);
       }
@@ -441,7 +464,7 @@ export async function* streamExcel(
 
       return;
     } catch (error: any) {
-      lastError = error;
+      lastError = toFriendlyError(error);
       if (attempt < maxRetries) {
         const wait = attempt * 2000;
         await new Promise((r) => setTimeout(r, wait));

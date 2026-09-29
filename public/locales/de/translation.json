@@ -234,6 +234,7 @@
   "columns.loadingHeaders": "Dateiheader werden geladen...",
   "columns.headersError": "Dateiheader konnte nicht gelesen werden",
   "columns.headersFallback": "Bekannte Spalten werden angezeigt, aber überprüfen Sie die URL in den Importeinstellungen.",
+  "columns.retry": "Erneut versuchen",
   "columns.detectedColumns": "Erkannte Dateispalten:",
   "columns.headersInfo": "Die Spalten werden aus der Datei in Echtzeit gelesen; wenn der Lieferant die Kopfzeile ändert, wird die Zuordnung beim Neuladen der Seite aktualisiert.",
   "columns.columnFile": "Dateispalte",

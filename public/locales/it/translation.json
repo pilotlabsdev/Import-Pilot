@@ -234,6 +234,7 @@
   "columns.loadingHeaders": "Caricamento intestazioni del file...",
   "columns.headersError": "Impossibile leggere l'intestazione del file",
   "columns.headersFallback": "Vengono mostrate le colonne note, ma verifica l'URL in \"Configurazione Importazione\".",
+  "columns.retry": "Riprova",
   "columns.detectedColumns": "Colonne rilevate dal file:",
   "columns.headersInfo": "Le colonne vengono lette dal file in tempo reale; se il fornitore cambia l'intestazione, la mappatura verrà aggiornata al ricaricamento della pagina.",
   "columns.columnFile": "Colonna del file",

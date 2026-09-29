@@ -234,6 +234,7 @@
   "columns.loadingHeaders": "Chargement des en-têtes du fichier...",
   "columns.headersError": "Impossible de lire l'en-tête du fichier",
   "columns.headersFallback": "Les colonnes connues sont affichées, mais vérifiez l'URL dans « Configuration d'import ».",
+  "columns.retry": "Réessayer",
   "columns.detectedColumns": "Colonnes détectées dans le fichier :",
   "columns.headersInfo": "Les colonnes sont lues en temps réel depuis le fichier ; si le fournisseur modifie l'en-tête, le mappage sera mis à jour au rechargement de la page.",
   "columns.columnFile": "Colonne du fichier",

@@ -234,6 +234,7 @@
   "columns.loadingHeaders": "Carregando cabeçalhos do arquivo...",
   "columns.headersError": "Não foi possível ler o cabeçalho do arquivo",
   "columns.headersFallback": "As colunas conhecidas são exibidas, mas verifique a URL em \"Configurações de Importação\".",
+  "columns.retry": "Tentar novamente",
   "columns.detectedColumns": "Colunas detectadas do arquivo:",
   "columns.headersInfo": "As colunas são lidas do arquivo em tempo real; se o fornecedor alterar o cabeçalho, o mapeamento será atualizado ao recarregar a página.",
   "columns.columnFile": "Coluna do arquivo",

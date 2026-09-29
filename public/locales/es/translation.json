@@ -244,6 +244,7 @@
   "columns.loadingHeaders": "Cargando cabeceras del archivo...",
   "columns.headersError": "No se pudo leer la cabecera del archivo",
   "columns.headersFallback": "Se muestran las columnas conocidas, pero verifica la URL en \"Configuración de Importación\".",
+  "columns.retry": "Reintentar",
   "columns.detectedColumns": "Columnas detectadas del archivo:",
   "columns.headersInfo": "Las columnas se leen del archivo en tiempo real; si el proveedor cambia la cabecera, el mapeo se actualizará al recargar la página.",
   "columns.columnFile": "Columna del archivo",

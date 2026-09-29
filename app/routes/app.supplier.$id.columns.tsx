@@ -1,8 +1,8 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
 import { data } from "react-router";
 
-import { useLoaderData, useActionData, Form } from "react-router";
-import { useState, useEffect } from "react";
+import { useLoaderData, useActionData, Form, useFetcher, useRevalidator } from "react-router";
+import { useState, useEffect, useRef } from "react";
 import {
   Banner,
   BlockStack,
@@ -17,7 +17,6 @@ import {
 import { prisma, getConfigById, getEffectiveUrl, getSourceKey } from "~/lib/db.server";
 import { resolveFileUrl } from "~/lib/storage.server";
 import { safeAuthenticate } from "~/shopify.server";
-import { fetchCSVHeaders } from "~/lib/csv-parser.server";
 import { getCachedHeaders } from "~/lib/csv-cache.server";
 import { useTranslation } from "react-i18next";
 
@@ -31,18 +30,40 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
   const sourceKey = getSourceKey(config);
 
-  let mappings = await prisma.columnMapping.findMany({
+  const mappings = await prisma.columnMapping.findMany({
     where: { configId: config.id, sourceKey },
   });
 
-  if (mappings.length === 0) {
+  return data({ mappings, shopDomain, csvUrl: getEffectiveUrl(config), configId: config.id });
+};
+
+export const action = async ({ request, params }: ActionFunctionArgs) => {
+  const { session } = await safeAuthenticate(request);
+  const shopDomain = session.shop;
+  const configId = params.id as string;
+
+  const formData = await request.formData();
+
+  const config = await getConfigById(configId);
+  if (!config || config.shopDomain !== shopDomain) throw new Response("Not found", { status: 404 });
+
+  const sourceKey = getSourceKey(config);
+
+  // Bootstrap de mappings por defecto desde el cliente (tras cargar cabeceras)
+  // para que la navegación a esta página nunca dependa de descargar el CSV.
+  if (formData.get("intent") === "bootstrap") {
+    const existing = await prisma.columnMapping.findMany({
+      where: { configId: config.id, sourceKey },
+    });
+    if (existing.length > 0) return data({ bootstrapped: true, existing: true });
+
     let csvHeaders: string[] = [];
     try {
       const url = getEffectiveUrl(config);
       if (url) csvHeaders = await getCachedHeaders(config.id, await resolveFileUrl(url), config.csvDelimiter || "auto");
     } catch {}
-    const headerSet = new Set(csvHeaders);
 
+    const headerSet = new Set(csvHeaders);
     const defaults = SHOP_FIELDS.map((f) => ({
       configId: config.id,
       shopDomain,
@@ -60,23 +81,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       }).catch(() => {});
     }
 
-    mappings = await prisma.columnMapping.findMany({ where: { configId: config.id, sourceKey } });
+    return data({ bootstrapped: true });
   }
-
-  return data({ mappings, shopDomain, csvUrl: getEffectiveUrl(config), configId: config.id });
-};
-
-export const action = async ({ request, params }: ActionFunctionArgs) => {
-  const { session } = await safeAuthenticate(request);
-  const shopDomain = session.shop;
-  const configId = params.id as string;
-
-  const formData = await request.formData();
-
-  const config = await getConfigById(configId);
-  if (!config || config.shopDomain !== shopDomain) throw new Response("Not found", { status: 404 });
-
-  const sourceKey = getSourceKey(config);
 
   const updates: Array<{ shopifyField: string; csvColumn: string | null; defaultValue: string | null }> = [];
 
@@ -122,21 +128,27 @@ export default function Columns() {
   const { mappings, shopDomain, csvUrl, configId } =
     useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>() as { error?: string; success?: boolean } | undefined;
+  const fetcher = useFetcher();
+  const revalidator = useRevalidator();
 
   const [csvColumns, setCsvColumns] = useState<string[]>([]);
   const [headerError, setHeaderError] = useState<string | null>(null);
   const [loadingHeaders, setLoadingHeaders] = useState(!!csvUrl);
+  const [headersNonce, setHeadersNonce] = useState(0);
 
   useEffect(() => {
     if (!csvUrl) {
       setLoadingHeaders(false);
       return;
     }
+    let cancelled = false;
     const loadHeaders = async () => {
+      setLoadingHeaders(true);
       try {
         const params = new URLSearchParams({ shop: shopDomain, configId, type: "headers" });
         const res = await fetch(`/api/csv-options?${params}`);
         const d = await res.json();
+        if (cancelled) return;
         if (d.headers?.length > 0) {
           setCsvColumns(d.headers);
           setHeaderError(null);
@@ -144,13 +156,21 @@ export default function Columns() {
           setHeaderError(d.error);
         }
       } catch (e: any) {
-        setHeaderError(e.message);
+        if (!cancelled) setHeaderError(e.message);
       } finally {
-        setLoadingHeaders(false);
+        if (!cancelled) setLoadingHeaders(false);
       }
     };
     loadHeaders();
-  }, [shopDomain, configId, csvUrl]);
+    return () => {
+      cancelled = true;
+    };
+  }, [shopDomain, configId, csvUrl, headersNonce]);
+
+  const retryHeaders = () => {
+    setHeaderError(null);
+    setHeadersNonce((n) => n + 1);
+  };
 
   const [csvCols, setCsvCols] = useState<Record<string, string>>(() => {
     const map: Record<string, string> = {};
@@ -162,6 +182,40 @@ export default function Columns() {
     for (const m of mappings) map[m.shopifyField] = m.defaultValue || "";
     return map;
   });
+
+  // Mappings creados por bootstrap (intent=bootstrap) llegan DESPUÉS del mount:
+  // se hidratan una sola vez cuando pasan de vacíos a existentes.
+  const didHydrate = useRef(mappings.length > 0);
+  useEffect(() => {
+    if (didHydrate.current || mappings.length === 0) return;
+    didHydrate.current = true;
+    const cm: Record<string, string> = {};
+    const dm: Record<string, string> = {};
+    for (const m of mappings) {
+      cm[m.shopifyField] = (m.csvColumn || "").toLowerCase();
+      dm[m.shopifyField] = m.defaultValue || "";
+    }
+    setCsvCols(cm);
+    setDefaults(dm);
+  }, [mappings]);
+
+  // Con cabeceras cargadas y mappings todavía vacíos, crea los mappings por
+  // defecto en el servidor (reutiliza los headers ya cacheados → instantáneo).
+  const bootstrapRef = useRef(false);
+  useEffect(() => {
+    if (bootstrapRef.current) return;
+    if (mappings.length === 0 && csvColumns.length > 0) {
+      bootstrapRef.current = true;
+      fetcher.submit({ intent: "bootstrap" }, { method: "post" });
+    }
+  }, [mappings, csvColumns, fetcher]);
+
+  // Si el fetcher terminó pero los mappings aún no llegaron en el loader,
+  // fuerza la revalidación para hidratar los selects con los defaults creados.
+  const bootstrapDone = Boolean((fetcher.data as any)?.bootstrapped);
+  useEffect(() => {
+    if (bootstrapDone && mappings.length === 0) revalidator.revalidate();
+  }, [bootstrapDone, mappings.length, revalidator]);
 
   useEffect(() => {
     if (csvColumns.length === 0) return;
@@ -200,7 +254,16 @@ export default function Columns() {
         <Banner tone="info">{t("columns.loadingHeaders")}</Banner>
       ) : headerError ? (
         <Banner tone="warning" title={t("columns.headersError")}>
-          {headerError}. {t("columns.headersFallback")}
+          <BlockStack gap="200">
+            <span>
+              {headerError}. {t("columns.headersFallback")}
+            </span>
+            <div>
+              <Button onClick={retryHeaders} disabled={loadingHeaders}>
+                {t("columns.retry")}
+              </Button>
+            </div>
+          </BlockStack>
         </Banner>
       ) : (
         <Banner tone="info">

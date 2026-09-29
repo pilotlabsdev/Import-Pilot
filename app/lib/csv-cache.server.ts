@@ -44,6 +44,22 @@ function evictOldest(): void {
   if (oldestKey) cache.delete(oldestKey);
 }
 
+// Dedup in-flight: peticiones concurrentes para la misma clave comparten un
+// único stream (evita descargar el feed N veces si el usuario hace clic varias
+// veces antes de que responda). Si la promesa falla, se elimina para que el
+// siguiente intento relance la descarga (sin envenenar la caché).
+const inflight = new Map<string, Promise<unknown>>();
+
+function dedupe<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const running = inflight.get(key);
+  if (running) return running as Promise<T>;
+  const p = fn().finally(() => {
+    inflight.delete(key);
+  });
+  inflight.set(key, p);
+  return p;
+}
+
 export async function getFileModTime(url: string): Promise<string> {
   try {
     if (url.startsWith("/") || url.match(/^[A-Z]:\\/i)) {
@@ -79,22 +95,24 @@ export async function getCachedCategories(
   const cached = cache.get(key);
   if (cached && !isExpired(cached)) return cached.categories;
 
-  const categories = new Set<string>();
-  for await (const { row } of streamFile(url, delimiter)) {
-    const val = (row[columnName] || "").trim();
-    if (val) categories.add(val);
-  }
-  const result = [...categories].sort();
+  return dedupe(key, async () => {
+    const categories = new Set<string>();
+    for await (const { row } of streamFile(url, delimiter)) {
+      const val = (row[columnName] || "").trim();
+      if (val) categories.add(val);
+    }
+    const result = [...categories].sort();
 
-  evictOldest();
-  const existing = cache.get(key);
-  cache.set(key, {
-    ...(existing || { brands: [], skus: [], headers: [], totalRows: 0, createdAt: Date.now() }),
-    categories: result,
-    createdAt: Date.now(),
+    evictOldest();
+    const existing = cache.get(key);
+    cache.set(key, {
+      ...(existing || { brands: [], skus: [], headers: [], totalRows: 0, createdAt: Date.now() }),
+      categories: result,
+      createdAt: Date.now(),
+    });
+
+    return result;
   });
-
-  return result;
 }
 
 export async function getCachedBrands(
@@ -109,22 +127,24 @@ export async function getCachedBrands(
   const cached = cache.get(key);
   if (cached && !isExpired(cached)) return cached.brands;
 
-  const brands = new Set<string>();
-  for await (const { row } of streamFile(url, delimiter)) {
-    const val = (row[columnName] || "").trim();
-    if (val) brands.add(val);
-  }
-  const result = [...brands].sort();
+  return dedupe(key, async () => {
+    const brands = new Set<string>();
+    for await (const { row } of streamFile(url, delimiter)) {
+      const val = (row[columnName] || "").trim();
+      if (val) brands.add(val);
+    }
+    const result = [...brands].sort();
 
-  evictOldest();
-  const existing = cache.get(key);
-  cache.set(key, {
-    ...(existing || { categories: [], skus: [], headers: [], totalRows: 0, createdAt: Date.now() }),
-    brands: result,
-    createdAt: Date.now(),
+    evictOldest();
+    const existing = cache.get(key);
+    cache.set(key, {
+      ...(existing || { categories: [], skus: [], headers: [], totalRows: 0, createdAt: Date.now() }),
+      brands: result,
+      createdAt: Date.now(),
+    });
+
+    return result;
   });
-
-  return result;
 }
 
 export async function getCachedSkus(
@@ -155,54 +175,58 @@ export async function getCachedSkus(
   let validEanCol = eanColumn || "ean";
   let headersValidated = false;
 
-  for await (const { headers, row } of streamFile(url, delimiter)) {
-    if (!headersValidated) {
-      headersValidated = true;
-      if (!headers.includes(validSkuCol)) {
-        validSkuCol = headers.find((h) => h === "sku") || headers[0] || "sku";
+  const full = await dedupe(key, async () => {
+    for await (const { headers, row } of streamFile(url, delimiter)) {
+      if (!headersValidated) {
+        headersValidated = true;
+        if (!headers.includes(validSkuCol)) {
+          validSkuCol = headers.find((h) => h === "sku") || headers[0] || "sku";
+        }
+        if (!headers.includes(validTitleCol)) {
+          validTitleCol = headers.find((h) => h === "name") || "name";
+        }
+        if (!headers.includes(validEanCol)) {
+          validEanCol = headers.find((h) => h === "ean") || "";
+        }
       }
-      if (!headers.includes(validTitleCol)) {
-        validTitleCol = headers.find((h) => h === "name") || "name";
-      }
-      if (!headers.includes(validEanCol)) {
-        validEanCol = headers.find((h) => h === "ean") || "";
+      const sku = (row[validSkuCol] || "").trim();
+      if (!sku) continue;
+      const name = (row[validTitleCol] || "").trim();
+      const ean = validEanCol ? (row[validEanCol] || "").trim() : "";
+      if (!seen.has(sku)) {
+        seen.set(sku, { name, ean });
       }
     }
-    const sku = (row[validSkuCol] || "").trim();
-    if (!sku) continue;
-    const name = (row[validTitleCol] || "").trim();
-    const ean = validEanCol ? (row[validEanCol] || "").trim() : "";
-    if (!seen.has(sku)) {
-      seen.set(sku, { name, ean });
-    }
-  }
 
-  const result = [...seen.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([sku, data]) => ({
-      value: sku,
-      label: data.name ? `${sku} — ${data.name}` : sku,
-      ean: data.ean,
-    }));
+    const result = [...seen.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([sku, data]) => ({
+        value: sku,
+        label: data.name ? `${sku} — ${data.name}` : sku,
+        ean: data.ean,
+      }));
 
-  evictOldest();
-  cache.set(key, {
-    categories: [],
-    brands: [],
-    skus: result,
-    headers: [],
-    totalRows: result.length,
-    createdAt: Date.now(),
+    evictOldest();
+    cache.set(key, {
+      categories: [],
+      brands: [],
+      skus: result,
+      headers: [],
+      totalRows: result.length,
+      createdAt: Date.now(),
+    });
+
+    return result;
   });
 
   if (search) {
     const searchLower = search.toLowerCase();
-    return result.filter(
+    return full.filter(
       (s) => s.value.toLowerCase().includes(searchLower) || s.label.toLowerCase().includes(searchLower) || (s.ean && s.ean.toLowerCase().includes(searchLower))
     );
   }
 
-  return result;
+  return full;
 }
 
 export async function getCachedHeaders(
@@ -216,21 +240,23 @@ export async function getCachedHeaders(
   const cached = cache.get(key);
   if (cached && !isExpired(cached)) return cached.headers;
 
-  let headers: string[] = [];
-  for await (const { headers: h } of streamFile(url, delimiter)) {
-    headers = h;
-    break;
-  }
+  return dedupe(key, async () => {
+    let headers: string[] = [];
+    for await (const { headers: h } of streamFile(url, delimiter)) {
+      headers = h;
+      break;
+    }
 
-  evictOldest();
-  const existing = cache.get(key);
-  cache.set(key, {
-    ...(existing || { categories: [], brands: [], skus: [], totalRows: 0, createdAt: Date.now() }),
-    headers,
-    createdAt: Date.now(),
+    evictOldest();
+    const existing = cache.get(key);
+    cache.set(key, {
+      ...(existing || { categories: [], brands: [], skus: [], totalRows: 0, createdAt: Date.now() }),
+      headers,
+      createdAt: Date.now(),
+    });
+
+    return headers;
   });
-
-  return headers;
 }
 
 export async function getCachedCsvRows(
@@ -251,44 +277,46 @@ export async function getCachedCsvRows(
     rowCache.delete(key);
   }
 
-  const startTime = Date.now();
-  const rows: Array<Record<string, string | undefined>> = [];
-  let headers: string[] = [];
-  let streamError: string | null = null;
+  return dedupe(key, async () => {
+    const startTime = Date.now();
+    const rows: Array<Record<string, string | undefined>> = [];
+    let headers: string[] = [];
+    let streamError: string | null = null;
 
-  try {
-    for await (const item of streamFile(url, delimiter)) {
-      if (headers.length === 0) headers = item.headers;
-      rows.push(item.row);
-    }
-  } catch (e: any) {
-    streamError = e?.message || String(e);
-    console.error(`[CsvCache] Stream error after ${rows.length} rows: ${streamError}`);
-  }
-
-  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-
-  // Don't cache if stream errored with partial data — next request will retry
-  if (streamError && rows.length > 0) {
-    console.warn(`[CsvCache] NOT caching ${rows.length} partial rows due to stream error — will retry next request`);
-    return { rows, headers };
-  }
-
-  // Evict oldest row cache entries
-  if (rowCache.size >= MAX_ROW_ENTRIES) {
-    let oldestKey = "";
-    let oldestTime = Infinity;
-    for (const [k, v] of rowCache) {
-      if (v.createdAt < oldestTime) {
-        oldestTime = v.createdAt;
-        oldestKey = k;
+    try {
+      for await (const item of streamFile(url, delimiter)) {
+        if (headers.length === 0) headers = item.headers;
+        rows.push(item.row);
       }
+    } catch (e: any) {
+      streamError = e?.message || String(e);
+      console.error(`[CsvCache] Stream error after ${rows.length} rows: ${streamError}`);
     }
-    if (oldestKey) rowCache.delete(oldestKey);
-  }
 
-  rowCache.set(key, { rows, headers, createdAt: Date.now() });
-  return { rows, headers };
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+
+    // Don't cache if stream errored with partial data — next request will retry
+    if (streamError && rows.length > 0) {
+      console.warn(`[CsvCache] NOT caching ${rows.length} partial rows due to stream error — will retry next request`);
+      return { rows, headers };
+    }
+
+    // Evict oldest row cache entries
+    if (rowCache.size >= MAX_ROW_ENTRIES) {
+      let oldestKey = "";
+      let oldestTime = Infinity;
+      for (const [k, v] of rowCache) {
+        if (v.createdAt < oldestTime) {
+          oldestTime = v.createdAt;
+          oldestKey = k;
+        }
+      }
+      if (oldestKey) rowCache.delete(oldestKey);
+    }
+
+    rowCache.set(key, { rows, headers, createdAt: Date.now() });
+    return { rows, headers };
+  });
 }
 
 export function getCacheStats(): { entries: number; maxEntries: number; ttlMs: number } {

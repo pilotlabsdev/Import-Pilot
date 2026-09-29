@@ -234,6 +234,7 @@
   "columns.loadingHeaders": "Loading file headers...",
   "columns.headersError": "Could not read file header",
   "columns.headersFallback": "Showing known columns, but verify the URL in \"Import Configuration\".",
+  "columns.retry": "Retry",
   "columns.detectedColumns": "Detected file columns:",
   "columns.headersInfo": "Columns are read from the file in real time; if the supplier changes the header, the mapping will update on page reload.",
   "columns.columnFile": "File column",
