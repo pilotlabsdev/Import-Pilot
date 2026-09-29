@@ -40,9 +40,12 @@ async function fetchAsLocalUrl(filePath: string): Promise<string> {
 
 // Timeout SOLO para la fase de conexión/primeiros bytes (TTFB). El timer se
 // cancela en cuanto fetch() resuelve, así el streaming del cuerpo (imports
-// bulk/chunks) queda intacto — este fusible solo evita esperar 5min (default
-// de undici) a un servidor del feed que no responde.
-const TTFB_TIMEOUT_MS = 30_000;
+// bulk/chunks) queda intacto. Medido 2026-09-30: el feed de api.mediamax.es
+// genera el fichero antes de responder → TTFB real ≈ 35s, por eso el margen
+// es de 120s (un fusible más apretado abortaría imports que sí funcionan).
+// Un timeout NO se reintenta: si no responde en 120s, reintentar 2 veces más
+// solo alargaría el fallo (el caller muestra el error y el job/usuario re-lanza).
+const TTFB_TIMEOUT_MS = 120_000;
 
 async function fetchWithTtfbTimeout(url: string): Promise<Response> {
   const controller = new AbortController();
@@ -54,11 +57,10 @@ async function fetchWithTtfbTimeout(url: string): Promise<Response> {
   }
 }
 
-function toFriendlyError(error: any): Error {
+function rethrowIfTimeout(error: any): void {
   if (error?.name === "AbortError") {
-    return new Error(`El servidor del feed no respondió tras ${TTFB_TIMEOUT_MS / 1000}s`);
+    throw new Error(`El servidor del feed no respondió tras ${TTFB_TIMEOUT_MS / 1000}s`);
   }
-  return error;
 }
 
 export function parseCSVLine(line: string, delimiter: string = "|"): string[] {
@@ -253,7 +255,8 @@ export async function* streamCSV(
 
       return; // Success, exit retry loop
     } catch (error: any) {
-      lastError = toFriendlyError(error);
+      rethrowIfTimeout(error);
+      lastError = error;
       if (attempt < maxRetries) {
         const wait = attempt * 2000;
         await new Promise((r) => setTimeout(r, wait));
@@ -464,7 +467,8 @@ export async function* streamExcel(
 
       return;
     } catch (error: any) {
-      lastError = toFriendlyError(error);
+      rethrowIfTimeout(error);
+      lastError = error;
       if (attempt < maxRetries) {
         const wait = attempt * 2000;
         await new Promise((r) => setTimeout(r, wait));
