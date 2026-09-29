@@ -221,7 +221,10 @@ export async function safeAuthenticate(request: Request) {
         throw new Response("Invalid host parameter", { status: 400 });
       }
     }
-    return await authenticate.admin(request);
+    const ta0 = Date.now();
+    const authResult = await authenticate.admin(request);
+    console.log(`[Timing] authenticate.admin: ${Date.now() - ta0}ms`);
+    return authResult;
   } catch (res: any) {
     // Fallback: cualquier TypeError de URL interna de la librería → 400.
     if (!(res instanceof Response) && (res?.code === "ERR_INVALID_URL" || res instanceof TypeError)) {
