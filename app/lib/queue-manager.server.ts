@@ -4,6 +4,7 @@ import shopify from "~/shopify.server";
 import { runImport } from "./import-engine.server";
 import { runBulkImport } from "./bulk-import.server";
 import { sendNotification } from "./notifications.server";
+import { invalidateNavCounts } from "./nav-counts.server";
 
 export interface QueueItem {
   id: string;
@@ -96,6 +97,9 @@ export async function enqueue(params: {
       position: (maxPos._max.position || 0) + 1,
     },
   });
+
+  // Badge del NavMenu: el próximo loader del layout debe ver el item nuevo
+  invalidateNavCounts(params.shopDomain);
 
   await processNext(params.shopDomain);
 
@@ -302,6 +306,8 @@ async function processQueueItem(
     }
   } finally {
     releaseImport(item.configId);
+    // Import terminado (completado/fallido/cancelado): badge sin esperar TTL
+    invalidateNavCounts(shopDomain);
   }
 
   // Only process next queued items for manual imports.
@@ -320,6 +326,7 @@ export async function cancelQueueItem(itemId: string, shopDomain: string): Promi
       where: { id: itemId },
       data: { status: "cancelled", finishedAt: item.finishedAt || new Date() },
     });
+    invalidateNavCounts(shopDomain);
     return { success: true, message: "Importación descartada de la cola" };
   }
 
@@ -346,6 +353,7 @@ export async function cancelQueueItem(itemId: string, shopDomain: string): Promi
       errors: [{ sku: "SYSTEM", error: "systemError.cancelled_manually" }],
       duration: "0s",
     }).catch(() => {});
+    invalidateNavCounts(shopDomain);
     return { success: true, message: aborted ? "Importación abortada" : "Importación marcada para cancelar" };
   }
 

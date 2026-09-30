@@ -15,6 +15,7 @@ import { getSubscriptionInfo, type SubscriptionInfo } from "~/lib/billing.server
 import { ReconnectingOverlay, triggerReconnect } from "~/components/ReconnectingOverlay";
 import { AppBridgeBounce } from "~/components/AppBridgeBounce";
 import { ADMIN_ORIGIN, SHOP_COOKIE, buildAdminAppUrl, buildPlansUrl, shopFromCookieHeader, CTX_KEY } from "~/lib/admin-link";
+import { getNavCounts } from "~/lib/nav-counts.server";
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
@@ -23,53 +24,6 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
       setTimeout(() => reject(new Error(`[App Loader] Timeout ${label}: ${ms}ms`)), ms)
     ),
   ]);
-}
-
-// Contadores del NavMenu con caché corta: los auto-revalidates (20s) de cada
-// pestaña re-ejecutaban el layout completo (4 queries) y saturaban el pool de
-// la BD → las navegaciones en ráfaga subían a ~5s. TTL 25s > intervalo de
-// revalidate → las ráfagas salen de caché; los badges admiten ≤25s de retraso.
-const navCountsCache = new Map<string, { expires: number; unresolved: number; queue: number }>();
-const NAV_COUNTS_TTL_MS = 25_000;
-
-async function getNavCounts(
-  shopDomain: string,
-  hasPlan: boolean
-): Promise<{ unresolved: number; queue: number }> {
-  if (!hasPlan) return { unresolved: 0, queue: 0 };
-
-  const hit = navCountsCache.get(shopDomain);
-  if (hit && hit.expires > Date.now()) {
-    return { unresolved: hit.unresolved, queue: hit.queue };
-  }
-
-  const [unresolved, queue] = await Promise.all([
-    prisma.duplicateLog.count({ where: { shopDomain, resolved: false } }),
-    (async () => {
-      const [qItems, runningLogs, activeJobs] = await Promise.all([
-        prisma.importQueue.findMany({
-          where: { shopDomain, status: { in: ["queued", "running"] } },
-          select: { configId: true },
-        }),
-        prisma.importLog.findMany({
-          where: { shopDomain, status: "running" },
-          select: { configId: true },
-        }),
-        prisma.bulkJob.findMany({
-          where: { shopDomain, phase: { in: ["lookup", "mutations", "finalizing"] } },
-          select: { configId: true },
-        }),
-      ]);
-      const ids = new Set<string>();
-      for (const x of qItems) ids.add(x.configId);
-      for (const x of runningLogs) ids.add(x.configId);
-      for (const x of activeJobs) ids.add(x.configId);
-      return ids.size;
-    })(),
-  ]);
-
-  navCountsCache.set(shopDomain, { expires: Date.now() + NAV_COUNTS_TTL_MS, unresolved, queue });
-  return { unresolved, queue };
 }
 
 function handleNavClick(e: React.MouseEvent<HTMLAnchorElement>) {

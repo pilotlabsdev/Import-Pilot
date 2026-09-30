@@ -22,6 +22,7 @@ import { incrementalImageUpdate, queryProductMedia, type StoredImage } from "./i
 import { ensureMetafieldDefinitions } from "./metafield-definitions";
 import { sendNotification } from "./notifications.server";
 import { setBulkActive, clearBulkActive } from "./bulk-active-cache.server";
+import { invalidateNavCounts } from "./nav-counts.server";
 import shopify from "~/shopify.server";
 
 function normalizeHtml(html: string): string {
@@ -378,6 +379,7 @@ export async function cancelBulkImport(configId: string, shopDomain: string): Pr
     where: { jobId: activeJob.id, status: { in: ["pending", "launched", "processing"] } },
     data: { status: "failed" },
   });
+  invalidateNavCounts(shopDomain);
 
   // Clean up work directory (A6: usar el workDir real del job — antes se
   // construía {shop}/{jobId} que no existe y el dir {shop}/{configId}/{logId} se fugaba)
@@ -2727,6 +2729,7 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
 
     await cleanupOldLogs(job.configId).catch(() => {});
     clearBulkActive(job.shopDomain);
+    invalidateNavCounts(job.shopDomain);
   } catch (error: any) {
     clearBulkActive(job.shopDomain);
     await failJob(job, error?.message || "systemError.finalize_error");
@@ -2740,6 +2743,7 @@ async function failJob(job: any, message: string): Promise<void> {
     where: { id: job.id },
     data: { phase: "failed" },
   });
+  invalidateNavCounts(job.shopDomain);
 
   const log = await prisma.importLog.findUnique({ where: { id: job.logId } });
   if (log) {

@@ -4,6 +4,7 @@ import { getQueueStatus, cancelQueueItem, clearCompleted } from "~/lib/queue-man
 import { cancelBulkImport, forceCleanupStuckBulkJobs } from "~/lib/bulk-import.server";
 import { prisma } from "~/lib/db.server";
 import { safeAuthenticate } from "~/shopify.server";
+import { invalidateNavCounts } from "~/lib/nav-counts.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await safeAuthenticate(request);
@@ -46,6 +47,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   console.log(`[Queue API] Action: intent=${intent}, shop=${shopDomain}, itemId=${itemId || "null"}, configId=${configId || "null"}`);
+
+  // Cualquier mutación de la cola cambia los contadores del NavMenu: marca la
+  // caché como sucia para que el próximo loader del layout no sirva valores viejos
+  invalidateNavCounts(shopDomain);
 
   if (intent === "clear-completed") {
     const result = await clearCompleted(shopDomain);
