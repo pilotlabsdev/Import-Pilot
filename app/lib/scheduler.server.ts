@@ -62,7 +62,9 @@ function scheduleNext(configId: string, frequency: string, lastImportAt: Date | 
   const nextRunAt = new Date(Date.now() + delay);
 
   const timer = setTimeout(() => {
-    void runScheduledImport(configId);
+    void runScheduledImport(configId).catch((error) => {
+      console.error(`[Scheduler] Import programada ${configId} falló sin crash:`, error);
+    });
   }, delay);
 
   timers.set(configId, timer);

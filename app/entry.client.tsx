@@ -60,3 +60,9 @@ startTransition(() => {
     </I18nextProvider>,
   );
 });
+
+try {
+  if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).catch(() => {});
+  }
+} catch {}

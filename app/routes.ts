@@ -11,6 +11,7 @@ export default [
   route("api/upload", "routes/api.upload.tsx"),
   route("api/support", "routes/api.support.tsx"),
   route("api/heartbeat", "routes/api.heartbeat.tsx"),
+  route("api/health", "routes/api.health.tsx"),
   route("api/upload-serve", "routes/api.upload-serve.tsx"),
   route("api/csv-options", "routes/api.csv-options.tsx"),
   route("api/filter", "routes/api.filter.tsx"),

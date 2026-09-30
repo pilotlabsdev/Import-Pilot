@@ -11,6 +11,16 @@ import { resources } from "~/locales";
 import { addDocumentResponseHeaders } from "~/shopify.server";
 import { startScheduler } from "~/lib/scheduler.server";
 
+console.log(`[Boot] Import Pilot servidor cargado (pid=${process.pid}, at=${new Date().toISOString()})`);
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[FATAL] unhandledRejection (el proceso continúa):", reason);
+});
+
+process.on("uncaughtException", (error) => {
+  console.error("[FATAL] uncaughtException (el proceso continúa):", error);
+});
+
 startScheduler();
 
 export const streamTimeout = 5_000;
