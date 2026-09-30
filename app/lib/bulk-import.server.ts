@@ -608,6 +608,16 @@ export async function runBulkImport({
     },
   });
 
+  // Enlazar el ImportLog con el ImportQueue item YA: finalizeBulkImport/failJob
+  // casan la fila por {configId, logId, status:"running"}, pero processNext solo
+  // setea logId cuando runBulkImport retorna → con finalize dentro de
+  // runBulkImport (0 mutation ops) la fila quedaba "running" para siempre y
+  // bloqueaba futuros imports de esta config (hasRunningInQueue).
+  await prisma.importQueue.updateMany({
+    where: { shopDomain, configId: config.id, status: "running", logId: null },
+    data: { logId: log.id },
+  }).catch(() => {});
+
   const workDir = path.join(BASE_WORK_DIR, shopDomain, config.id, log.id);
   await fs.mkdir(workDir, { recursive: true });
 
