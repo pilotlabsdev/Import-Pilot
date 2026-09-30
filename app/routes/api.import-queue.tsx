@@ -3,13 +3,20 @@ import { data } from "react-router";
 import { getQueueStatus, cancelQueueItem, clearCompleted } from "~/lib/queue-manager.server";
 import { cancelBulkImport, forceCleanupStuckBulkJobs } from "~/lib/bulk-import.server";
 import { prisma } from "~/lib/db.server";
+import { safeAuthenticate } from "~/shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const { session } = await safeAuthenticate(request);
   const url = new URL(request.url);
   const shopDomain = url.searchParams.get("shop") || "";
 
   if (!shopDomain) {
     return data({ error: "Falta shop" }, { status: 400 });
+  }
+
+  if (session.shop !== shopDomain) {
+    console.warn(`[Queue API] Shop mismatch (loader): session=${session.shop}, param=${shopDomain}`);
+    return data({ error: "Shop no coincide" }, { status: 403 });
   }
 
   try {
@@ -25,12 +32,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
+  const { session } = await safeAuthenticate(request);
   const url = new URL(request.url);
   const shopDomain = url.searchParams.get("shop") || "";
   const formData = await request.formData();
   const intent = formData.get("intent") as string;
   const itemId = formData.get("itemId") as string;
   const configId = formData.get("configId") as string;
+
+  if (!shopDomain || session.shop !== shopDomain) {
+    console.warn(`[Queue API] Shop mismatch (action): session=${session.shop}, param=${shopDomain}`);
+    return data({ error: "Shop no coincide" }, { status: 403 });
+  }
 
   console.log(`[Queue API] Action: intent=${intent}, shop=${shopDomain}, itemId=${itemId || "null"}, configId=${configId || "null"}`);
 
@@ -154,6 +167,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   if (intent === "clear-sessions") {
     const targetShop = formData.get("targetShop") as string || shopDomain;
+    if (targetShop !== session.shop) {
+      console.warn(`[Queue API] clear-sessions target mismatch: session=${session.shop}, target=${targetShop}`);
+      return data({ error: "Shop no coincide" }, { status: 403 });
+    }
     console.log(`[Queue API] clear-sessions: shop=${targetShop}`);
     const deleted = await prisma.session.deleteMany({ where: { shop: targetShop } });
     console.log(`[Queue API] clear-sessions: deleted ${deleted.count} session(s) for ${targetShop}`);
