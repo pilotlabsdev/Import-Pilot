@@ -1686,6 +1686,17 @@ async function prepareAndLaunch(
     },
   }).catch(() => {});
 
+  // 0 mutation ops (todo unchanged/excluded): no llegará ningún webhook que
+  // dispare finalize → finalizar YA con el mismo tryFinalize (claim atómico
+  // mutations→finalizing; un cancel/reconcile concurrente pierde el claim).
+  // Solo aplica con 0 archivos: cualquier fila a crear/actualizar genera ops
+  // y sigue el flujo normal (imports grandes intactos).
+  if (createFiles.length === 0 && updateFiles.length === 0) {
+    console.log(`[Bulk] Job ${job.id.slice(0, 8)} con 0 mutation ops (todo unchanged) → finalize inmediato`);
+    await tryFinalize(job, admin);
+    return;
+  }
+
   let launchedCreates = 0;
   let launchedUpdates = 0;
 
