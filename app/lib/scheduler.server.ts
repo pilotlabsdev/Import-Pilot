@@ -1,6 +1,7 @@
 import { prisma, isUrlSource } from "./db.server";
 import { enqueue, processNext } from "./queue-manager.server";
 import { reconcileStaleBulkJobs, cleanupFinishedBulkJobs, handleBulkOperationFinish, getFreshAdminClient } from "./bulk-import.server";
+import { setBulkActive } from "./bulk-active-cache.server";
 import { reconcileAllShops } from "./reconciliation.server";
 import { isImportActive } from "./import-locks.server";
 import { getSubscriptionInfo, enforcePlanLimits } from "./billing.server";
@@ -140,6 +141,9 @@ async function checkBulkOperations() {
     });
 
     for (const { shopDomain } of activeJobs) {
+      // A7: heartbeat — refrescar mientras el job exista (el tick corre cada 60s).
+      // Así la caducidad de 2h solo aplica si el proceso muere y nadie refresca.
+      setBulkActive(shopDomain);
       try {
         const admin = await getFreshAdminClient(shopDomain);
         const res = await admin.graphql(`query { currentBulkOperation { id status objectCount errorCode } }`);
@@ -202,6 +206,13 @@ async function startupCleanup(): Promise<void> {
     select: { id: true, configId: true },
   });
   for (const log of stuckLogs) {
+    // A8: no tocar logs resumidos por resumeInterruptedJobs (ya tienen cola nueva)
+    if (isImportActive(log.configId)) continue;
+    const hasQueueItem = await prisma.importQueue.findFirst({
+      where: { logId: log.id, status: { in: ["queued", "running"] } },
+      select: { id: true },
+    }).catch(() => null);
+    if (hasQueueItem) continue;
     await prisma.importLog.update({
       where: { id: log.id },
       data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "systemError.process_restarted", lineNumber: 0 }]) },
@@ -218,6 +229,8 @@ async function startupCleanup(): Promise<void> {
     select: { id: true, configId: true, shopDomain: true },
   });
   for (const item of stuckQueue) {
+    // A8: import vivo (arrancado por resume's processNext — lock antes de status running)
+    if (isImportActive(item.configId)) continue;
     await prisma.importQueue.update({
       where: { id: item.id },
       data: { status: "failed", finishedAt: new Date() },
@@ -241,10 +254,17 @@ export function startScheduler() {
   started = true;
   console.log("[Scheduler] Iniciando scheduler de importaciones...");
 
-  // Startup cleanup: fail stuck BulkJobs and queue items from previous process (e.g. SIGTERM)
-  void startupCleanup().catch((error: any) =>
-    console.error("[Scheduler] Error en startup cleanup:", error)
-  );
+  // A8: secuenciar resume → cleanup (antes corrían en paralelo y se pisaban:
+  // cleanup fallaba logs que resume acaba de re-encolar). Resume primero para
+  // preservar el checkpoint/resume; cleanup después con guards.
+  void (async () => {
+    await resumeInterruptedJobs().catch((error: any) =>
+      console.error("[Scheduler] Error al reanudar imports interrumpidos:", error)
+    );
+    await startupCleanup().catch((error: any) =>
+      console.error("[Scheduler] Error en startup cleanup:", error)
+    );
+  })();
 
   setInterval(() => {
     void reconcileStaleBulkJobs().catch((error: any) =>
@@ -329,6 +349,9 @@ export function startScheduler() {
           select: { id: true, configId: true, lastProgressAt: true, startedAt: true },
         });
         for (const log of staleLogs) {
+          // N1: nunca marcar failed un import vivo (chunks no actualiza lastProgressAt
+          // durante fases largas como lookup/descarga)
+          if (isImportActive(log.configId)) continue;
           const lastActivity = log.lastProgressAt || log.startedAt;
           if (lastActivity && Date.now() - lastActivity.getTime() > 30 * 60 * 1000) {
             const hasActiveBulkJob = await prisma.bulkJob.findFirst({
@@ -380,7 +403,10 @@ export function startScheduler() {
       },
       select: { id: true, logId: true, configId: true },
     }).then(async (staleRunning) => {
+      let cleaned = 0;
       for (const item of staleRunning) {
+        // N1: saltar imports vivos — processNext adquiere el lock antes de marcar running
+        if (isImportActive(item.configId)) continue;
         // Skip if there's an active BulkJob for this config (bulk imports don't update lastProgressAt)
         const activeBulkJob = await prisma.bulkJob.findFirst({
           where: { configId: item.configId, phase: { in: ["lookup", "mutations", "finalizing"] } },
@@ -408,9 +434,12 @@ export function startScheduler() {
             data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "systemError.timeout_no_progress", lineNumber: 0 }]) },
           }).catch(() => {});
         }
+        cleaned++;
       }
-      if (staleRunning.length > 0) {
-          console.log(`[Scheduler] Limpiados ${staleRunning.length} items running stale`);
+      // N1: solo informar de limpiezas reales (antes se imprimía si length>0
+      // aunque todos los items se hubieran saltado por guards)
+      if (cleaned > 0) {
+          console.log(`[Scheduler] Limpiados ${cleaned} items running stale`);
       }
     }).catch(() => {});
 
@@ -421,6 +450,8 @@ export function startScheduler() {
     }).then(async (orphanLogs) => {
       let cleaned = 0;
       for (const log of orphanLogs) {
+        // N1: no tocar imports vivos
+        if (isImportActive(log.configId)) continue;
         const hasQueueItem = await prisma.importQueue.findFirst({
           where: { logId: log.id, status: { in: ["queued", "running"] } },
           select: { id: true },
@@ -445,10 +476,6 @@ export function startScheduler() {
 
   void refreshSchedules().catch((error: any) =>
     console.error("[Scheduler] Error al inicializar:", error)
-  );
-
-  void resumeInterruptedJobs().catch((error: any) =>
-    console.error("[Scheduler] Error al reanudar imports interrumpidos:", error)
   );
 }
 
@@ -623,6 +650,11 @@ async function runScheduledImport(configId: string) {
     });
 
     scheduleNext(configId, config.frequency, new Date());
+  } catch (error: any) {
+    // A9: sin este catch, cualquier throw (p.ej. findFirst de BD sin .catch)
+    // moría sin re-armar el timer y la config dejaba de importar para siempre.
+    console.error(`[Scheduler] runScheduledImport ${configId} falló, reprogramando en 5min:`, error?.message || error);
+    scheduleNext(configId, scheduledFrequencies.get(configId) || "4h", null, 5 * 60_000);
   } finally {
     configLocks.delete(configId);
   }
