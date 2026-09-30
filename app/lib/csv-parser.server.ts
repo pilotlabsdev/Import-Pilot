@@ -152,108 +152,112 @@ export async function* streamCSV(
       const reader = response.body?.getReader();
       if (!reader) throw new Error("No se pudo leer el stream del CSV");
 
-      let buffer = "";
-      let headers: string[] = [];
-      let lineNumber = 0;
-      let incompleteLine = "";
-      let effectiveDelimiter = delimiter === "auto" ? null : delimiter;
+      try {
+        let buffer = "";
+        let headers: string[] = [];
+        let lineNumber = 0;
+        let incompleteLine = "";
+        let effectiveDelimiter = delimiter === "auto" ? null : delimiter;
 
-      const firstChunk = await reader.read();
-      if (firstChunk.done) throw new Error("CSV vacío");
-      const enc = detectEncoding(firstChunk.value);
-      const decoder = new TextDecoder(enc);
-      buffer += decoder.decode(firstChunk.value, { stream: true });
+        const firstChunk = await reader.read();
+        if (firstChunk.done) throw new Error("CSV vacío");
+        const enc = detectEncoding(firstChunk.value);
+        const decoder = new TextDecoder(enc);
+        buffer += decoder.decode(firstChunk.value, { stream: true });
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          // Flush remaining bytes from the decoder
-          const remaining = decoder.decode();
-          if (remaining) buffer += remaining;
-          break;
-        }
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            // Flush remaining bytes from the decoder
+            const remaining = decoder.decode();
+            if (remaining) buffer += remaining;
+            break;
+          }
 
-        buffer += decoder.decode(value, { stream: true });
+          buffer += decoder.decode(value, { stream: true });
 
-        if (!effectiveDelimiter && buffer.includes("\n")) {
-          const sample = buffer.split("\n").slice(0, 20).join("\n");
-          effectiveDelimiter = autoDetectDelimiter(sample);
-        }
+          if (!effectiveDelimiter && buffer.includes("\n")) {
+            const sample = buffer.split("\n").slice(0, 20).join("\n");
+            effectiveDelimiter = autoDetectDelimiter(sample);
+          }
 
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
 
-        for (const line of lines) {
-          const rawLine = incompleteLine ? incompleteLine + "\n" + line : line;
-          incompleteLine = "";
+          for (const line of lines) {
+            const rawLine = incompleteLine ? incompleteLine + "\n" + line : line;
+            incompleteLine = "";
 
-          const trimmed = rawLine.trim();
-          if (!trimmed) continue;
+            const trimmed = rawLine.trim();
+            if (!trimmed) continue;
 
-          let inQuotes = false;
-          for (let i = 0; i < trimmed.length; i++) {
-            const ch = trimmed[i];
-            if (ch === '"') {
-              if (i + 1 < trimmed.length && trimmed[i + 1] === '"') {
-                i++;
-              } else {
-                inQuotes = !inQuotes;
+            let inQuotes = false;
+            for (let i = 0; i < trimmed.length; i++) {
+              const ch = trimmed[i];
+              if (ch === '"') {
+                if (i + 1 < trimmed.length && trimmed[i + 1] === '"') {
+                  i++;
+                } else {
+                  inQuotes = !inQuotes;
+                }
               }
             }
-          }
 
-          if (inQuotes) {
-            incompleteLine = rawLine;
-            continue;
-          }
-
-          lineNumber++;
-
-          if (lineNumber === 1) {
-            headers = parseCSVLine(trimmed, effectiveDelimiter || "|").map((h) => h.toLowerCase());
-            const required = ["sku", "ean"];
-            const found = headers.some((h) => required.includes(h));
-            if (!found) {
-              throw new Error(`Cabeceras CSV no válidas: falta columna "sku" o "ean". Cabeceras encontradas: [${headers.slice(0, 10).join(", ")}...]`);
+            if (inQuotes) {
+              incompleteLine = rawLine;
+              continue;
             }
-            continue;
+
+            lineNumber++;
+
+            if (lineNumber === 1) {
+              headers = parseCSVLine(trimmed, effectiveDelimiter || "|").map((h) => h.toLowerCase());
+              const required = ["sku", "ean"];
+              const found = headers.some((h) => required.includes(h));
+              if (!found) {
+                throw new Error(`Cabeceras CSV no válidas: falta columna "sku" o "ean". Cabeceras encontradas: [${headers.slice(0, 10).join(", ")}...]`);
+              }
+              continue;
+            }
+
+            const values = parseCSVLine(trimmed, effectiveDelimiter || "|");
+            const row: ProductRow = {};
+
+            headers.forEach((header, index) => {
+              row[header] = values[index] || "";
+            });
+
+            yield { headers, row, lineNumber };
           }
-
-          const values = parseCSVLine(trimmed, effectiveDelimiter || "|");
-          const row: ProductRow = {};
-
-          headers.forEach((header, index) => {
-            row[header] = values[index] || "";
-          });
-
-          yield { headers, row, lineNumber };
         }
+
+        if (incompleteLine.trim()) {
+          const trimmed = incompleteLine.trim();
+          lineNumber++;
+          if (lineNumber > 1) {
+            const values = parseCSVLine(trimmed, effectiveDelimiter || "|");
+            const row: ProductRow = {};
+            headers.forEach((header, index) => {
+              row[header] = values[index] || "";
+            });
+            yield { headers, row, lineNumber };
+          }
+        } else if (buffer.trim()) {
+          lineNumber++;
+          if (lineNumber > 1) {
+            const values = parseCSVLine(buffer.trim(), effectiveDelimiter || "|");
+            const row: ProductRow = {};
+            headers.forEach((header, index) => {
+              row[header] = values[index] || "";
+            });
+            yield { headers, row, lineNumber };
+          }
+        }
+
+        return; // Success, exit retry loop
+      } finally {
+        await reader.cancel().catch(() => {});
       }
-
-      if (incompleteLine.trim()) {
-        const trimmed = incompleteLine.trim();
-        lineNumber++;
-        if (lineNumber > 1) {
-          const values = parseCSVLine(trimmed, effectiveDelimiter || "|");
-          const row: ProductRow = {};
-          headers.forEach((header, index) => {
-            row[header] = values[index] || "";
-          });
-          yield { headers, row, lineNumber };
-        }
-      } else if (buffer.trim()) {
-        lineNumber++;
-        if (lineNumber > 1) {
-          const values = parseCSVLine(buffer.trim(), effectiveDelimiter || "|");
-          const row: ProductRow = {};
-          headers.forEach((header, index) => {
-            row[header] = values[index] || "";
-          });
-          yield { headers, row, lineNumber };
-        }
-      }
-
-      return; // Success, exit retry loop
     } catch (error: any) {
       rethrowIfTimeout(error);
       lastError = error;
