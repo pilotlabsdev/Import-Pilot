@@ -63,6 +63,11 @@ startTransition(() => {
 
 try {
   if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).catch(() => {});
+    navigator.serviceWorker
+      .register("/sw.js", { updateViaCache: "none" })
+      .then((reg) => console.log("[SW] registrado:", reg.scope))
+      .catch((err) => console.warn("[SW] registro falló:", err));
   }
-} catch {}
+} catch (err) {
+  console.warn("[SW] registro excepción:", err);
+}
