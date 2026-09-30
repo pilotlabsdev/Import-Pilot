@@ -56,6 +56,10 @@ interface BarcodeMatch {
 // Set at the start of runImport; updated by graphqlWithRefresh on 401.
 let _adminRef: { current: any } = { current: null };
 let _shopDomainRef = "";
+// N2: throttle de refresh de token (espejo de bulk-import gql: lastRefreshAt 30s)
+// Evita que el worker pool dispare N refreshes OAuth simultáneos con 401 en ráfaga.
+const _lastRefreshAt = new Map<string, number>();
+const MIN_REFRESH_INTERVAL_MS = 30_000;
 
 async function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -334,10 +338,22 @@ async function graphqlWithRetry(_admin: any, query: string, vars: any, maxRetrie
     if (!isAuth || !_shopDomainRef) throw e;
 
     console.log(`[Import] Token expired mid-import for ${_shopDomainRef}, refreshing...`);
+    const now = Date.now();
+    const lastRefresh = _lastRefreshAt.get(_shopDomainRef) || 0;
+    if (now - lastRefresh < MIN_REFRESH_INTERVAL_MS) {
+      // N2: hubo un refresh hace <30s (otro hilo del pool) — recrear cliente
+      // con la sesión ya renovada, sin repetir el OAuth
+      const { admin: freshAdmin } = await shopify.unauthenticated.admin(_shopDomainRef);
+      _adminRef.current = freshAdmin;
+      console.log(`[Import] Token refreshed recently for ${_shopDomainRef}, reusing...`);
+      return rateLimitedGraphql(_adminRef.current, query, vars, maxRetries);
+    }
+
     const newToken = await refreshAccessToken(_shopDomainRef);
     if (!newToken) {
       throw new Error(`Token expirado para ${_shopDomainRef} y no se pudo refrescar.`);
     }
+    _lastRefreshAt.set(_shopDomainRef, now);
 
     const { admin: newAdmin } = await shopify.unauthenticated.admin(_shopDomainRef);
     _adminRef.current = newAdmin;
