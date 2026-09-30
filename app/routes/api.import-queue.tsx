@@ -1,7 +1,7 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { data } from "react-router";
 import { getQueueStatus, cancelQueueItem, clearCompleted } from "~/lib/queue-manager.server";
-import { cancelBulkImport, forceCleanupStuckBulkJobs } from "~/lib/bulk-import.server";
+import { cancelBulkImport, forceCleanupStuckBulkJobs, cancelJobOpsViaShopify } from "~/lib/bulk-import.server";
 import { prisma } from "~/lib/db.server";
 import { safeAuthenticate } from "~/shopify.server";
 import { invalidateNavCounts } from "~/lib/nav-counts.server";
@@ -97,6 +97,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const job = await prisma.bulkJob.findUnique({ where: { id: bulkJobId } });
     if (!job) {
       return data({ success: false, message: "Job no encontrado" });
+    }
+    // Cancelar en Shopify las ops ya lanzadas ANTES de marcar failed en DB
+    // (docs: bulkOperationCancel(id: ID!); si marcamos first, el helper no las vería)
+    const cancelledOps = await cancelJobOpsViaShopify(job.id, shopDomain);
+    if (cancelledOps > 0) {
+      console.log(`[Queue API] cancel-bulk-job: bulkOperationCancel enviado para ${cancelledOps} op(s)`);
     }
     // Force mark as failed
     await prisma.bulkJobOp.updateMany({

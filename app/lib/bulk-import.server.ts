@@ -310,6 +310,37 @@ async function gqlWithRefresh(shopDomain: string, adminRef: { current: any }, qu
   }
 }
 
+// Cancela en Shopify las ops del job que aún están en vuelo.
+// Docs oficiales (2026-07): bulkOperationCancel(id: ID!) → { bulkOperation, userErrors }.
+// Devuelve nº de ops canceladas. Debe llamarse ANTES de marcar las ops como failed en DB.
+export async function cancelJobOpsViaShopify(jobId: string, shopDomain: string): Promise<number> {
+  let cancelled = 0;
+  try {
+    const ops = await prisma.bulkJobOp.findMany({
+      where: { jobId, status: { in: ["pending", "launched", "processing"] }, shopifyOpId: { not: null } },
+      select: { shopifyOpId: true },
+    });
+    if (ops.length === 0) return 0;
+    await ensureSingleSession(shopDomain);
+    const admin = await getFreshAdminClient(shopDomain);
+    for (const op of ops) {
+      if (!op.shopifyOpId) continue;
+      try {
+        await gql(admin, `#graphql
+          mutation bulkOperationCancel($id: ID!) {
+            bulkOperationCancel(id: $id) {
+              bulkOperation { id status }
+              userErrors { field message }
+            }
+          }
+        `, { id: op.shopifyOpId }, shopDomain);
+        cancelled++;
+      } catch {}
+    }
+  } catch {}
+  return cancelled;
+}
+
 export async function cancelBulkImport(configId: string, shopDomain: string): Promise<{ success: boolean; message: string }> {
   // Find active BulkJob for this config
   const activeJob = await prisma.bulkJob.findFirst({
@@ -347,28 +378,8 @@ export async function cancelBulkImport(configId: string, shopDomain: string): Pr
     return { success: false, message: "No hay importación activa para esta configuración" };
   }
 
-  // Deduplicate sessions before getting admin client
-  await ensureSingleSession(shopDomain);
-
-  // Cancel any active ops via Shopify API
-  const pendingOps = await prisma.bulkJobOp.findMany({
-    where: { jobId: activeJob.id, status: { in: ["pending", "launched", "processing"] } },
-  });
-  const admin = await getFreshAdminClient(shopDomain);
-  for (const op of pendingOps) {
-    if (op.shopifyOpId) {
-      try {
-        await gql(admin, `#graphql
-          mutation bulkOperationCancel($id: ID!) {
-            bulkOperationCancel(id: $id) {
-              bulkOperation { id status }
-              userErrors { field message }
-            }
-          }
-        `, { id: op.shopifyOpId }, shopDomain);
-      } catch {}
-    }
-  }
+  // Cancel any active ops via Shopify API (bulkOperationCancel por op en vuelo)
+  await cancelJobOpsViaShopify(activeJob.id, shopDomain);
 
   // Update job and ops to cancelled
   await prisma.bulkJob.update({
@@ -744,6 +755,14 @@ export async function runBulkImport({
 
   const rules = await getActivePriceRules(job.shopDomain, job.configId);
 
+  // Cancel comprobado justo antes de preparar (defensa; el claim de
+  // prepareAndLaunch abortaría igual): job fuera de "lookup" → no preparar.
+  const freshPhase = await prisma.bulkJob.findUnique({ where: { id: job.id }, select: { phase: true } });
+  if (freshPhase?.phase !== "lookup") {
+    console.log(`[Bulk] Job ${job.id.slice(0, 8)} ya no está en "lookup" (phase=${freshPhase?.phase}) → prepare omitido`);
+    return { bulk: true, jobId: job.id, logId: log.id };
+  }
+
   await prepareAndLaunch(job, fullConfig, admin, columnMaps, rules, targetedMaps, bySkuMapping, filterType, filterSkus, filterCategories, locationId, sourceKey);
 
   await prisma.bulkJobOp.updateMany({
@@ -1105,9 +1124,17 @@ async function prepareAndLaunch(
   locationId?: string,
   sourceKey?: string
 ): Promise<void> {
-  // Transition phase early to prevent reconcile from re-running prepareAndLaunch
-  // (the heavy CSV streaming can take minutes; reconcile fires every 60s)
-  await prisma.bulkJob.update({ where: { id: job.id }, data: { phase: "mutations" } }).catch(() => {});
+  // Claim atómico lookup→mutations (mismo patrón que tryFinalize): si count===0
+  // el job fue cancelado mientras corría el lookup o prepare ya está en marcha
+  // (doble llamada) → abortar sin resucitar un job cancelado ("cancel en caliente").
+  const phaseClaim = await prisma.bulkJob.updateMany({
+    where: { id: job.id, phase: "lookup" },
+    data: { phase: "mutations" },
+  });
+  if (phaseClaim.count === 0) {
+    console.log(`[Bulk] prepareAndLaunch abortado: job ${job.id.slice(0, 8)} ya no está en "lookup" (cancelado o preparación ya en marcha)`);
+    return;
+  }
   const workDir = job.workDir;
   const updateOpts = parseUpdateOptions(config.updateOptions);
   const createFiles: string[] = [];
@@ -1272,10 +1299,18 @@ async function prepareAndLaunch(
 
     totalCount++;
 
-    // Checkpoint/resume: save progress every CHECKPOINT_INTERVAL rows
+    // Checkpoint/resume: save progress every CHECKPOINT_INTERVAL rows.
+    // Escritura condicional (phase=mutations): si cancelaron el job mientras se
+    // preparaba, count===0 → abortar aquí sin persistir manifest ni lanzar ops.
     checkpointCounter++;
     if (checkpointCounter % CHECKPOINT_INTERVAL === 0) {
-      await prisma.bulkJob.update({ where: { id: job.id }, data: { resumeFromLine: lineNumber } }).catch(() => {});
+      const alive = await prisma.bulkJob
+        .updateMany({ where: { id: job.id, phase: "mutations" }, data: { resumeFromLine: lineNumber } })
+        .catch(() => null);
+      if (alive && alive.count === 0) {
+        console.log(`[Bulk] prepareAndLaunch cancelado durante la preparación (línea ${lineNumber}) → abortando`);
+        return;
+      }
     }
 
     const ean = (() => {
@@ -1621,12 +1656,13 @@ async function prepareAndLaunch(
   const manifestPath = path.join(workDir, "manifest.json");
   await fs.writeFile(manifestPath, JSON.stringify(manifest));
 
-  // Persistir fase y manifest ANTES de lanzar: si el proceso cae a mitad,
+  // Persistir manifest ANTES de lanzar: si el proceso cae a mitad,
   // el resume (reconcileStaleBulkJobs) puede recuperar las ops pendientes.
-  await prisma.bulkJob.update({
-    where: { id: job.id },
+  // Claim condicional: si el job fue cancelado durante la preparación pesada,
+  // no persistir ni lanzar ninguna op (el cancel debe cortar de verdad).
+  const manifestClaim = await prisma.bulkJob.updateMany({
+    where: { id: job.id, phase: "mutations" },
     data: {
-      phase: "mutations",
       manifestPath,
       totalMutationOps: createFiles.length + updateFiles.length,
       totalCount,
@@ -1635,6 +1671,10 @@ async function prepareAndLaunch(
       errorCount: errors.length,
     },
   });
+  if (manifestClaim.count === 0) {
+    console.log(`[Bulk] prepareAndLaunch cancelado antes de lanzar ops (create=${createFiles.length}, update=${updateFiles.length}) → abortando`);
+    return;
+  }
 
   // Update ImportLog so queue page shows totals immediately (not waiting for first op)
   await prisma.importLog.update({
@@ -1653,6 +1693,12 @@ async function prepareAndLaunch(
   await ensureFreshTokenForBulk(job.shopDomain);
 
   for (let i = 0; i < createFiles.length; i++) {
+    // Gate por fichero: cancel durante la ventana de lanzamiento → parar aquí
+    const gate = await prisma.bulkJob.findUnique({ where: { id: job.id }, select: { phase: true } });
+    if (gate?.phase !== "mutations") {
+      console.log(`[Bulk] Lanzamiento de ops cancelado (create ${i + 1}/${createFiles.length}, phase=${gate?.phase})`);
+      return;
+    }
     const pending = await prisma.bulkJobOp.create({
       data: { jobId: job.id, kind: "create", index: i, status: "pending" },
     });
@@ -1668,6 +1714,12 @@ async function prepareAndLaunch(
   await ensureFreshTokenForBulk(job.shopDomain);
 
   for (let i = 0; i < updateFiles.length; i++) {
+    // Gate por fichero: cancel durante la ventana de lanzamiento → parar aquí
+    const gate = await prisma.bulkJob.findUnique({ where: { id: job.id }, select: { phase: true } });
+    if (gate?.phase !== "mutations") {
+      console.log(`[Bulk] Lanzamiento de ops cancelado (update ${i + 1}/${updateFiles.length}, phase=${gate?.phase})`);
+      return;
+    }
     const pending = await prisma.bulkJobOp.create({
       data: { jobId: job.id, kind: "update", index: i, status: "pending" },
     });
