@@ -379,10 +379,10 @@ export async function cancelBulkImport(configId: string, shopDomain: string): Pr
     data: { status: "failed" },
   });
 
-  // Clean up work directory
+  // Clean up work directory (A6: usar el workDir real del job — antes se
+  // construía {shop}/{jobId} que no existe y el dir {shop}/{configId}/{logId} se fugaba)
   try {
-    const workDir = path.join(BASE_WORK_DIR, shopDomain, activeJob.id);
-    await fs.rm(workDir, { recursive: true, force: true });
+    await fs.rm(activeJob.workDir, { recursive: true, force: true });
   } catch {}
 
   return { success: true, message: "Importación bulk cancelada" };
