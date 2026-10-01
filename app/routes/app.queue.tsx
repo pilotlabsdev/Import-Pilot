@@ -186,6 +186,9 @@ export default function QueuePage() {
                                 <>
                                   <Text as="span" variant="bodySm">
                                     {progress.processedProducts} / {progress.totalProducts} {t("queue.products")}
+                                    {(progress.created > 0 || progress.updated > 0 || progress.unchanged > 0)
+                                      ? ` · ${t("common.created")}: ${progress.created || 0} · ${t("common.updated")}: ${progress.updated || 0} · ${t("common.unchanged")}: ${progress.unchanged || 0}`
+                                      : ""}
                                     {(progress.excluded || 0) > 0 ? ` · ${t("common.excluded")}: ${progress.excluded}` : ""}
                                   </Text>
                                   <Text as="span" variant="bodySm" tone="subdued">

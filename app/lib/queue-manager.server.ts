@@ -507,6 +507,9 @@ export async function getQueueStatus(shopDomain: string): Promise<{
         lastSku: log.lastSku || "",
         status: "running",
         errors: errorCount,
+        created: log.created || 0,
+        updated: log.updated || 0,
+        unchanged: log.unchanged || 0,
         excluded: log.excludedCount || 0,
       },
     });
@@ -735,7 +738,10 @@ export async function getQueueStatus(shopDomain: string): Promise<{
       lastSku: log.lastSku || "",
       status: log.status,
       errors: errorCount,
-      // Chunks: excluidos en vivo desde el ImportLog (bulk lo sobreescribe abajo)
+      // Chunks: contadores en vivo desde el ImportLog (bulk los sobreescribe abajo)
+      created: log.created || 0,
+      updated: log.updated || 0,
+      unchanged: log.unchanged || 0,
       excluded: log.excludedCount || 0,
     };
     if (bulkJob) {
