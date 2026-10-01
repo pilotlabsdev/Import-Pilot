@@ -1,5 +1,5 @@
 import { prisma, getConfigById, cleanupOldLogs, ensureSingleSession, ensureFreshToken } from "./db.server";
-import { isImportActive, tryAcquireImport, releaseImport, abortImport } from "./import-locks.server";
+import { isImportActive, tryAcquireImport, releaseImport, abortImport, canStartImport, maxActiveImports } from "./import-locks.server";
 import shopify from "~/shopify.server";
 import { runImport } from "./import-engine.server";
 import { runBulkImport } from "./bulk-import.server";
@@ -137,6 +137,16 @@ export async function processNext(shopDomain: string): Promise<void> {
     // Check if this specific item was cancelled
     const stillQueued = await prisma.importQueue.findUnique({ where: { id: item.id } });
     if (!stillQueued || stillQueued.status !== "queued") continue;
+
+    // Gate global de concurrencia: si ya hay MAX_ACTIVE_IMPORTS imports en
+    // vuelo, dejar este item "queued" (el sweep del scheduler o el
+    // processNext de cierre del próximo import lo recogen al liberarse hueco)
+    if (!canStartImport()) {
+      console.log(
+        `[Queue] MAX_ACTIVE_IMPORTS (${maxActiveImports()}) alcanzado — item ${item.id} (${item.configId}) queda en cola`
+      );
+      return;
+    }
 
     // Try to acquire import lock
     const lock = tryAcquireImport(item.configId);

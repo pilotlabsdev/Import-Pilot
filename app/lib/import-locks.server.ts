@@ -28,6 +28,20 @@ export function getActiveImportCount(): number {
   return activeImports.size;
 }
 
+// Límite global de imports en vuelo (chunks en marcha + fase activa de bulk).
+// Protege BD/pool y memoria cuando N merchants encolan a la vez. Las items
+// que no caben quedan "queued": las recoge el sweep del scheduler (60s) o el
+// processNext que se dispara al terminar cada import manual.
+const MAX_ACTIVE_IMPORTS = Math.max(1, Number(process.env.MAX_ACTIVE_IMPORTS) || 10);
+
+export function canStartImport(): boolean {
+  return activeImports.size < MAX_ACTIVE_IMPORTS;
+}
+
+export function maxActiveImports(): number {
+  return MAX_ACTIVE_IMPORTS;
+}
+
 // --- Rate limiter for Shopify API ---
 // Bucket POR TIENDA: Shopify aplica los límites de rate per store, así que
 // cada shopDomain tiene su propio bucket de 5 tokens/s (burst 10). Calls sin
