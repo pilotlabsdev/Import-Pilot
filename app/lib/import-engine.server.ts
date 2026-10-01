@@ -368,7 +368,7 @@ async function graphqlWithRetry(adminParam: any, query: string, vars: any, maxRe
   const ctx = _importCtx.getStore();
   const admin = ctx ? ctx.adminRef.current : adminParam;
   try {
-    return await rateLimitedGraphql(admin, query, vars, maxRetries);
+    return await rateLimitedGraphql(admin, query, vars, maxRetries, false, ctx?.shopDomain);
   } catch (e: any) {
     const msg = e?.message || "";
     const isAuth = msg.includes("Unauthorized") || msg.includes("Session not found") || e?.response?.status === 401;
@@ -385,7 +385,7 @@ async function graphqlWithRetry(adminParam: any, query: string, vars: any, maxRe
       ctx.adminRef.current = freshAdmin;
       console.log(`[Import] Token refreshed recently for ${shopDomain}, reusing...`);
       // A4: reintento del mismo request lógico → no cobra token del bucket
-      return rateLimitedGraphql(ctx.adminRef.current, query, vars, maxRetries, true);
+      return rateLimitedGraphql(ctx.adminRef.current, query, vars, maxRetries, true, ctx.shopDomain);
     }
 
     const newToken = await refreshAccessToken(shopDomain);
@@ -399,7 +399,7 @@ async function graphqlWithRetry(adminParam: any, query: string, vars: any, maxRe
     console.log(`[Import] Token refreshed mid-import for ${shopDomain}, retrying...`);
 
     // A4: reintento del mismo request lógico → no cobra token del bucket
-    return rateLimitedGraphql(ctx.adminRef.current, query, vars, maxRetries, true);
+    return rateLimitedGraphql(ctx.adminRef.current, query, vars, maxRetries, true, ctx.shopDomain);
   }
 }
 

@@ -166,7 +166,7 @@ export async function ensureFreshTokenForBulk(shopDomain: string): Promise<void>
 async function gql(admin: any, query: string, varsOrOptions?: any, shopDomain?: string): Promise<any> {
   const vars = varsOrOptions?.variables !== undefined ? varsOrOptions.variables : varsOrOptions;
   try {
-    return await rateLimitedGraphql(admin, query, vars || {});
+    return await rateLimitedGraphql(admin, query, vars || {}, 3, false, shopDomain);
   } catch (e: any) {
     const msg = e?.message || "";
     const isAuth = msg.includes("Unauthorized") || msg.includes("Session not found") || e?.response?.status === 401;
@@ -183,7 +183,7 @@ async function gql(admin: any, query: string, varsOrOptions?: any, shopDomain?: 
       // Already refreshed successfully recently, try with fresh client anyway
       try {
         const freshAdmin = await getFreshAdminClient(shopDomain);
-        return await rateLimitedGraphql(freshAdmin, query, vars || {}, 3, true);
+        return await rateLimitedGraphql(freshAdmin, query, vars || {}, 3, true, shopDomain);
       } catch {
         throw new Error(`Token inválido o expirado tras refresh reciente para ${shopDomain}.`);
       }
@@ -197,7 +197,7 @@ async function gql(admin: any, query: string, varsOrOptions?: any, shopDomain?: 
     lastRefreshAt.set(shopDomain, now);
 
     const freshAdmin = await getFreshAdminClient(shopDomain);
-    return rateLimitedGraphql(freshAdmin, query, vars || {}, 3, true);
+    return rateLimitedGraphql(freshAdmin, query, vars || {}, 3, true, shopDomain);
   }
 }
 
@@ -290,7 +290,7 @@ async function pollProductMediaForImages(admin: any, productId: string, shopDoma
 async function gqlWithRefresh(shopDomain: string, adminRef: { current: any }, query: string, varsOrOptions?: any): Promise<any> {
   const vars = varsOrOptions?.variables !== undefined ? varsOrOptions.variables : varsOrOptions;
   try {
-    return await rateLimitedGraphql(adminRef.current, query, vars || {});
+    return await rateLimitedGraphql(adminRef.current, query, vars || {}, 3, false, shopDomain);
   } catch (e: any) {
     const msg = e?.message || "";
     const isAuth = msg.includes("Unauthorized") || msg.includes("Session not found") || e?.response?.status === 401;
@@ -307,7 +307,7 @@ async function gqlWithRefresh(shopDomain: string, adminRef: { current: any }, qu
     adminRef.current = freshAdmin;
 
     // A4: reintento del mismo request lógico (tras refresh) → no cobra token
-    return rateLimitedGraphql(adminRef.current, query, vars || {}, 3, true);
+    return rateLimitedGraphql(adminRef.current, query, vars || {}, 3, true, shopDomain);
   }
 }
 

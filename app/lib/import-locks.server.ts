@@ -29,34 +29,44 @@ export function getActiveImportCount(): number {
 }
 
 // --- Rate limiter for Shopify API ---
-// Token bucket: 5 tokens/sec refill, burst of 10.
+// Bucket POR TIENDA: Shopify aplica los límites de rate per store, así que
+// cada shopDomain tiene su propio bucket de 5 tokens/s (burst 10). Calls sin
+// shop conocido (p.ej. webhooks sin contexto) caen al bucket "global".
 // Shopify cost-based throttling: queries = 1pt, mutations = 10pt.
-// At 5 req/s we stay well under the ~50 req/s limit for any mix of operations.
+// A 5 req/s por tienda nos mantenemos bien bajo el límite ~50 req/s de cada tienda.
 
-const MAX_CONCURRENT = 10;
 const TOKENS_PER_SECOND = 5;
 const MAX_BURST = 10;
 
-let tokens = MAX_BURST;
-let lastRefill = Date.now();
-const queue: Array<() => void> = [];
+type Bucket = { tokens: number; lastRefill: number };
+const buckets = new Map<string, Bucket>();
 
-function refillTokens(): void {
+function getBucket(key: string): Bucket {
+  let b = buckets.get(key);
+  if (!b) {
+    b = { tokens: MAX_BURST, lastRefill: Date.now() };
+    buckets.set(key, b);
+  }
+  return b;
+}
+
+function refillTokens(b: Bucket): void {
   const now = Date.now();
-  const elapsed = (now - lastRefill) / 1000;
+  const elapsed = (now - b.lastRefill) / 1000;
   if (elapsed > 0) {
     // A4: clamp ≥0 — el bucket nunca acumula deuda negativa
-    tokens = Math.min(MAX_BURST, Math.max(0, tokens + elapsed * TOKENS_PER_SECOND));
-    lastRefill = now;
+    b.tokens = Math.min(MAX_BURST, Math.max(0, b.tokens + elapsed * TOKENS_PER_SECOND));
+    b.lastRefill = now;
   }
 }
 
-function waitForToken(): Promise<void> {
+function waitForToken(shopKey: string): Promise<void> {
   return new Promise((resolve) => {
     const tryAcquire = () => {
-      refillTokens();
-      if (tokens >= 1) {
-        tokens -= 1;
+      const b = getBucket(shopKey);
+      refillTokens(b);
+      if (b.tokens >= 1) {
+        b.tokens -= 1;
         resolve();
         return;
       }
@@ -65,8 +75,8 @@ function waitForToken(): Promise<void> {
       // hacían tokens -= 1 al despertar → deuda negativa y esperas de ~100s.
       // Ahora solo se resta con tokens >= 1 (deuda imposible) y, con tokens
       // >= 0, la espera máxima por vuelta es 200ms → la cola se re-evalúa
-      // constantemente y se distribuye a ritmo de 5 tokens/s.
-      const waitMs = Math.ceil((1 - tokens) / TOKENS_PER_SECOND * 1000);
+      // constantemente y se distribuye a ritmo de 5 tokens/s del bucket.
+      const waitMs = Math.ceil((1 - b.tokens) / TOKENS_PER_SECOND * 1000);
       setTimeout(tryAcquire, Math.min(Math.max(waitMs, 20), 1000));
     };
     tryAcquire();
@@ -85,9 +95,11 @@ export async function rateLimitedGraphql(
   // A4: reintento del mismo request lógico (p.ej. tras refresh de token 401)
   // → no cobra token del bucket. Los reintentos internos de abajo ya eran
   // gratis (el token se cobra una sola vez antes del bucle).
-  isRetry = false
+  isRetry = false,
+  // Bucket por tienda: clave = shopDomain; sin clave → bucket "global".
+  shopKey?: string
 ): Promise<any> {
-  if (!isRetry) await waitForToken();
+  if (!isRetry) await waitForToken(shopKey || "global");
   try {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
