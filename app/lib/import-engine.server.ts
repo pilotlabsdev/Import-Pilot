@@ -781,6 +781,8 @@ async function runImportInner({ shopDomain, admin, filterType, filterSkus, filte
     let checkCounter = 0;
     const processedInventoryItems = new Set<string>();
     const imageQueue: ImageUploadTask[] = [];
+    // T2b: creates cuya productSet no devolvió media nodes → resolver al final
+    const mediaToResolve: Array<{ productId: string; csvFiles: string[] }> = [];
     for (const chunk of chunks) {
       for (const item of chunk) {
         checkCounter++;
@@ -829,6 +831,7 @@ async function runImportInner({ shopDomain, admin, filterType, filterSkus, filte
             processedInventoryItems,
             sourceKey,
             imageQueue,
+            mediaToResolve,
             barcodeMap,
           });
         } catch (error: any) {
@@ -856,6 +859,7 @@ async function runImportInner({ shopDomain, admin, filterType, filterSkus, filte
                 processedInventoryItems,
                 sourceKey,
                 imageQueue,
+                mediaToResolve,
                 barcodeMap,
               });
               retried = true;
@@ -871,7 +875,8 @@ async function runImportInner({ shopDomain, admin, filterType, filterSkus, filte
             result.errors.push({ sku, error: errorMsg, lineNumber });
           }
         }
-        await new Promise((r) => setTimeout(r, 500));
+        // T2a: sin sleep(500)/fila — el bucket de rateLimitedGraphql (5 req/s)
+        // ya limita la tasa real (doc Shopify: mutation=10pts, Standard=100pts/s).
 
         // Update progress every 10 products
         if (checkCounter % 10 === 0) {
@@ -929,6 +934,29 @@ async function runImportInner({ shopDomain, admin, filterType, filterSkus, filte
       }
     }
     } // end if (!cancelled)
+
+    // T2b fallback: media de creates que la productSet no devolvió → una query
+    // por producto al final del bucle (mucho más tarde que el viejo sleep de 2s;
+    // el bucket 5 req/s limita la ráfaga). Si sigue vacío → placeholders, igual
+    // que el comportamiento anterior.
+    if (mediaToResolve.length > 0) {
+      console.log(`[Import] Media fallback post-pasada: ${mediaToResolve.length} productos`);
+      for (const item of mediaToResolve) {
+        try {
+          const media = await queryProductMedia(admin, item.productId);
+          if (media.length > 0) {
+            const stored: StoredImage[] = media.map((m, i) => ({
+              mediaId: m.mediaId,
+              url: item.csvFiles[i] || m.url,
+            }));
+            await prisma.productMapping.updateMany({
+              where: { shopDomain, shopifyProductId: item.productId },
+              data: { shopifyImages: JSON.stringify(stored) },
+            });
+          }
+        } catch {}
+      }
+    }
 
     // Process all deferred image uploads in parallel batches
     if (imageQueue.length > 0) {
@@ -1016,6 +1044,7 @@ interface ProcessProductOptions {
   processedInventoryItems: Set<string>;
   sourceKey: string;
   imageQueue: ImageUploadTask[];
+  mediaToResolve: Array<{ productId: string; csvFiles: string[] }>;
   barcodeMap: Map<string, BarcodeMatch>;
 }
 
@@ -1032,6 +1061,7 @@ async function processProduct({
   processedInventoryItems,
   sourceKey,
   imageQueue,
+  mediaToResolve,
   barcodeMap,
 }: ProcessProductOptions): Promise<void> {
   let existing = await prisma.productMapping.findUnique({
@@ -2461,6 +2491,15 @@ async function processProduct({
         productSet(input: $input, synchronous: $synchronous) {
           product {
             id
+            media(first: 10) {
+              nodes {
+                id
+                status
+                ... on MediaImage {
+                  image { url }
+                }
+              }
+            }
             variants(first: 1) {
               edges {
                 node {
@@ -2590,20 +2629,27 @@ async function processProduct({
         },
       });
 
-      // Query Shopify media IDs for products with images (productSet uploads images async)
+      // T2b: media IDs de la propia respuesta productSet (ejemplo oficial
+      // "Create a product and associate files") → sin sleep(2000) ni query extra.
+      // Si Shopify no devuelve nodes (raro), se resuelve en el post-pasada.
       if (productInput.files?.length) {
         try {
-          await sleep(2000);
-          const media = await queryProductMedia(admin, productId);
-          if (media.length > 0) {
+          const mediaNodes: any[] = json.data?.productSet?.product?.media?.nodes || [];
+          const withId = mediaNodes.filter((n: any) => n?.id);
+          if (withId.length > 0) {
             const csvFiles = productInput.files.map((f: any) => f.originalSource);
-            const stored: StoredImage[] = media.map((m, i) => ({
-              mediaId: m.mediaId,
-              url: csvFiles[i] || m.url,
+            const stored: StoredImage[] = withId.map((m: any, i: number) => ({
+              mediaId: m.id,
+              url: csvFiles[i] || m.image?.url || "",
             }));
             await prisma.productMapping.updateMany({
               where: { shopDomain, shopifyProductId: productId },
               data: { shopifyImages: JSON.stringify(stored) },
+            });
+          } else {
+            mediaToResolve.push({
+              productId,
+              csvFiles: productInput.files.map((f: any) => f.originalSource),
             });
           }
         } catch {}
