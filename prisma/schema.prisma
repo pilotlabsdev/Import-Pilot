@@ -175,6 +175,7 @@ model ImportLog {
 
   @@index([shopDomain])
   @@index([configId, status])
+  @@index([status]) // sweeps globales del scheduler (running/stale/orphan cada 60s)
 }
 
 // Mapeo SKU proveedor → Product ID Shopify
@@ -207,6 +208,7 @@ model ProductMapping {
   @@unique([shopDomain, supplierSku])
   @@index([shopDomain, shopifyInventoryItemId])
   @@index([shopDomain, shopifyProductId])
+  @@index([shopDomain, ean]) // checkDuplicate() por producto durante imports
 }
 
 // Job de importación bulk en curso (pipeline async por webhook)
@@ -248,6 +250,7 @@ model BulkJob {
 
   @@index([shopDomain])
   @@index([configId, phase])
+  @@index([phase]) // sweeps/checks globales por fase cada 60s
 }
 model ShopSettings {
   id                 String   @id @default(cuid())
@@ -347,6 +350,7 @@ model ImportQueue {
 
   @@index([shopDomain, status])
   @@index([configId, status])
+  @@index([status, finishedAt]) // poda de terminadas >24h + queued stale
 }
 
 // Chat de soporte merchant ↔ developer
