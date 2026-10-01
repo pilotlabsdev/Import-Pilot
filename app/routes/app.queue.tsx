@@ -186,6 +186,7 @@ export default function QueuePage() {
                                 <>
                                   <Text as="span" variant="bodySm">
                                     {progress.processedProducts} / {progress.totalProducts} {t("queue.products")}
+                                    {(progress.excluded || 0) > 0 ? ` · ${t("common.excluded")}: ${progress.excluded}` : ""}
                                   </Text>
                                   <Text as="span" variant="bodySm" tone="subdued">
                                     {t("queue.lastSku")} {progress.lastSku || "—"}

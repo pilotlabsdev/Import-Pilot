@@ -507,6 +507,7 @@ export async function getQueueStatus(shopDomain: string): Promise<{
         lastSku: log.lastSku || "",
         status: "running",
         errors: errorCount,
+        excluded: log.excludedCount || 0,
       },
     });
   }
@@ -734,6 +735,8 @@ export async function getQueueStatus(shopDomain: string): Promise<{
       lastSku: log.lastSku || "",
       status: log.status,
       errors: errorCount,
+      // Chunks: excluidos en vivo desde el ImportLog (bulk lo sobreescribe abajo)
+      excluded: log.excludedCount || 0,
     };
     if (bulkJob) {
       // Mismo plegado de contadores en vivo que en Loop2 (ops processing → heartbeat)
@@ -752,7 +755,7 @@ export async function getQueueStatus(shopDomain: string): Promise<{
         (bulkJob.totalMutationOps || 0) > 0 &&
         (bulkJob.createCount || 0) + (bulkJob.updateCount || 0) + (bulkJob.unchangedCount || 0) +
           liveCreated + liveUpdated + liveUnchanged === 0;
-      progress.excluded = bulkJob.excludedCount ?? undefined;
+      progress.excluded = bulkJob.excludedCount ?? progress.excluded;
       progress.priceChanges = bulkJob.priceChanges ?? undefined;
       progress.stockChanges = bulkJob.stockChanges ?? undefined;
       progress.costChanges = bulkJob.costChanges ?? undefined;
@@ -879,7 +882,7 @@ export async function getQueueItemProgress(itemId: string): Promise<{
     created: bulkJob?.createCount ?? undefined,
     updated: bulkJob?.updateCount ?? undefined,
     unchanged: bulkJob?.unchangedCount ?? undefined,
-    excluded: bulkJob?.excludedCount ?? undefined,
+    excluded: bulkJob?.excludedCount ?? log.excludedCount ?? 0,
     priceChanges: bulkJob?.priceChanges ?? undefined,
     stockChanges: bulkJob?.stockChanges ?? undefined,
     costChanges: bulkJob?.costChanges ?? undefined,
