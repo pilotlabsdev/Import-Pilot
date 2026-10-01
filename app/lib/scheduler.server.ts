@@ -416,6 +416,26 @@ export function startScheduler() {
       },
     }).catch(() => ({ count: 0 }));
 
+    // Poda de filas terminadas: "Recientes" se construye desde ImportLog
+    // (queue-manager.getQueueStatus), no desde ImportQueue — solo se pierde el
+    // fallback failedQueueItems, que conservamos 24h. Antes solo se borraban
+    // con el botón manual "Limpiar completadas".
+    const TERMINAL_RETENTION_MS = 24 * 60 * 60 * 1000;
+    void prisma.importQueue
+      .deleteMany({
+        where: {
+          status: { in: ["completed", "failed", "cancelled"] },
+          OR: [
+            { finishedAt: { lt: new Date(Date.now() - TERMINAL_RETENTION_MS) } },
+            { finishedAt: null, createdAt: { lt: new Date(Date.now() - TERMINAL_RETENTION_MS) } },
+          ],
+        },
+      })
+      .then((r) => {
+        if (r.count > 0) console.log(`[Scheduler] Poda: ${r.count} colas terminadas >24h`);
+      })
+      .catch(() => ({ count: 0 }));
+
     void prisma.importQueue.findMany({
       where: {
         status: "running",
