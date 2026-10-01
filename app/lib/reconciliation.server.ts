@@ -2,6 +2,13 @@ import { prisma, ensureSingleSession } from "./db.server";
 import { getFreshAdminClient } from "./bulk-import.server";
 
 const BATCH_SIZE = 50;
+// Tope por pasada: con N merchants, recorrer todas las tiendas con GraphQL
+// (batches de 50 ids) en un único tick puede superar el intervalo de 60min y
+// solaparse con la siguiente pasada. Rotación por offset para cubrir todas
+// en varias pasadas.
+const SHOPS_PER_PASS = 20;
+let reconcileInFlight = false;
+let shopOffset = 0;
 
 export async function reconcileOrphanedMappings(shopDomain: string): Promise<{ checked: number; deleted: number }> {
   await ensureSingleSession(shopDomain);
@@ -54,16 +61,38 @@ export async function reconcileOrphanedMappings(shopDomain: string): Promise<{ c
 }
 
 export async function reconcileAllShops(): Promise<void> {
-  const shops = await prisma.productMapping.findMany({
-    select: { shopDomain: true },
-    distinct: ["shopDomain"],
-  });
+  // Guard de reentrada: la llamada del scheduler es fire-and-forget cada 60s
+  // (reconcileCounter); si una pasada anterior sigue viva (GraphQL lento con
+  // muchas tiendas) no se solapan dos — la segunda simplemente se salta.
+  if (reconcileInFlight) return;
+  reconcileInFlight = true;
+  try {
+    const shops = await prisma.productMapping.findMany({
+      select: { shopDomain: true },
+      distinct: ["shopDomain"],
+      orderBy: { shopDomain: "asc" },
+    });
 
-  for (const { shopDomain } of shops) {
-    try {
-      await reconcileOrphanedMappings(shopDomain);
-    } catch (e: any) {
-      console.error(`[Reconciliation] Error reconciling ${shopDomain}:`, e?.message);
+    let slice = shops;
+    if (shops.length > SHOPS_PER_PASS) {
+      // Rotación: cada pasada cubre un tramo distinto para no castigar siempre
+      // las mismas tiendas y completar el barrido en varias pasadas.
+      const start = shopOffset % shops.length;
+      shopOffset = (start + SHOPS_PER_PASS) % shops.length;
+      slice = shops.slice(start, start + SHOPS_PER_PASS);
+      console.log(
+        `[Reconciliation] ${shops.length} tiendas con mappings — pasada de ${SHOPS_PER_PASS} (offset ${start})`
+      );
     }
+
+    for (const { shopDomain } of slice) {
+      try {
+        await reconcileOrphanedMappings(shopDomain);
+      } catch (e: any) {
+        console.error(`[Reconciliation] Error reconciling ${shopDomain}:`, e?.message);
+      }
+    }
+  } finally {
+    reconcileInFlight = false;
   }
 }
