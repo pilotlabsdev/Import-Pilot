@@ -171,6 +171,11 @@ const shopify = shopifyApp({
             data: { active: true, uninstalledAt: null },
           });
           console.log(`[Shopify] Shop ${session.shop} reactivado tras reinstalación`);
+          // Re-armar timers de importaciones (se limpiaron al desinstalar).
+          // Import dinámico para no crear ciclo con scheduler.server → shopify.server
+          void import("~/lib/scheduler.server")
+            .then((m) => m.refreshSchedules())
+            .catch(() => {});
         }
       } catch (err: any) {
         console.error(`[Shopify] afterAuth: cleanup failed for ${session.shop}: ${err?.message || err}`);

@@ -507,8 +507,22 @@ export async function refreshSchedules() {
       where: { isActive: true, planPaused: false },
     });
 
+    // Excluir tiendas desinstaladas (shopSettings.active=false): sus timers se
+    // limpian en el bucle de abajo y no se re-arman. Tras reinstalar,
+    // afterAuth reactiva la tienda y dispara refreshSchedules para re-armarlos.
+    const shopDomains = [...new Set(configs.map((c) => c.shopDomain))];
+    const uninstalledShops = new Set(
+      (
+        await prisma.shopSettings
+          .findMany({
+            where: { shopDomain: { in: shopDomains }, active: false },
+            select: { shopDomain: true },
+          })
+          .catch(() => [])
+      ).map((s) => s.shopDomain)
+    );
 
-    const activeIds = new Set(configs.map((c) => c.id));
+    const activeIds = new Set(configs.filter((c) => !uninstalledShops.has(c.shopDomain)).map((c) => c.id));
 
     for (const [id] of timers) {
       if (!activeIds.has(id)) {
@@ -522,6 +536,7 @@ export async function refreshSchedules() {
     }
 
     for (const config of configs) {
+      if (uninstalledShops.has(config.shopDomain)) continue;
       if (!isUrlSource(config)) {
         if (timers.has(config.id)) {
           clearTimeout(timers.get(config.id)!);
@@ -633,6 +648,19 @@ async function runScheduledImport(configId: string) {
     }
 
     if (config.planPaused) {
+      scheduleNext(configId, scheduledFrequencies.get(configId) || "4h", null);
+      return;
+    }
+
+    // Tienda desinstalada: APP_UNINSTALLED marca shopSettings.active=false y
+    // borra sesiones, pero el timer sigue vivo (refreshSchedules no corre
+    // periódicamente) → saltar SIN llamar a Partner API ni encolar. Al
+    // reinstalar, afterAuth reactiva y dispara refreshSchedules.
+    const settings = await prisma.shopSettings.findUnique({
+      where: { shopDomain: config.shopDomain },
+      select: { active: true },
+    }).catch(() => null);
+    if (settings && !settings.active) {
       scheduleNext(configId, scheduledFrequencies.get(configId) || "4h", null);
       return;
     }
