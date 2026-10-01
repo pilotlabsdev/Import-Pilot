@@ -183,7 +183,7 @@ async function gql(admin: any, query: string, varsOrOptions?: any, shopDomain?: 
       // Already refreshed successfully recently, try with fresh client anyway
       try {
         const freshAdmin = await getFreshAdminClient(shopDomain);
-        return await rateLimitedGraphql(freshAdmin, query, vars || {});
+        return await rateLimitedGraphql(freshAdmin, query, vars || {}, 3, true);
       } catch {
         throw new Error(`Token inválido o expirado tras refresh reciente para ${shopDomain}.`);
       }
@@ -197,7 +197,7 @@ async function gql(admin: any, query: string, varsOrOptions?: any, shopDomain?: 
     lastRefreshAt.set(shopDomain, now);
 
     const freshAdmin = await getFreshAdminClient(shopDomain);
-    return rateLimitedGraphql(freshAdmin, query, vars || {});
+    return rateLimitedGraphql(freshAdmin, query, vars || {}, 3, true);
   }
 }
 
@@ -271,13 +271,13 @@ async function processBulkImageQueue(admin: any, queue: BulkImageTask[], shopDom
 // (~400ms); recién creados → se detecta en cuanto aparece, sin esperas ciegas de 3s por fila.
 // Si nunca aparece devuelve [] (misma semántica que antes: no se escribe shopifyImages).
 const MEDIA_POLL_MAX_MS = 17_000;
-async function pollProductMediaForImages(admin: any, productId: string): Promise<StoredImage[]> {
+async function pollProductMediaForImages(admin: any, productId: string, shopDomain?: string): Promise<StoredImage[]> {
   const start = Date.now();
   let delay = 400;
   for (;;) {
     await new Promise((r) => setTimeout(r, delay));
     try {
-      const media = await queryProductMedia(admin, productId);
+      const media = await queryProductMedia(admin, productId, shopDomain);
       if (media.length > 0) return media;
     } catch {}
     if (Date.now() - start >= MEDIA_POLL_MAX_MS) return [];
@@ -306,7 +306,8 @@ async function gqlWithRefresh(shopDomain: string, adminRef: { current: any }, qu
     const freshAdmin = await getFreshAdminClient(shopDomain);
     adminRef.current = freshAdmin;
 
-    return rateLimitedGraphql(adminRef.current, query, vars || {});
+    // A4: reintento del mismo request lógico (tras refresh) → no cobra token
+    return rateLimitedGraphql(adminRef.current, query, vars || {}, 3, true);
   }
 }
 
@@ -2143,7 +2144,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
 
         if (meta.images?.length) {
           try {
-            const media = await pollProductMediaForImages(admin, product.id);
+            const media = await pollProductMediaForImages(admin, product.id, job.shopDomain);
             if (media.length > 0) {
               const stored: StoredImage[] = media.map((m, i) => ({
                 mediaId: m.mediaId,

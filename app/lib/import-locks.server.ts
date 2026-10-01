@@ -41,29 +41,35 @@ let tokens = MAX_BURST;
 let lastRefill = Date.now();
 const queue: Array<() => void> = [];
 
-function refillTokens() {
+function refillTokens(): void {
   const now = Date.now();
   const elapsed = (now - lastRefill) / 1000;
   if (elapsed > 0) {
-    tokens = Math.min(MAX_BURST, tokens + elapsed * TOKENS_PER_SECOND);
+    // A4: clamp ≥0 — el bucket nunca acumula deuda negativa
+    tokens = Math.min(MAX_BURST, Math.max(0, tokens + elapsed * TOKENS_PER_SECOND));
     lastRefill = now;
   }
 }
 
 function waitForToken(): Promise<void> {
-  refillTokens();
-  if (tokens >= 1) {
-    tokens -= 1;
-    return Promise.resolve();
-  }
-  // Wait until at least 1 token is available
-  const waitMs = Math.ceil((1 - tokens) / TOKENS_PER_SECOND * 1000);
   return new Promise((resolve) => {
-    setTimeout(() => {
+    const tryAcquire = () => {
       refillTokens();
-      tokens -= 1;
-      resolve();
-    }, waitMs);
+      if (tokens >= 1) {
+        tokens -= 1;
+        resolve();
+        return;
+      }
+      // A4: re-check en bucle en vez de dormir una vez y restar "a ciegas".
+      // Antes N esperadores simultáneos calculaban la misma espera y todos
+      // hacían tokens -= 1 al despertar → deuda negativa y esperas de ~100s.
+      // Ahora solo se resta con tokens >= 1 (deuda imposible) y, con tokens
+      // >= 0, la espera máxima por vuelta es 200ms → la cola se re-evalúa
+      // constantemente y se distribuye a ritmo de 5 tokens/s.
+      const waitMs = Math.ceil((1 - tokens) / TOKENS_PER_SECOND * 1000);
+      setTimeout(tryAcquire, Math.min(Math.max(waitMs, 20), 1000));
+    };
+    tryAcquire();
   });
 }
 
@@ -75,9 +81,13 @@ export async function rateLimitedGraphql(
   admin: any,
   query: string,
   vars: any,
-  maxRetries = 3
+  maxRetries = 3,
+  // A4: reintento del mismo request lógico (p.ej. tras refresh de token 401)
+  // → no cobra token del bucket. Los reintentos internos de abajo ya eran
+  // gratis (el token se cobra una sola vez antes del bucle).
+  isRetry = false
 ): Promise<any> {
-  await waitForToken();
+  if (!isRetry) await waitForToken();
   try {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {

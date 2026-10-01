@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { prisma, getOrCreateConfig, getEffectiveUrl, getSourceKey, cleanupOldLogs, refreshAccessToken } from "./db.server";
 import { resolveFileUrl } from "./storage.server";
 import { streamFile, isExcluded, parseExcludeFieldRules, getExcludedFields } from "./csv-parser.server";
@@ -52,14 +53,29 @@ interface BarcodeMatch {
   sku: string;
 }
 
-// Mutable admin ref for token refresh during long-running imports.
-// Set at the start of runImport; updated by graphqlWithRefresh on 401.
-let _adminRef: { current: any } = { current: null };
-let _shopDomainRef = "";
-// N2: throttle de refresh de token (espejo de bulk-import gql: lastRefreshAt 30s)
+// A1: contexto por-tienda para GraphQL (AsyncLocalStorage — docs Node: Stability 2;
+// run()/getStore() propagan el store por toda la cadena async creada dentro del
+// callback, incluidos worker pool y sleeps). ANTES había un único _adminRef /
+// _shopDomainRef global: con 2 tiendas importando a la vez, las mutaciones de la
+// tienda A usaban el admin de la tienda B (escritura en el store equivocado).
+// Fuera de un contexto (p.ej. llamadas sueltas desde bulk/webhooks) getStore()
+// devuelve undefined y graphqlWithRetry usa el admin que le pasa el llamante,
+// que siempre es el de su propia tienda.
+type ImportGraphqlCtx = { shopDomain: string; adminRef: { current: any } };
+const _importCtx = new AsyncLocalStorage<ImportGraphqlCtx>();
+
+// N2: throttle de refresh de token (espejo de bulk gql: lastRefreshAt 30s)
 // Evita que el worker pool dispare N refreshes OAuth simultáneos con 401 en ráfaga.
 const _lastRefreshAt = new Map<string, number>();
 const MIN_REFRESH_INTERVAL_MS = 30_000;
+
+// Ejecuta fn con contexto de tienda solo si aún no lo hay (entrada desde bulk
+// o webhooks); si ya existe (ruta chunks) se reutiliza para conservar el admin
+// refrescado mid-import.
+function withShopCtx<T>(shopDomain: string | undefined | null, admin: any, fn: () => Promise<T>): Promise<T> {
+  if (!shopDomain || _importCtx.getStore()) return fn();
+  return _importCtx.run({ shopDomain, adminRef: { current: admin } }, fn);
+}
 
 async function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -196,41 +212,60 @@ function normalizeImageUrl(url: string): string {
   }
 }
 
-export async function queryProductMedia(admin: any, productId: string): Promise<StoredImage[]> {
-  const mediaRes = await graphqlWithRetry(admin,
-    `#graphql
-    query productMedia($id: ID!) {
-      product(id: $id) {
-        media(first: 50) {
-          edges {
-            node {
-              id
-              ... on MediaImage {
-                image {
-                  url
+export async function queryProductMedia(admin: any, productId: string, shopDomain?: string): Promise<StoredImage[]> {
+  // A1: entradas desde bulk/webhooks pasan la tienda → contexto de refresh
+  // correcto; sin tienda (o ya en contexto) se ejecuta tal cual con el admin dado.
+  return withShopCtx(shopDomain, admin, async () => {
+    const mediaRes = await graphqlWithRetry(admin,
+      `#graphql
+      query productMedia($id: ID!) {
+        product(id: $id) {
+          media(first: 50) {
+            edges {
+              node {
+                id
+                ... on MediaImage {
+                  image {
+                    url
+                  }
                 }
               }
             }
           }
         }
+      }`,
+      { id: productId }
+    );
+    const images: StoredImage[] = [];
+    for (const edge of mediaRes.data?.product?.media?.edges || []) {
+      const node = edge.node;
+      if (node?.id) {
+        const url = node.image?.url || "";
+        images.push({ mediaId: node.id, url });
       }
-    }`,
-    { id: productId }
-  );
-  const images: StoredImage[] = [];
-  for (const edge of mediaRes.data?.product?.media?.edges || []) {
-    const node = edge.node;
-    if (node?.id) {
-      const url = node.image?.url || "";
-      images.push({ mediaId: node.id, url });
     }
-  }
-  return images;
+    return images;
+  });
 }
 
 export async function incrementalImageUpdate(
   admin: any,
   shopDomain: string,
+  shopifyProductId: string,
+  supplierSku: string,
+  csvFiles: Array<{ originalSource: string; alt: string; contentType: string }>,
+  label: string,
+  storedImages?: StoredImage[],
+): Promise<{ changed: boolean; newImages: StoredImage[] }> {
+  // A1: bulk entra aquí sin contexto de tienda → crearlo con ESTE shopDomain/admin
+  // (si ya existe — ruta chunks — se reutiliza para conservar el admin refrescado)
+  return withShopCtx(shopDomain, admin, () =>
+    incrementalImageUpdateInner(admin, shopifyProductId, supplierSku, csvFiles, label, storedImages)
+  );
+}
+
+async function incrementalImageUpdateInner(
+  admin: any,
   shopifyProductId: string,
   supplierSku: string,
   csvFiles: Array<{ originalSource: string; alt: string; contentType: string }>,
@@ -327,39 +362,44 @@ export async function incrementalImageUpdate(
   return { changed: true, newImages: paired };
 }
 
-async function graphqlWithRetry(_admin: any, query: string, vars: any, maxRetries = 3): Promise<any> {
-  // Always use module-level ref (may have been refreshed mid-import)
-  const admin = _adminRef.current || _admin;
+async function graphqlWithRetry(adminParam: any, query: string, vars: any, maxRetries = 3): Promise<any> {
+  // A1: admin del contexto de la tienda actual (incluye el admin refrescado
+  // mid-import). Sin contexto → el admin que pasa el llamante (su propia tienda).
+  const ctx = _importCtx.getStore();
+  const admin = ctx ? ctx.adminRef.current : adminParam;
   try {
     return await rateLimitedGraphql(admin, query, vars, maxRetries);
   } catch (e: any) {
     const msg = e?.message || "";
     const isAuth = msg.includes("Unauthorized") || msg.includes("Session not found") || e?.response?.status === 401;
-    if (!isAuth || !_shopDomainRef) throw e;
+    if (!isAuth || !ctx) throw e;
 
-    console.log(`[Import] Token expired mid-import for ${_shopDomainRef}, refreshing...`);
+    const shopDomain = ctx.shopDomain;
+    console.log(`[Import] Token expired mid-import for ${shopDomain}, refreshing...`);
     const now = Date.now();
-    const lastRefresh = _lastRefreshAt.get(_shopDomainRef) || 0;
+    const lastRefresh = _lastRefreshAt.get(shopDomain) || 0;
     if (now - lastRefresh < MIN_REFRESH_INTERVAL_MS) {
       // N2: hubo un refresh hace <30s (otro hilo del pool) — recrear cliente
       // con la sesión ya renovada, sin repetir el OAuth
-      const { admin: freshAdmin } = await shopify.unauthenticated.admin(_shopDomainRef);
-      _adminRef.current = freshAdmin;
-      console.log(`[Import] Token refreshed recently for ${_shopDomainRef}, reusing...`);
-      return rateLimitedGraphql(_adminRef.current, query, vars, maxRetries);
+      const { admin: freshAdmin } = await shopify.unauthenticated.admin(shopDomain);
+      ctx.adminRef.current = freshAdmin;
+      console.log(`[Import] Token refreshed recently for ${shopDomain}, reusing...`);
+      // A4: reintento del mismo request lógico → no cobra token del bucket
+      return rateLimitedGraphql(ctx.adminRef.current, query, vars, maxRetries, true);
     }
 
-    const newToken = await refreshAccessToken(_shopDomainRef);
+    const newToken = await refreshAccessToken(shopDomain);
     if (!newToken) {
-      throw new Error(`Token expirado para ${_shopDomainRef} y no se pudo refrescar.`);
+      throw new Error(`Token expirado para ${shopDomain} y no se pudo refrescar.`);
     }
-    _lastRefreshAt.set(_shopDomainRef, now);
+    _lastRefreshAt.set(shopDomain, now);
 
-    const { admin: newAdmin } = await shopify.unauthenticated.admin(_shopDomainRef);
-    _adminRef.current = newAdmin;
-    console.log(`[Import] Token refreshed mid-import for ${_shopDomainRef}, retrying...`);
+    const { admin: newAdmin } = await shopify.unauthenticated.admin(shopDomain);
+    ctx.adminRef.current = newAdmin;
+    console.log(`[Import] Token refreshed mid-import for ${shopDomain}, retrying...`);
 
-    return rateLimitedGraphql(_adminRef.current, query, vars, maxRetries);
+    // A4: reintento del mismo request lógico → no cobra token del bucket
+    return rateLimitedGraphql(ctx.adminRef.current, query, vars, maxRetries, true);
   }
 }
 
@@ -581,11 +621,17 @@ interface ImportOptions {
   resumeFromSku?: string;
 }
 
-export async function runImport({ shopDomain, admin, filterType, filterSkus, filterCategories, signal, triggerType, configId, queueItemId, resumeFromSku }: ImportOptions): Promise<ImportResult> {
-  // Set module-level refs for mid-import token refresh
-  _adminRef.current = admin;
-  _shopDomainRef = shopDomain;
+export async function runImport(opts: ImportOptions): Promise<ImportResult> {
+  // A1: todo el import corre dentro de un contexto de tienda → graphqlWithRetry
+  // y todo el árbol async (worker pool, sleeps, streams) usan el admin de ESTA
+  // tienda; el refresh de 401 actualiza solo este contexto.
+  return _importCtx.run(
+    { shopDomain: opts.shopDomain, adminRef: { current: opts.admin } },
+    () => runImportInner(opts)
+  );
+}
 
+async function runImportInner({ shopDomain, admin, filterType, filterSkus, filterCategories, signal, triggerType, configId, queueItemId, resumeFromSku }: ImportOptions): Promise<ImportResult> {
   let config;
   const sourceKey = getSourceKey(configId ? await prisma.importConfig.findUnique({ where: { id: configId } }) || {} : await getOrCreateConfig(shopDomain));
   if (configId) {

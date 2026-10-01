@@ -194,7 +194,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           // Query GraphQL for live MediaImage IDs, then keep only DB entries still alive.
           try {
             const { admin } = await shopify.unauthenticated.admin(shop);
-            const liveMedia = await queryProductMedia(admin, productId);
+            const liveMedia = await queryProductMedia(admin, productId, shop);
             const liveIds = new Set(liveMedia.map((m) => m.mediaId));
             const remaining = currentImages.filter((i) => i.mediaId && liveIds.has(i.mediaId));
 
