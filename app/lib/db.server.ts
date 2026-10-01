@@ -15,7 +15,11 @@ function buildDataSourceUrl(): string | undefined {
   if (!raw) return undefined;
   try {
     const u = new URL(raw);
-    if (!u.searchParams.has("connection_limit")) u.searchParams.set("connection_limit", "40");
+    // 40→80: SHOW max_connections en prod = 500 (uso real ~17) — 40 era el
+    // cuello de botella en ráfagas (N merchants × counts + sweep + imports).
+    // Prisma abre conexiones bajo demanda hasta este límite; 80 deja margen
+    // para el resto de consumidores del servidor.
+    if (!u.searchParams.has("connection_limit")) u.searchParams.set("connection_limit", "80");
     if (!u.searchParams.has("pool_timeout")) u.searchParams.set("pool_timeout", "60");
     if (!u.searchParams.has("connect_timeout")) u.searchParams.set("connect_timeout", "10");
     return u.toString();
