@@ -15,13 +15,51 @@ interface RowCacheEntry {
   rows: Array<Record<string, string | undefined>>;
   headers: string[];
   createdAt: number;
+  byteSize: number;
 }
 
 const cache = new Map<string, CacheEntry>();
 const rowCache = new Map<string, RowCacheEntry>();
 const MAX_ENTRIES = 50;
 const MAX_ROW_ENTRIES = 10;
+// Cap de memoria: solo LRU por entradas no limita nada — 10 feeds completos
+// (miles de filas × ~30 columnas) podían ocupar cientos de MB en RAM.
+const MAX_ROW_CACHE_BYTES = 64 * 1024 * 1024;
+let rowCacheBytes = 0;
 const TTL_MS = 60 * 60 * 1000;
+
+function estimateRowCacheBytes(
+  rows: Array<Record<string, string | undefined>>,
+  headers: string[]
+): number {
+  // Heurística: longitud de celdas + overhead por celda (clave del objeto V8)
+  let bytes = 0;
+  for (const row of rows) {
+    for (const h of headers) bytes += (row[h]?.length || 0) + 32;
+  }
+  return bytes;
+}
+
+function deleteRowCache(key: string): void {
+  const entry = rowCache.get(key);
+  if (entry) {
+    rowCacheBytes -= entry.byteSize;
+    rowCache.delete(key);
+  }
+}
+
+function evictOldestRowCache(protectKey?: string): void {
+  let oldestKey = "";
+  let oldestTime = Infinity;
+  for (const [k, v] of rowCache) {
+    if (k === protectKey) continue;
+    if (v.createdAt < oldestTime) {
+      oldestTime = v.createdAt;
+      oldestKey = k;
+    }
+  }
+  if (oldestKey) deleteRowCache(oldestKey);
+}
 
 function makeCacheKey(configId: string, url: string, delimiter: string): string {
   return `${configId}|${url}|${delimiter}`;
@@ -76,9 +114,9 @@ export function invalidateCache(configId: string): void {
       cache.delete(key);
     }
   }
-  for (const key of rowCache.keys()) {
+  for (const key of [...rowCache.keys()]) {
     if (key.startsWith(configId + "|")) {
-      rowCache.delete(key);
+      deleteRowCache(key);
     }
   }
 }
@@ -274,7 +312,7 @@ export async function getCachedCsvRows(
       return { rows: cached.rows, headers: cached.headers };
     }
   } else {
-    rowCache.delete(key);
+    deleteRowCache(key);
   }
 
   return dedupe(key, async () => {
@@ -301,20 +339,30 @@ export async function getCachedCsvRows(
       return { rows, headers };
     }
 
-    // Evict oldest row cache entries
-    if (rowCache.size >= MAX_ROW_ENTRIES) {
-      let oldestKey = "";
-      let oldestTime = Infinity;
-      for (const [k, v] of rowCache) {
-        if (v.createdAt < oldestTime) {
-          oldestTime = v.createdAt;
-          oldestKey = k;
-        }
-      }
-      if (oldestKey) rowCache.delete(oldestKey);
+    // Entrada única más grande que todo el cap → no cachear (devolver datos
+    // y listo; la próxima petición re-streama, igual que sin caché)
+    const byteSize = estimateRowCacheBytes(rows, headers);
+    if (byteSize > MAX_ROW_CACHE_BYTES) {
+      console.warn(
+        `[CsvCache] Entrada de ${rows.length} filas (~${Math.round(byteSize / (1024 * 1024))}MB) supera el cap de rowCache — no se cachea`
+      );
+      return { rows, headers };
     }
 
-    rowCache.set(key, { rows, headers, createdAt: Date.now() });
+    // Reemplazo de posible entrada previa de la misma clave (TTL expirada)
+    deleteRowCache(key);
+    rowCache.set(key, { rows, headers, createdAt: Date.now(), byteSize });
+    rowCacheBytes += byteSize;
+
+    // Evict LRU hasta respetar límite de ENTRADAS y de BYTES
+    // (nunca se echa la entrada recién insertada)
+    while (
+      (rowCache.size > MAX_ROW_ENTRIES || rowCacheBytes > MAX_ROW_CACHE_BYTES) &&
+      rowCache.size > 1
+    ) {
+      evictOldestRowCache(key);
+    }
+
     return { rows, headers };
   });
 }
