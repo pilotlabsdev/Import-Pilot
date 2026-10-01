@@ -28,7 +28,7 @@ function normalizeHtml(html: string): string {
     .normalize("NFC")
     .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
     .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
-    .replace(/&(\w+);/g, (entity) => HTML_ENTITY_MAP[entity] || "")
+    .replace(/&(\w+);/g, (_, name) => HTML_ENTITY_MAP[name] ?? " ")
     .replace(/<\/?[a-zA-Z][^>]*>/g, " ")
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u200B\u200C\u200D\u00AD\u2060\uFEFF]/g, "")
     .replace(/[^a-záéíóúñüàèìòùäëïöûçñ0-9\s]/gi, " ")
@@ -41,6 +41,12 @@ function normalizeHtml(html: string): string {
 
 function descriptionsMatch(a: string, b: string): boolean {
   return normalizeHtml(a) === normalizeHtml(b);
+}
+
+// El feed trae ZWSP (\u200b) en algunos títulos; Shopify lo elimina al guardar.
+// Sin esta limpieza la comparación title csv vs live nunca empata → update fantasma cada run.
+function stripInvisible(s: string | null): string {
+  return (s ?? "").replace(/[\u200B-\u200D\u2060\uFEFF\u00AD]/g, "").trim();
 }
 
 function normalizeTags(tags: string[]): string {
@@ -2135,7 +2141,7 @@ async function processProduct({
 
     const imagesChanged = updateOpts.has("images") && (productInput.files?.length ?? 0) > 0;
 
-    const titleChanged = updateOpts.has("name") && productInput.title && productInput.title !== liveTitle;
+    const titleChanged = updateOpts.has("name") && productInput.title && stripInvisible(productInput.title) !== stripInvisible(liveTitle);
     const csvDescNorm = normalizeHtml(productInput.descriptionHtml ?? "");
     const liveDescNorm = normalizeHtml(liveDescription ?? "");
     const descriptionChanged = updateOpts.has("description") && productInput.descriptionHtml && csvDescNorm !== liveDescNorm;
@@ -2291,7 +2297,7 @@ async function processProduct({
     }
 
     if (Object.keys(productPatch).length > 1) {
-      console.log(`[Import] SKU ${sku}: productUpdate with keys=${Object.keys(productPatch).join(",")} titleChanged=${titleChanged} descChanged=${descriptionChanged}`);
+      console.log(`[Import] SKU ${sku}: productUpdate with keys=${Object.keys(productPatch).join(",")} price=${priceChanged} stock=${stockChanged} cost=${costChanged} title=${titleChanged} desc=${descriptionChanged} vendor=${vendorChanged} pt=${productTypeChanged} tags=${tagsChanged} sku=${skuChangedEarly}`);
       const updateRes = await graphqlWithRetry(admin,
         `#graphql
         mutation productUpdate($product: ProductUpdateInput!) {
