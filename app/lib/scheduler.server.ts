@@ -40,6 +40,20 @@ function getStaggerOffset(configId: string): number {
   return configStaggerOffset.get(configId)!;
 }
 
+// Stagger amplio para configs vencidos / sin lastImportAt (arranque en frío).
+// El floor de 10s del cálculo de delay absorbía el stagger normal de 0-120s
+// → todos los timers vencidos disparaban a boot+10s juntos (cola, BD y
+// Partner API golpeados a la vez en cada reinicio con N merchants).
+const COLD_STAGGER_MS = 15 * 60_000;
+const configColdStagger = new Map<string, number>();
+
+function getColdStagger(configId: string): number {
+  if (!configColdStagger.has(configId)) {
+    configColdStagger.set(configId, Math.floor(Math.random() * COLD_STAGGER_MS));
+  }
+  return configColdStagger.get(configId)!;
+}
+
 function scheduleNext(configId: string, frequency: string, lastImportAt: Date | null, retryMs?: number) {
   const existing = timers.get(configId);
   if (existing) clearTimeout(existing);
@@ -56,8 +70,14 @@ function scheduleNext(configId: string, frequency: string, lastImportAt: Date | 
     const referenceTime = lastImportAt ? lastImportAt.getTime() : 0;
 
     const elapsed = now - referenceTime;
-    const stagger = getStaggerOffset(configId);
-    delay = Math.max(freqMs - elapsed + stagger, 10_000);
+    const base = freqMs - elapsed;
+    if (base < 10_000) {
+      // Vencido o sin lastImportAt: antes el stagger quedaba dentro del floor
+      // y TODOS los configs vencidos disparaban a boot+10s sin separación.
+      delay = 10_000 + getColdStagger(configId);
+    } else {
+      delay = base + getStaggerOffset(configId);
+    }
   }
 
   const nextRunAt = new Date(Date.now() + delay);
@@ -496,6 +516,7 @@ export async function refreshSchedules() {
         timers.delete(id);
         scheduledFrequencies.delete(id);
         configStaggerOffset.delete(id);
+        configColdStagger.delete(id);
         pendingRetries.delete(id);
       }
     }
