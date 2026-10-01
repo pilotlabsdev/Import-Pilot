@@ -185,9 +185,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       if (currentImages.length > 0) {
         if (Array.isArray(payloadImages) && payloadImages.length === 0) {
-          // All images manually deleted (explicit empty array)
-          patch.shopifyImages = JSON.stringify([]);
-          console.log(`[Webhook] IMAGE DELETE-ALL SKU=${mapping.supplierSku}: db=${currentImages.length} → 0`);
+          // Payload vacío ≠ borrado real: en productos recién creados Shopify aún no
+          // adjunta las imágenes. Verificar contra GraphQL antes de vaciar el mapping.
+          try {
+            const { admin } = await shopify.unauthenticated.admin(shop);
+            const liveMedia = await queryProductMedia(admin, productId, shop);
+            if (liveMedia.length > 0) {
+              console.log(`[Webhook] IMAGE DELETE-ALL SKIP SKU=${mapping.supplierSku}: payload vacío pero live=${liveMedia.length} (db=${currentImages.length})`);
+            } else {
+              patch.shopifyImages = JSON.stringify([]);
+              console.log(`[Webhook] IMAGE DELETE-ALL SKU=${mapping.supplierSku}: db=${currentImages.length} → 0`);
+            }
+          } catch (e: any) {
+            console.error(`[Webhook] IMAGE DELETE-ALL ERROR SKU=${mapping.supplierSku}: ${e?.message}`);
+          }
         } else if (newImages.length > 0 && newImages.length < currentImages.length) {
           // Deletion detected: Shopify has fewer images than DB.
           // Webhook REST sends ProductImage IDs — they don't match MediaImage IDs in our DB.
@@ -196,7 +207,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             const { admin } = await shopify.unauthenticated.admin(shop);
             const liveMedia = await queryProductMedia(admin, productId, shop);
             const liveIds = new Set(liveMedia.map((m) => m.mediaId));
-            const remaining = currentImages.filter((i) => i.mediaId && liveIds.has(i.mediaId));
+            // Entradas sin pairing (mediaId:"" — placeholders de creación reciente) se
+            // conservan: no son borrados, son media aún no emparejado.
+            const remaining = currentImages.filter((i) => (i.mediaId ? liveIds.has(i.mediaId) : true));
 
             if (remaining.length < currentImages.length) {
               patch.shopifyImages = JSON.stringify(remaining);
