@@ -1278,10 +1278,14 @@ async function prepareAndLaunch(
   for await (const item of streamFile(await resolveFileUrl(getEffectiveUrl(config)), config.csvDelimiter)) {
     const { row, lineNumber } = item;
 
+    const sku = (getField(row, columnMaps, "sku") || row["sku"] || "").trim();
+    // "Ausente = no está en el FICHERO": push ANTES del skip de resume (las
+    // líneas ya procesadas en la pasada previa siguen en el fichero) — el
+    // lookup de stock 0 (allSkus) debe ver todas las filas leídas.
+    allSkus.push(sku);
+
     // Checkpoint/resume: skip lines already processed in a previous run
     if (lineNumber <= resumeFromLine) continue;
-    const sku = (getField(row, columnMaps, "sku") || row["sku"] || "").trim();
-    allSkus.push(sku);
 
     if (!sku) {
       errors.push({ sku: "UNKNOWN", error: "systemError.empty_sku", lineNumber });

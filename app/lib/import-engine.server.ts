@@ -976,6 +976,14 @@ async function runImportInner({ shopDomain, admin, filterType, filterSkus, filte
       const { row } = item;
       const rowSku = (getField(row, columnMaps, "sku") || row["sku"] || "").trim().toLowerCase();
 
+      // "Ausente = no está en el FICHERO": registrar el SKU ANTES de resume/
+      // filtro/dedup/exclusion — el lookup de stock 0 (csvSkus) debe ver todas
+      // las filas leídas, no solo las procesadas (con filtro estrecho se zeraba
+      // el stock de las mappings fuera del filtro). Expresión idéntica a la de
+      // processProduct para casar con mapping.supplierSku.
+      const skuRaw = (getField(row, columnMaps, "sku") || row["SKU"] || row["sku"] || "").trim();
+      if (skuRaw) csvSkus.add(skuRaw);
+
       // Checkpoint resume: skip until we find the last processed SKU
       if (skipping) {
         if (rowSku === resumeSkuLower) {
