@@ -730,7 +730,9 @@ async function runImportInner({ shopDomain, admin, filterType, filterSkus, filte
     lastSku: "",
   };
 
-  const csvSkus: string[] = [];
+  // M4': Set en vez de array — el lookup final de SKUs ausentes era O(n×m)
+  // (Array.includes por cada mapping) → con 500k filas serían billones de ops.
+  const csvSkus = new Set<string>();
   const skuSet = filterSkus
     ? new Set(filterSkus.split(",").map((s) => s.trim().toLowerCase()))
     : null;
@@ -743,55 +745,9 @@ async function runImportInner({ shopDomain, admin, filterType, filterSkus, filte
   console.log(`[Import] Filtros: skuSet=${skuSet ? [...skuSet].join(",") : "none"}, catSet=${catSet ? [...catSet].join(",") : "none"}, hasAnyFilter=${hasAnyFilter}`);
 
   try {
-    const chunks: Array<Array<{ headers: string[]; row: any; lineNumber: number }>> = [];
-    let currentChunk: Array<{ headers: string[]; row: any; lineNumber: number }> = [];
     const seenSkus = new Set<string>();
     let skipping = !!resumeFromSku;
     const resumeSkuLower = resumeFromSku?.toLowerCase();
-
-    for await (const item of streamFile(await resolveFileUrl(getEffectiveUrl(config)), config.csvDelimiter, 3, signal)) {
-      const { row } = item;
-      const rowSku = (getField(row, columnMaps, "sku") || row["sku"] || "").trim().toLowerCase();
-
-      // Checkpoint resume: skip until we find the last processed SKU
-      if (skipping) {
-        if (rowSku === resumeSkuLower) {
-          skipping = false;
-          console.log(`[Import] Resume: encontrado SKU ${resumeFromSku}, procesando desde aquí`);
-        } else {
-          continue;
-        }
-      }
-
-      const rowCat = (getField(row, columnMaps, "category") || row["category"] || "").trim().toLowerCase();
-
-      if (hasAnyFilter) {
-        const skuMatch = skuSet?.has(rowSku) ?? false;
-        const catMatch = catSet?.has(rowCat) ?? false;
-        if (!skuMatch && !catMatch) continue;
-      }
-
-      if (seenSkus.has(rowSku)) continue;
-      seenSkus.add(rowSku);
-
-      const exclusion = isExcluded(row, columnMaps, config, getField, { sku: getField(row, columnMaps, "sku") || row["sku"] || "", ean: getField(row, columnMaps, "ean") || row["ean"] || "" });
-      if (exclusion.excluded) {
-        excludedCount++;
-        continue;
-      }
-
-      result.totalProducts++;
-      currentChunk.push(item);
-
-      if (currentChunk.length >= config.chunkSize) {
-        chunks.push(currentChunk);
-        currentChunk = [];
-      }
-    }
-
-    if (currentChunk.length > 0) {
-      chunks.push(currentChunk);
-    }
 
     let cancelled = false;
     let checkCounter = 0;
@@ -804,7 +760,13 @@ async function runImportInner({ shopDomain, admin, filterType, filterSkus, filte
     // síncronos (event loop único) → seguro; el bucket por coste (M1) regula la
     // tasa real hacia Shopify. Clamp 1-8, default 4 (env CHUNK_ROW_CONCURRENCY).
     const rowConcurrency = Math.max(1, Math.min(8, Number(process.env.CHUNK_ROW_CONCURRENCY) || 4));
-    for (const chunk of chunks) {
+
+    // M4': el lote se procesa AL LLENARSE mientras se hace stream del fichero
+    // (antes: TODAS las filas se acumulaban en el array `chunks` en RAM antes de
+    // la primera mutación → con ficheros grandes, cientos de MB en memoria).
+    // Memoria de filas = O(chunk de chunkSize). El fichero viene del bucket (URL
+    // presignada) y se lee en streaming — esa ruta no se toca.
+    const processChunk = async (chunk: Array<{ headers: string[]; row: any; lineNumber: number }>) => {
       // M2: lookup de las claves (SKU+EAN) de ESTE chunk — O(chunk de 50 filas),
       // sin precarga del catálogo (memoria y tiempo de arranque constantes)
       const chunkSkus: string[] = [];
@@ -859,7 +821,7 @@ async function runImportInner({ shopDomain, admin, filterType, filterSkus, filte
             continue;
           }
 
-          csvSkus.push(sku);
+          csvSkus.add(sku);
 
           try {
             const excludedFields = getExcludedFields(sku, fieldRules, getField(row, columnMaps, "ean") || row["ean"] || row["EAN"] || "");
@@ -946,7 +908,51 @@ async function runImportInner({ shopDomain, admin, filterType, filterSkus, filte
       };
       await Promise.all(Array.from({ length: Math.min(rowConcurrency, chunk.length) }, () => worker()));
       if (!cancelled && chunkWatermarkSku) result.lastSku = chunkWatermarkSku;
-      if (cancelled) break;
+    };
+
+    let currentChunk: Array<{ headers: string[]; row: any; lineNumber: number }> = [];
+    for await (const item of streamFile(await resolveFileUrl(getEffectiveUrl(config)), config.csvDelimiter, 3, signal)) {
+      const { row } = item;
+      const rowSku = (getField(row, columnMaps, "sku") || row["sku"] || "").trim().toLowerCase();
+
+      // Checkpoint resume: skip until we find the last processed SKU
+      if (skipping) {
+        if (rowSku === resumeSkuLower) {
+          skipping = false;
+          console.log(`[Import] Resume: encontrado SKU ${resumeFromSku}, procesando desde aquí`);
+        } else {
+          continue;
+        }
+      }
+
+      const rowCat = (getField(row, columnMaps, "category") || row["category"] || "").trim().toLowerCase();
+
+      if (hasAnyFilter) {
+        const skuMatch = skuSet?.has(rowSku) ?? false;
+        const catMatch = catSet?.has(rowCat) ?? false;
+        if (!skuMatch && !catMatch) continue;
+      }
+
+      if (seenSkus.has(rowSku)) continue;
+      seenSkus.add(rowSku);
+
+      const exclusion = isExcluded(row, columnMaps, config, getField, { sku: getField(row, columnMaps, "sku") || row["sku"] || "", ean: getField(row, columnMaps, "ean") || row["ean"] || "" });
+      if (exclusion.excluded) {
+        excludedCount++;
+        continue;
+      }
+
+      result.totalProducts++;
+      currentChunk.push(item);
+
+      if (currentChunk.length >= config.chunkSize) {
+        await processChunk(currentChunk);
+        currentChunk = [];
+        if (cancelled) break;
+      }
+    }
+    if (!cancelled && currentChunk.length > 0) {
+      await processChunk(currentChunk);
     }
 
     if (!cancelled) {
@@ -955,7 +961,7 @@ async function runImportInner({ shopDomain, admin, filterType, filterSkus, filte
     });
 
     for (const mapping of existingMappings) {
-      if (!csvSkus.includes(mapping.supplierSku)) {
+      if (!csvSkus.has(mapping.supplierSku)) {
         try {
           await graphqlWithRetry(admin,
             `#graphql
@@ -988,8 +994,8 @@ async function runImportInner({ shopDomain, admin, filterType, filterSkus, filte
 
     // T2b fallback: media de creates que la productSet no devolvió → una query
     // por producto al final del bucle (mucho más tarde que el viejo sleep de 2s;
-    // el bucket 5 req/s limita la ráfaga). Si sigue vacío → placeholders, igual
-    // que el comportamiento anterior.
+    // el bucket por coste M1 limita la ráfaga). Si sigue vacío → placeholders,
+    // igual que el comportamiento anterior.
     if (mediaToResolve.length > 0) {
       console.log(`[Import] Media fallback post-pasada: ${mediaToResolve.length} productos`);
       for (const item of mediaToResolve) {
