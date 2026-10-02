@@ -89,7 +89,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     ({ topic, shop, session, payload } = await authenticate.webhook(request));
   } catch (err: any) {
     const detail = err instanceof Response ? `HTTP ${err.status}` : err?.message || String(err);
-    console.warn(`[Webhook] validación/auth fallida (topic=${topicHeader || "?"}, ${detail})`);
+    // "aborted"/AbortError = el cliente (Shopify) cortó la conexión mientras
+    // leíamos el body (p.ej. su timeout de 5s o RST de keep-alive) — NO es
+    // fallo HMAC. Shopify reintenta hasta 8 veces en 4h → solo ruido.
+    const isAbort = !(err instanceof Response) && /abort/i.test(`${err?.name || ""} ${detail}`);
+    console.warn(
+      isAbort
+        ? `[Webhook] Conexión abortada por el cliente durante la lectura del body (topic=${topicHeader || "?"}) — entrega fallida, Shopify reintentará`
+        : `[Webhook] validación/auth fallida (topic=${topicHeader || "?"}, ${detail})`
+    );
     throw new Response(null, { status: 401 });
   }
   // Only log important webhooks (skip high-frequency PRODUCTS_UPDATE/INVENTORY webhooks to prevent Railway rate limit)
