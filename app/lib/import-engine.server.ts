@@ -744,12 +744,17 @@ async function runImportInner({ shopDomain, admin, filterType, filterSkus, filte
   const fieldRules = parseExcludeFieldRules(config.excludeFieldRules);
   console.log(`[Import] Filtros: skuSet=${skuSet ? [...skuSet].join(",") : "none"}, catSet=${catSet ? [...catSet].join(",") : "none"}, hasAnyFilter=${hasAnyFilter}`);
 
+  // Pre-count: total de filas elegibles fijo para la barra desde el inicio
+  // (bloque antes del stream). cancelled fuera del try para que el catch de
+  // abort también lo vea y escriba cancelled_manually.
+  let preCount: number | null = null;
+  let cancelled = false;
+
   try {
     const seenSkus = new Set<string>();
     let skipping = !!resumeFromSku;
     const resumeSkuLower = resumeFromSku?.toLowerCase();
 
-    let cancelled = false;
     let checkCounter = 0;
     const processedInventoryItems = new Set<string>();
     const imageQueue: ImageUploadTask[] = [];
@@ -910,6 +915,62 @@ async function runImportInner({ shopDomain, admin, filterType, filterSkus, filte
       if (!cancelled && chunkWatermarkSku) result.lastSku = chunkWatermarkSku;
     };
 
+    // Pre-count: pasada de solo lectura O(1) que replica los checks del stream
+    // principal (resume/filtro/dedup/exclusión) y fija totalProducts ANTES del
+    // primer producto → la barra muestra el total real desde el inicio (como
+    // antes de M4', sin acumular el fichero en RAM). Si falla, se sigue con el
+    // comportamiento actual (total creciente) — el import no se rompe por esto.
+    try {
+      const t0 = Date.now();
+      const pcSeen = new Set<string>();
+      let pcSkipping = !!resumeFromSku;
+      let pcRows = 0;
+      let n = 0;
+      for await (const item of streamFile(await resolveFileUrl(getEffectiveUrl(config)), config.csvDelimiter, 3, signal)) {
+        const { row } = item;
+        if (++pcRows % 1000 === 0 && signal?.aborted) {
+          cancelled = true;
+          break;
+        }
+        const rowSku = (getField(row, columnMaps, "sku") || row["sku"] || "").trim().toLowerCase();
+
+        if (pcSkipping) {
+          if (rowSku === resumeSkuLower) pcSkipping = false;
+          else continue;
+        }
+
+        const rowCat = (getField(row, columnMaps, "category") || row["category"] || "").trim().toLowerCase();
+        if (hasAnyFilter) {
+          const skuMatch = skuSet?.has(rowSku) ?? false;
+          const catMatch = catSet?.has(rowCat) ?? false;
+          if (!skuMatch && !catMatch) continue;
+        }
+
+        if (pcSeen.has(rowSku)) continue;
+        pcSeen.add(rowSku);
+
+        const exclusion = isExcluded(row, columnMaps, config, getField, { sku: getField(row, columnMaps, "sku") || row["sku"] || "", ean: getField(row, columnMaps, "ean") || row["ean"] || "" });
+        if (exclusion.excluded) continue;
+
+        n++;
+      }
+      if (!cancelled) {
+        preCount = n;
+        result.totalProducts = n;
+        await prisma.importLog.update({ where: { id: log.id }, data: { totalProducts: n } }).catch(() => {});
+        console.log(`[Import] Pre-count: ${n} filas elegibles en ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+      }
+    } catch (e: any) {
+      if (signal?.aborted) {
+        cancelled = true;
+        console.log(`[Import] Cancelada durante el pre-count`);
+      } else {
+        console.warn(`[Import] Pre-count falló (${e?.message || e}) — el total crecerá durante la importación`);
+        preCount = null;
+      }
+    }
+    if (signal?.aborted) cancelled = true;
+
     let currentChunk: Array<{ headers: string[]; row: any; lineNumber: number }> = [];
     for await (const item of streamFile(await resolveFileUrl(getEffectiveUrl(config)), config.csvDelimiter, 3, signal)) {
       const { row } = item;
@@ -942,7 +1003,7 @@ async function runImportInner({ shopDomain, admin, filterType, filterSkus, filte
         continue;
       }
 
-      result.totalProducts++;
+      if (preCount == null) result.totalProducts++;
       currentChunk.push(item);
 
       if (currentChunk.length >= config.chunkSize) {
@@ -1074,7 +1135,9 @@ async function runImportInner({ shopDomain, admin, filterType, filterSkus, filte
         updated: result.updated,
         unchanged: result.unchanged,
         excludedCount: excludedCount + result.excluded,
-        errors: JSON.stringify([{ error: error?.message || "systemError.general_error" }]),
+        errors: cancelled
+          ? JSON.stringify([{ sku: "SYSTEM", error: "systemError.cancelled_manually" }])
+          : JSON.stringify([{ error: error?.message || "systemError.general_error" }]),
         lastSku: result.lastSku || null,
         completedAt: new Date(),
       },

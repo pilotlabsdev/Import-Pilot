@@ -161,7 +161,7 @@ export default function QueuePage() {
                   allRunning.map((item: any) => {
                     const progress = item.progress;
                     const pct = progress && progress.totalProducts > 0
-                      ? Math.round((progress.processedProducts / progress.totalProducts) * 100)
+                      ? Math.min(100, Math.round((progress.processedProducts / progress.totalProducts) * 100))
                       : 0;
                     return (
                       <BlockStack key={item.id || item.configId} gap="200">
