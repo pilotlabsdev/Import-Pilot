@@ -42,56 +42,79 @@ export function maxActiveImports(): number {
   return MAX_ACTIVE_IMPORTS;
 }
 
-// --- Rate limiter for Shopify API ---
-// Bucket POR TIENDA: Shopify aplica los límites de rate per store, así que
-// cada shopDomain tiene su propio bucket de 5 tokens/s (burst 10). Calls sin
-// shop conocido (p.ej. webhooks sin contexto) caen al bucket "global".
-// Shopify cost-based throttling: queries = 1pt, mutations = 10pt.
-// A 5 req/s por tienda nos mantenemos bien bajo el límite ~50 req/s de cada tienda.
+// --- Rate limiter for Shopify API (cost-based) ---
+// Doc oficial (shopify.dev/docs/apps/build/apis/graphql-admin/rate-limits):
+// - Bucket de PUNTOS por app+tienda (leaky bucket): Standard=100 pts/s,
+//   Advanced=200, Plus=1000. El refill/capacidad reales los dicta Shopify.
+// - Coste: Mutation=10, Connection=tamaño de first/last, Scalar/Enum=0, Object=1;
+//   límite de una sola query = 1000 pts.
+// - Cada respuesta incluye extensions.cost.throttleStatus
+//   {maximumAvailable, currentlyAvailable, restoreRate} → sincronizamos NUESTRO
+//   bucket con el de Shopify en cada respuesta (fuente de verdad; Shopify también
+//   reembolsa requested-actual al terminar la query).
+// - Reservamos un coste ESTIMADO antes de enviar (regula la concurrencia interna);
+//   la sincronización posterior corrige con el estado real.
+// - El reintento de THROTTLED con backoff (más abajo) sigue siendo la red de seguridad.
+// Calls sin shop conocido (p.ej. webhooks sin contexto) caen al bucket "global".
 
-const TOKENS_PER_SECOND = 5;
-const MAX_BURST = 10;
+const DEFAULT_RESTORE_PTS = 100;   // Standard (doc); la 1ª respuesta lo corrige
+const DEFAULT_CAPACITY_PTS = 1000; // maximumAvailable típico; la 1ª respuesta lo corrige
 
-type Bucket = { tokens: number; lastRefill: number };
-const buckets = new Map<string, Bucket>();
+type PtBucket = { points: number; capacity: number; restoreRate: number; lastRefill: number };
+const ptBuckets = new Map<string, PtBucket>();
 
-function getBucket(key: string): Bucket {
-  let b = buckets.get(key);
+function getPtBucket(key: string): PtBucket {
+  let b = ptBuckets.get(key);
   if (!b) {
-    b = { tokens: MAX_BURST, lastRefill: Date.now() };
-    buckets.set(key, b);
+    b = { points: DEFAULT_CAPACITY_PTS, capacity: DEFAULT_CAPACITY_PTS, restoreRate: DEFAULT_RESTORE_PTS, lastRefill: Date.now() };
+    ptBuckets.set(key, b);
   }
   return b;
 }
 
-function refillTokens(b: Bucket): void {
+function refillPts(b: PtBucket): void {
   const now = Date.now();
   const elapsed = (now - b.lastRefill) / 1000;
   if (elapsed > 0) {
     // A4: clamp ≥0 — el bucket nunca acumula deuda negativa
-    b.tokens = Math.min(MAX_BURST, Math.max(0, b.tokens + elapsed * TOKENS_PER_SECOND));
+    b.points = Math.min(b.capacity, Math.max(0, b.points + elapsed * b.restoreRate));
     b.lastRefill = now;
   }
 }
 
-function waitForToken(shopKey: string): Promise<void> {
+/** Sincroniza con extensions.cost.throttleStatus (doc oficial). */
+function syncPtBucketFromCost(key: string, cost: any): void {
+  const ts = cost?.throttleStatus;
+  if (!ts || typeof ts.currentlyAvailable !== "number") return;
+  const b = getPtBucket(key);
+  if (typeof ts.maximumAvailable === "number" && ts.maximumAvailable > 0) b.capacity = ts.maximumAvailable;
+  if (typeof ts.restoreRate === "number" && ts.restoreRate > 0) b.restoreRate = ts.restoreRate;
+  b.points = Math.min(b.capacity, Math.max(0, ts.currentlyAvailable));
+  b.lastRefill = Date.now();
+}
+
+/** Coste estimado pre-envío (doc: Mutation=10, Connection=first/last, raíz ~1). */
+function estimateCostPts(query: string): number {
+  let pts = 0;
+  for (const m of query.matchAll(/\b(?:first|last)\s*:\s*(\d+)/g)) pts += Number(m[1]) || 0;
+  pts += /\bmutation\b/.test(query) ? 10 : 1;
+  return Math.max(1, Math.min(pts, 1000));
+}
+
+function waitForCost(shopKey: string, estimatedPts: number): Promise<void> {
   return new Promise((resolve) => {
     const tryAcquire = () => {
-      const b = getBucket(shopKey);
-      refillTokens(b);
-      if (b.tokens >= 1) {
-        b.tokens -= 1;
+      const b = getPtBucket(shopKey);
+      refillPts(b);
+      if (b.points >= estimatedPts) {
+        b.points -= estimatedPts;
         resolve();
         return;
       }
-      // A4: re-check en bucle en vez de dormir una vez y restar "a ciegas".
-      // Antes N esperadores simultáneos calculaban la misma espera y todos
-      // hacían tokens -= 1 al despertar → deuda negativa y esperas de ~100s.
-      // Ahora solo se resta con tokens >= 1 (deuda imposible) y, con tokens
-      // >= 0, la espera máxima por vuelta es 200ms → la cola se re-evalúa
-      // constantemente y se distribuye a ritmo de 5 tokens/s del bucket.
-      const waitMs = Math.ceil((1 - b.tokens) / TOKENS_PER_SECOND * 1000);
-      setTimeout(tryAcquire, Math.min(Math.max(waitMs, 20), 1000));
+      // Re-check en bucle (patrón A4): solo resta con puntos suficientes →
+      // deuda negativa imposible; espera máx 1000ms por vuelta y re-evalúa.
+      const waitMs = Math.ceil((estimatedPts - b.points) / b.restoreRate * 1000);
+      setTimeout(tryAcquire, Math.min(Math.max(waitMs, 25), 1000));
     };
     tryAcquire();
   });
@@ -107,13 +130,13 @@ export async function rateLimitedGraphql(
   vars: any,
   maxRetries = 3,
   // A4: reintento del mismo request lógico (p.ej. tras refresh de token 401)
-  // → no cobra token del bucket. Los reintentos internos de abajo ya eran
-  // gratis (el token se cobra una sola vez antes del bucle).
+  // → no cobra puntos del bucket. Los reintentos internos de abajo ya eran
+  // gratis (el coste se reserva una sola vez antes del bucle).
   isRetry = false,
   // Bucket por tienda: clave = shopDomain; sin clave → bucket "global".
   shopKey?: string
 ): Promise<any> {
-  if (!isRetry) await waitForToken(shopKey || "global");
+  if (!isRetry) await waitForCost(shopKey || "global", estimateCostPts(query));
   try {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
@@ -130,6 +153,8 @@ export async function rateLimitedGraphql(
           }
           throw new Error(`Shopify API returned invalid JSON after ${maxRetries} attempts: ${parseError?.message}`);
         }
+        // Sync con el bucket real de Shopify (throttleStatus de esta respuesta)
+        syncPtBucketFromCost(shopKey || "global", json.extensions?.cost);
         const gqlErrors = json.errors || [];
         const isThrottled = gqlErrors.some((e: any) =>
           e.message?.includes("Throttled") ||
@@ -181,6 +206,6 @@ export async function rateLimitedGraphql(
       }
     }
   } finally {
-    // No release needed — token bucket is time-based, not counting-based
+    // No release needed — points bucket is time-based, not counting-based
   }
 }
