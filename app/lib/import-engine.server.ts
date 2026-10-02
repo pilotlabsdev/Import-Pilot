@@ -799,6 +799,11 @@ async function runImportInner({ shopDomain, admin, filterType, filterSkus, filte
     const imageQueue: ImageUploadTask[] = [];
     // T2b: creates cuya productSet no devolvió media nodes → resolver al final
     const mediaToResolve: Array<{ productId: string; csvFiles: string[] }> = [];
+    // M3: worker pool por fila (patrón bulk-import:2206) — la latencia por fila
+    // (~2s GraphQL) se solapa en N workers. Contadores/result son incrementos
+    // síncronos (event loop único) → seguro; el bucket por coste (M1) regula la
+    // tasa real hacia Shopify. Clamp 1-8, default 4 (env CHUNK_ROW_CONCURRENCY).
+    const rowConcurrency = Math.max(1, Math.min(8, Number(process.env.CHUNK_ROW_CONCURRENCY) || 4));
     for (const chunk of chunks) {
       // M2: lookup de las claves (SKU+EAN) de ESTE chunk — O(chunk de 50 filas),
       // sin precarga del catálogo (memoria y tiempo de arranque constantes)
@@ -811,117 +816,136 @@ async function runImportInner({ shopDomain, admin, filterType, filterSkus, filte
       }
       const barcodeMap = await lookupBarcodeMatchesForChunk(admin, chunkSkus, chunkEans);
       console.log(`[Import] Chunk lookup: ${chunk.length} filas → ${barcodeMap.size} coincidencias`);
+
+      // M3: watermark por CHUNK — lastSku = última fila con SKU del chunk SOLO
+      // cuando el chunk completo drena (no al empezar cada fila). Crash a mitad
+      // de chunk → el resume repite el chunk entero (idempotente) y nunca salta
+      // filas sin procesar (antes, con pool, un lastSku "en vuelo" podría hacerlo).
+      let chunkWatermarkSku = "";
       for (const item of chunk) {
-        checkCounter++;
-        // Check abort signal immediately, or check config every 5 products for cron
-        if (signal?.aborted) {
-          console.log(`[Import] Importación cancelada por usuario (check #${checkCounter})`);
-          cancelled = true;
-          break;
-        }
-        if (triggerType !== "manual" && checkCounter % 5 === 0) {
-          const freshConfig = await prisma.importConfig.findUnique({ where: { id: config.id }, select: { isActive: true } });
-          if (!freshConfig?.isActive) {
-            console.log(`[Import] Importación cancelada (config desactivada, check #${checkCounter})`);
+        const s = (getField(item.row, columnMaps, "sku") || item.row["SKU"] || item.row["sku"] || "").trim();
+        if (s) chunkWatermarkSku = s;
+      }
+
+      let nextIdx = 0;
+      const worker = async () => {
+        while (true) {
+          if (cancelled) return;
+          const idx = nextIdx++;
+          if (idx >= chunk.length) return;
+          const item = chunk[idx];
+
+          checkCounter++;
+          // Check abort signal immediately, or check config every 5 products for cron
+          if (signal?.aborted) {
+            console.log(`[Import] Importación cancelada por usuario (check #${checkCounter})`);
             cancelled = true;
-            break;
+            return;
           }
-        }
-
-        const { row, lineNumber } = item;
-        const sku = (getField(row, columnMaps, "sku") || row["SKU"] || row["sku"] || "").trim();
-
-        if (!sku) {
-          result.errors.push({ sku: "UNKNOWN", error: "systemError.empty_sku", lineNumber });
-          continue;
-        }
-
-        csvSkus.push(sku);
-        result.lastSku = sku;
-
-        try {
-          const excludedFields = getExcludedFields(sku, fieldRules, getField(row, columnMaps, "ean") || row["ean"] || row["EAN"] || "");
-          const effectiveOpts = excludedFields
-            ? new Set([...updateOpts].filter((o) => !excludedFields.includes(o)))
-            : updateOpts;
-          await processProduct({
-            shopDomain,
-            admin,
-            sku,
-            row,
-            lineNumber,
-            config,
-            columnMaps,
-            locationId,
-            updateOpts: effectiveOpts,
-            result,
-            processedInventoryItems,
-            sourceKey,
-            imageQueue,
-            mediaToResolve,
-            barcodeMap,
-          });
-        } catch (error: any) {
-          const errorMsg = error?.message || "systemError.unknown_error";
-          let retried = false;
-
-          for (let attempt = 1; attempt <= config.maxRetries; attempt++) {
-            await new Promise((r) => setTimeout(r, 2000));
-            try {
-              const excludedFields = getExcludedFields(sku, fieldRules, getField(row, columnMaps, "ean") || row["ean"] || row["EAN"] || "");
-              const effectiveOpts = excludedFields
-                ? new Set([...updateOpts].filter((o) => !excludedFields.includes(o)))
-                : updateOpts;
-              await processProduct({
-                shopDomain,
-                admin,
-                sku,
-                row,
-                lineNumber,
-                config,
-                columnMaps,
-                locationId,
-                updateOpts: effectiveOpts,
-                result,
-                processedInventoryItems,
-                sourceKey,
-                imageQueue,
-                mediaToResolve,
-                barcodeMap,
-              });
-              retried = true;
-              break;
-            } catch (retryErr: any) {
-              if (attempt === config.maxRetries) {
-                result.errors.push({ sku, error: retryErr?.message || errorMsg, lineNumber });
-              }
+          if (triggerType !== "manual" && checkCounter % 5 === 0) {
+            const freshConfig = await prisma.importConfig.findUnique({ where: { id: config.id }, select: { isActive: true } });
+            if (!freshConfig?.isActive) {
+              console.log(`[Import] Importación cancelada (config desactivada, check #${checkCounter})`);
+              cancelled = true;
+              return;
             }
           }
 
-          if (!retried && !result.errors.find((e) => e.sku === sku)) {
-            result.errors.push({ sku, error: errorMsg, lineNumber });
+          const { row, lineNumber } = item;
+          const sku = (getField(row, columnMaps, "sku") || row["SKU"] || row["sku"] || "").trim();
+
+          if (!sku) {
+            result.errors.push({ sku: "UNKNOWN", error: "systemError.empty_sku", lineNumber });
+            continue;
+          }
+
+          csvSkus.push(sku);
+
+          try {
+            const excludedFields = getExcludedFields(sku, fieldRules, getField(row, columnMaps, "ean") || row["ean"] || row["EAN"] || "");
+            const effectiveOpts = excludedFields
+              ? new Set([...updateOpts].filter((o) => !excludedFields.includes(o)))
+              : updateOpts;
+            await processProduct({
+              shopDomain,
+              admin,
+              sku,
+              row,
+              lineNumber,
+              config,
+              columnMaps,
+              locationId,
+              updateOpts: effectiveOpts,
+              result,
+              processedInventoryItems,
+              sourceKey,
+              imageQueue,
+              mediaToResolve,
+              barcodeMap,
+            });
+          } catch (error: any) {
+            const errorMsg = error?.message || "systemError.unknown_error";
+            let retried = false;
+
+            for (let attempt = 1; attempt <= config.maxRetries; attempt++) {
+              await new Promise((r) => setTimeout(r, 2000));
+              try {
+                const excludedFields = getExcludedFields(sku, fieldRules, getField(row, columnMaps, "ean") || row["ean"] || row["EAN"] || "");
+                const effectiveOpts = excludedFields
+                  ? new Set([...updateOpts].filter((o) => !excludedFields.includes(o)))
+                  : updateOpts;
+                await processProduct({
+                  shopDomain,
+                  admin,
+                  sku,
+                  row,
+                  lineNumber,
+                  config,
+                  columnMaps,
+                  locationId,
+                  updateOpts: effectiveOpts,
+                  result,
+                  processedInventoryItems,
+                  sourceKey,
+                  imageQueue,
+                  mediaToResolve,
+                  barcodeMap,
+                });
+                retried = true;
+                break;
+              } catch (retryErr: any) {
+                if (attempt === config.maxRetries) {
+                  result.errors.push({ sku, error: retryErr?.message || errorMsg, lineNumber });
+                }
+              }
+            }
+
+            if (!retried && !result.errors.find((e) => e.sku === sku)) {
+              result.errors.push({ sku, error: errorMsg, lineNumber });
+            }
+          }
+          // T2a: sin sleep(500)/fila — el bucket por coste (M1, Standard=100pts/s)
+          // regula la tasa real; los workers solo solapan latencia.
+
+          // Update progress every 10 products
+          if (checkCounter % 10 === 0) {
+            await prisma.importLog.update({
+              where: { id: log.id },
+              data: {
+                totalProducts: result.totalProducts,
+                created: result.created,
+                updated: result.updated,
+                unchanged: result.unchanged,
+                excludedCount: excludedCount + result.excluded,
+                lastSku: result.lastSku || null,
+                lastProgressAt: new Date(),
+              },
+            }).catch(() => {});
           }
         }
-        // T2a: sin sleep(500)/fila — el bucket de rateLimitedGraphql (5 req/s)
-        // ya limita la tasa real (doc Shopify: mutation=10pts, Standard=100pts/s).
-
-        // Update progress every 10 products
-        if (checkCounter % 10 === 0) {
-          const processed = result.created + result.updated + result.unchanged + result.excluded;
-          await prisma.importLog.update({
-            where: { id: log.id },
-            data: {
-              totalProducts: result.totalProducts,
-              created: result.created,
-              updated: result.updated,
-              unchanged: result.unchanged,
-              excludedCount: excludedCount + result.excluded,
-              lastSku: result.lastSku || null,
-              lastProgressAt: new Date(),
-            },
-          }).catch(() => {});
-        }
-      }
+      };
+      await Promise.all(Array.from({ length: Math.min(rowConcurrency, chunk.length) }, () => worker()));
+      if (!cancelled && chunkWatermarkSku) result.lastSku = chunkWatermarkSku;
       if (cancelled) break;
     }
 
