@@ -703,7 +703,7 @@ export default function Config() {
                     markDirty();
                   }}
                   autoComplete="off"
-                  helpText={isFileSource ? t("config.batchSizeHelp") : t("config.maxBatch")}
+                  helpText={isFileSource ? t("config.batchSizeHelp") : t("config.batchSizeUrlHelp")}
                   disabled={importMode === "bulk" || !!isFileSource}
                 />
                 <TextField
