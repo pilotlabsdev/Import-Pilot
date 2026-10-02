@@ -87,78 +87,92 @@ async function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function buildBarcodeMap(admin: any, shopDomain?: string): Promise<Map<string, BarcodeMatch>> {
+// M2: lookup POR LOTE (por chunk de filas) en vez de precarga del catálogo entero.
+// Doc oficial verificada: (1) paginación de connections tope 25.000 objetos → la
+// precarga anterior NO podía siquiera recorrer tiendas grandes (y además tenía un
+// hardcode de 50 páginas = 12.500 productos); (2) input arrays ≤250 y syntax
+// field:value OR field:value (search-syntax) → batches de 15 SKUs / 50 EANs;
+// (3) products(first:N) connection cuesta N pts → lookup ligero con first:100/250.
+// Memoria O(chunk de 50 filas) — sin Map de todo el catálogo en RAM.
+async function lookupBarcodeMatchesForChunk(
+  admin: any,
+  skus: string[],
+  eans: string[]
+): Promise<Map<string, BarcodeMatch>> {
   const map = new Map<string, BarcodeMatch>();
-  let cursor: string | null = null;
-  let hasNextPage = true;
-  let pageCount = 0;
+  const uniqueSkus = [...new Set(skus.map((s) => s.trim()).filter(Boolean))];
+  const uniqueEans = [...new Set(eans.map((e) => e.trim()).filter(Boolean))];
 
-  while (hasNextPage && pageCount < 50) {
-    pageCount++;
-    const afterClause: string = cursor ? `, after: "${cursor}"` : "";
-    const query: string = `#graphql
-    {
-      products(first: 250${afterClause}) {
+  const PRODUCT_QUERY = `#graphql
+    query ($q: String!) {
+      products(first: 100, query: $q) {
         edges {
-          cursor
           node {
             id
-            title
             variants(first: 10) {
-              edges {
-                node {
-                  id
-                  sku
-                  barcode
-                }
-              }
+              edges { node { id sku barcode } }
             }
           }
         }
-        pageInfo { hasNextPage }
       }
     }`;
 
+  const VARIANT_QUERY = `#graphql
+    query ($q: String!) {
+      productVariants(first: 250, query: $q) {
+        edges { node { id sku barcode product { id } } }
+      }
+    }`;
+
+  const failedBatches: string[][] = [];
+
+  // SKUs → products(query: "sku:'A' OR sku:'B' ...") en batches de 15
+  for (let i = 0; i < uniqueSkus.length; i += 15) {
+    const batch = uniqueSkus.slice(i, i + 15);
+    const query = batch.map((s) => `sku:'${String(s).replace(/'/g, "")}'`).join(" OR ");
     try {
-      const json: any = await graphqlWithRetry(admin, query, {});
-      const products: any = json.data?.products;
-      if (!products) break;
-
-      for (const edge of products.edges) {
-        const product: any = edge.node;
-        const productId: string = product.id;
-        cursor = edge.cursor;
-
-        for (const vEdge of product.variants.edges) {
-          const variant: any = vEdge.node;
-          if (variant.barcode) {
-            map.set(String(variant.barcode), {
-              productId,
-              variantId: variant.id,
-              sku: variant.sku || "",
-            });
-          }
-          if (variant.sku) {
-            const existingMatch: BarcodeMatch | undefined = map.get(String(variant.sku));
-            if (!existingMatch) {
-              map.set(String(variant.sku), {
-                productId,
-                variantId: variant.id,
-                sku: variant.sku,
-              });
-            }
-          }
+      const json: any = await graphqlWithRetry(admin, PRODUCT_QUERY, { q: query });
+      for (const edge of json.data?.products?.edges || []) {
+        const node = edge.node;
+        for (const vEdge of node.variants?.edges || []) {
+          const v = vEdge.node;
+          const match: BarcodeMatch = { productId: node.id, variantId: v.id, sku: v.sku || "" };
+          if (v.barcode) map.set(String(v.barcode), match);
+          if (v.sku && !map.has(String(v.sku))) map.set(String(v.sku), match);
         }
       }
-
-      hasNextPage = products.pageInfo.hasNextPage;
     } catch (e: any) {
-      console.error(`[Import] buildBarcodeMap error (page ${pageCount}):`, e?.message);
-      break;
+      failedBatches.push(batch);
+      console.error(`[Import] Chunk lookup SKU batch failed: ${batch.join(",")} → ${e?.message}`);
     }
   }
 
-  console.log(`[Import] buildBarcodeMap: ${map.size} entries from ${pageCount} pages`);
+  // EANs que el lookup por SKU no encontró → productVariants(barcode:...) en batches de 50
+  const pendingEans = uniqueEans.filter((e) => !map.has(e));
+  for (let i = 0; i < pendingEans.length; i += 50) {
+    const batch = pendingEans.slice(i, i + 50);
+    const query = batch.map((e) => `barcode:${String(e).replace(/'/g, "")}`).join(" OR ");
+    try {
+      const json: any = await graphqlWithRetry(admin, VARIANT_QUERY, { q: query });
+      for (const edge of json.data?.productVariants?.edges || []) {
+        const v = edge.node;
+        const match: BarcodeMatch = { productId: v.product?.id || "", variantId: v.id, sku: v.sku || "" };
+        if (v.barcode) map.set(String(v.barcode), match);
+        if (v.sku && !map.has(String(v.sku))) map.set(String(v.sku), match);
+      }
+    } catch (e: any) {
+      failedBatches.push(batch);
+      console.error(`[Import] Chunk lookup EAN batch failed: ${batch.join(",")} → ${e?.message}`);
+    }
+  }
+
+  // Misma regla que bulk: el lookup debe completar fully. Si un batch falla,
+  // abortamos el import en vez de arriesgar crear duplicados con detección incompleta.
+  if (failedBatches.length > 0) {
+    const n = failedBatches.flat().length;
+    throw new Error(`Lookup incompleto: ${n} claves no pudieron consultarse tras reintentos → import abortado para evitar duplicados.`);
+  }
+
   return map;
 }
 
@@ -677,12 +691,8 @@ async function runImportInner({ shopDomain, admin, filterType, filterSkus, filte
   const locationId = await getLocationId(admin, shopDomain, config.id);
   const updateOpts = parseUpdateOptions(config.updateOptions);
 
-  // Pre-load all Shopify products by barcode for external product detection
-  const barcodeMap = await buildBarcodeMap(admin, shopDomain);
-  console.log(`[Import] barcodeMap loaded: ${barcodeMap.size} entries`);
-  if (barcodeMap.size === 0) {
-    console.warn(`[Import] WARNING: barcodeMap is empty! External product detection will not work.`);
-  }
+  // M2: sin precarga del catálogo — el lookup por EAN/SKU se hace por chunk
+  // (lookupBarcodeMatchesForChunk) justo antes de procesar cada lote de filas.
 
   const log = await prisma.importLog.create({
     data: {
@@ -790,6 +800,17 @@ async function runImportInner({ shopDomain, admin, filterType, filterSkus, filte
     // T2b: creates cuya productSet no devolvió media nodes → resolver al final
     const mediaToResolve: Array<{ productId: string; csvFiles: string[] }> = [];
     for (const chunk of chunks) {
+      // M2: lookup de las claves (SKU+EAN) de ESTE chunk — O(chunk de 50 filas),
+      // sin precarga del catálogo (memoria y tiempo de arranque constantes)
+      const chunkSkus: string[] = [];
+      const chunkEans: string[] = [];
+      for (const item of chunk) {
+        const r = item.row;
+        chunkSkus.push((getField(r, columnMaps, "sku") || r["SKU"] || r["sku"] || "").trim());
+        chunkEans.push((getField(r, columnMaps, "ean") || r["ean"] || r["EAN"] || "").trim());
+      }
+      const barcodeMap = await lookupBarcodeMatchesForChunk(admin, chunkSkus, chunkEans);
+      console.log(`[Import] Chunk lookup: ${chunk.length} filas → ${barcodeMap.size} coincidencias`);
       for (const item of chunk) {
         checkCounter++;
         // Check abort signal immediately, or check config every 5 products for cron
