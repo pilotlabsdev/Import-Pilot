@@ -1706,7 +1706,10 @@ async function prepareAndLaunch(
   console.log(`[Bulk] PREPARE SUMMARY: total=${totalCount}, filtered=${filteredOutCount}, deduped=${dedupedCount}, excluded=${excludedCount}, duplicates=${duplicateSkippedCount}, zeroStockSkip=${zeroStockSkippedCount}, matchedUpdate=${matchedUpdateCount}, matchedUnchanged=${matchedUnchangedCount}, newCreates=${newCreateCount}, unchangedTotal=${unchangedCount}, createFiles=${createFiles.length}, updateFiles=${updateFiles.length}`);
 
   const allSkusPath = path.join(workDir, "all-skus.jsonl");
-  await fs.writeFile(allSkusPath, allSkus.map((s) => JSON.stringify(s)).join("\n") + "\n");
+  // F4: no persistir SKUs vacíos — un set con basura (filas sin SKU) haría que el pase
+  // de ausentes clasifique "todo ausente" y ponga a 0 el stock de toda la tienda.
+  const validSkus = allSkus.filter((s: string) => typeof s === "string" && s.trim());
+  await fs.writeFile(allSkusPath, validSkus.map((s) => JSON.stringify(s)).join("\n") + "\n");
 
   const errorsPath = path.join(workDir, "errors.jsonl");
   await fs.writeFile(errorsPath, errors.map((e) => JSON.stringify(e)).join("\n") + "\n");
@@ -2557,7 +2560,9 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
 
     await ensureFreshTokenForBulk(job.shopDomain);
 
-    const allSkus = new Set(await readJsonLines(manifest.allSkusPath));
+    const allSkus = new Set(
+      (await readJsonLines(manifest.allSkusPath)).filter((s: any) => typeof s === "string" && s.trim())
+    );
     const existingMappings = await prisma.productMapping.findMany({
       where: { shopDomain: job.shopDomain, configId: job.configId, ...(sourceKey ? { lastImportSource: sourceKey } : {}) },
     });
@@ -2676,9 +2681,12 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
     }
 
     // Zero stock for SKUs absent from the CSV.
+    if (allSkus.size === 0) {
+      console.warn(`[Bulk] Pase de stock ausente OMITIDO (job ${job.id}): el feed no aportó ningún SKU válido — no se pone stock a 0`);
+    }
 
     for (const mapping of existingMappings) {
-      if (!allSkus.has(mapping.supplierSku) && (mapping.lastQuantity || 0) > 0) {
+      if (allSkus.size > 0 && !allSkus.has(mapping.supplierSku) && (mapping.lastQuantity || 0) > 0) {
         try {
           await gql(admin,
             `#graphql

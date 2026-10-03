@@ -1029,8 +1029,13 @@ async function runImportInner({ shopDomain, admin, filterType, filterSkus, filte
       where: { shopDomain, configId: config.id, lastImportSource: sourceKey },
     });
 
+    // F4: si el feed no aportó ningún SKU válido, omitir — "todo ausente" pondría a 0 el stock de toda la tienda.
+    if (csvSkus.size === 0) {
+      console.warn(`[Import] Pase de stock ausente OMITIDO: el feed no aportó ningún SKU válido — no se pone stock a 0`);
+    }
+
     for (const mapping of existingMappings) {
-      if (!csvSkus.has(mapping.supplierSku)) {
+      if (csvSkus.size > 0 && !csvSkus.has(mapping.supplierSku)) {
         try {
           await graphqlWithRetry(admin,
             `#graphql
