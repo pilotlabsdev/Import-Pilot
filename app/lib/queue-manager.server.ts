@@ -682,9 +682,12 @@ export async function getQueueStatus(shopDomain: string): Promise<{
     };
   });
 
-  // Include recently failed queue items that have no ImportLog (error before log creation)
+  // Include recently failed queue items that have no ImportLog (error before log creation).
+  // logId null es imprescindible: si la cola falló con su ImportLog ya creado, la historia
+  // la cuenta el log real (con su error traducido) — sin este filtro se añadía además una
+  // fila sintética duplicada con el error genérico queue_failed_without_log (visto en E2E 3a).
   const failedQueueItems = await prisma.importQueue.findMany({
-    where: { shopDomain, status: "failed", finishedAt: { gte: new Date(Date.now() - 30 * 60 * 1000) } },
+    where: { shopDomain, status: "failed", logId: null, finishedAt: { gte: new Date(Date.now() - 30 * 60 * 1000) } },
     orderBy: { finishedAt: "desc" },
     take: 5,
   }).catch(() => []);
