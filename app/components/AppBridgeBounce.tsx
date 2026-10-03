@@ -9,7 +9,9 @@ import { buildAdminAppUrl, shopFromCookieHeader, readStoredShop, CTX_RETRY_KEY }
  *
  * - With shop/host params: the bounce script runs, patches the session token and
  *   reloads the original URL (shopify-reload) — Shopify's designed self-healing.
- * - Without params: the /app loader 302s top-level requests to the Shopify admin.
+ * - Without params: the /app loader bounces top-level requests to the Shopify
+ *   admin with an inline script (never a 302 — followed inside the iframe it
+ *   would hit X-Frame-Options deny).
  *   Only iframe/embedded requests reach this point, and the official HTML alone
  *   does NOT recover (verified in production → blank page): App Bridge has no
  *   shop context. Instead we navigate the top window back to the admin with the

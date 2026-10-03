@@ -1,5 +1,5 @@
 import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { data, redirect, Outlet, useLoaderData, useRouteError, isRouteErrorResponse, useLocation, useNavigate } from "react-router";
+import { data, Outlet, useLoaderData, useRouteError, isRouteErrorResponse, useLocation, useNavigate } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { NavMenu } from "@shopify/app-bridge-react";
@@ -62,13 +62,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const tl0 = Date.now();
   const url = new URL(request.url);
 
-  // URL sin parámetros `shop` (deep-link borrado, pestaña restaurada, etc.).
-  // SOLO se redirige un documento top-level de verdad — las peticiones .data de
-  // navegación SPA tampoco llevan `shop` (los params viven en el documento
+  // URL sin parámetros `shop` (deep-link borrado, pestaña restaurada, recarga
+  // de una URL SPA desnuda — p.ej. F5 con foco en el iframe: el fetch pasa por
+  // nuestro Service Worker y llega con dest=empty + mode=navigate).
+  // SOLO se interviene un documento top-level de verdad — las peticiones .data
+  // de navegación SPA tampoco llevan `shop` (los params viven en el documento
   // actual, no en el destino del link) y redirigirlas a admin hacía que el
   // router navegase el iframe a admin.shopify.com → X-Frame-Options deny.
-  // - dest=document / mode=navigate top-level → 302 server-side al admin
-  // - dest=iframe o Referer=admin → bounce oficial de App Bridge
+  // - documento (dest=document / mode=navigate, puro o vía SW) → bounce inline
+  //   (MISMO patrón que el gate de planes): window.top.location.replace navega
+  //   la ventana top al admin con la misma ruta y Shopify re-embebe con params
+  //   frescos. NUNCA un 302: si la petición vive dentro del iframe, el
+  //   navegador seguiría la redirección DENTRO del marco → X-Frame-Options
+  //   deny (pantalla del gatito). El script funciona en ambos contextos
+  //   (top===self en documento puro).
+  // - dest=iframe o Referer=admin → bounce oficial de App Bridge (sin shop)
   // - .data / prefetch (dest=empty, mode=cors) → authenticate normal (token)
   if (!url.searchParams.get("shop")) {
     const dest = (request.headers.get("Sec-Fetch-Dest") || "").toLowerCase();
@@ -92,8 +100,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       }
       const target = buildAdminAppUrl(shop, `${url.pathname}${url.search}`);
       const refHost = (() => { try { return referer ? new URL(referer).host + new URL(referer).pathname : "-"; } catch { return "-"; } })();
-      console.error(`[App Loader] URL sin shop en ${url.pathname} → 302 a ${target} (fuente: ${source || "universal"}, dest=${dest || "-"}, mode=${mode || "-"}, referer=${refHost})`);
-      return redirect(target);
+      console.error(`[App Loader] URL sin shop en ${url.pathname} → bounce a ${target} (fuente: ${source || "universal"}, dest=${dest || "-"}, mode=${mode || "-"}, referer=${refHost})`);
+      throw new Response(
+        `<script data-loader-bounce>try{window.top.location.replace(${JSON.stringify(target)})}catch(e){window.open(${JSON.stringify(target)},"_top")}</script>`,
+        { headers: { "content-type": "text/html;charset=utf-8", "cache-control": "no-store" } }
+      );
     }
   }
 
@@ -366,6 +377,31 @@ export default function App() {
     } catch {}
   }, [location.search]);
 
+  // Sanear URL SPA sin `shop`: los Link/Navigate internos llevan solo la ruta
+  // (no heredan los params de la URL actual) → la URL queda desnuda y la
+  // próxima recarga de documento entraría en la maquinaria de bounce del
+  // loader. Restauramos desde ip_ctx (guardado mientras la URL tuvo shop):
+  // converge en un solo paso porque la URL resultante ya lleva shop.
+  useEffect(() => {
+    if (!location.pathname.startsWith("/app")) return;
+    const params = new URLSearchParams(location.search);
+    if (params.get("shop") || params.get("plan_handle")) return;
+    let ctx: URLSearchParams | null = null;
+    try {
+      const raw = sessionStorage.getItem(CTX_KEY);
+      if (raw) ctx = new URLSearchParams(raw);
+    } catch {}
+    const shop = ctx?.get("shop");
+    if (!ctx || !shop) return;
+    const next = new URLSearchParams(location.search);
+    for (const key of ["shop", "host", "locale", "embedded"]) {
+      const value = ctx.get(key);
+      if (value) next.set(key, value);
+    }
+    console.log(`[ParamHeal] URL sin shop → restaurando ctx (${shop}) en ${location.pathname}`);
+    navigate({ pathname: location.pathname, search: `?${next.toString()}` }, { replace: true });
+  }, [location.pathname, location.search, navigate]);
+
   if (!hasPlan) {
     return (
       <AppProvider apiKey={apiKey}>
@@ -428,7 +464,7 @@ export function ErrorBoundary() {
   const isAppBridgeHtml = isRouteErrorResponse(error)
     && error.status === 200
     && typeof error.data === "string"
-    && (error.data.includes("app-bridge") || error.data.includes("data-plans-gate"));
+    && (error.data.includes("app-bridge") || error.data.includes("data-plans-gate") || error.data.includes("data-loader-bounce"));
 
   if (redirectUrl) {
     console.log(`[App ErrorBoundary] Redirect detected → ${redirectUrl}`);
