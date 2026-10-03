@@ -3710,6 +3710,8 @@ async function queryProductsTargeted(
               variantId: v.id,
               inventoryItemId: v.inventoryItem?.id || "",
               shopifyCost: parseFloat(v.inventoryItem?.unitCost?.amount ?? "0") || 0,
+              shopifyPrice: v.price != null && !Number.isNaN(parseFloat(v.price)) ? parseFloat(v.price) : undefined,
+              shopifyQuantities: parseInventoryLevels(v.inventoryItem?.inventoryLevels),
               sku: v.sku || "",
               shopifyTitle: productTitle,
               shopifyDescription: productDescription,
