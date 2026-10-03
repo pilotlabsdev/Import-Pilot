@@ -54,6 +54,13 @@ const TEMPLATE_PATTERNS: Array<{ prefix: string; key: string; extractVars: (s: s
     },
   },
   {
+    // "Token expirado durante staged upload/bulkOperationRunMutation. Reinstala..."
+    // → misma clave amable; la traducción ya no muestra {{msg}} ni "Reinstala".
+    prefix: "Token expirado",
+    key: "systemError.invalid_token",
+    extractVars: () => ({}),
+  },
+  {
     prefix: "Webhook BULK_OPERATIONS_FINISH nunca llegó",
     key: "systemError.webhook_never_arrived",
     extractVars: (s) => {
