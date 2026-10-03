@@ -2,6 +2,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { data } from "react-router";
 import { getQueueStatus, cancelQueueItem, clearCompleted } from "~/lib/queue-manager.server";
 import { cancelBulkImport, forceCleanupStuckBulkJobs, cancelJobOpsViaShopify } from "~/lib/bulk-import.server";
+import { clearBulkActive } from "~/lib/bulk-active-cache.server";
 import { prisma } from "~/lib/db.server";
 import { safeAuthenticate } from "~/shopify.server";
 import { invalidateNavCounts } from "~/lib/nav-counts.server";
@@ -113,6 +114,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       where: { id: job.id },
       data: { phase: "failed" },
     });
+    clearBulkActive(shopDomain);
     // Cancel ALL running ImportLogs for this config (not just the one linked to the job — logId may be null)
     const stuckLogs = await prisma.importLog.updateMany({
       where: { configId: job.configId, status: "running" },

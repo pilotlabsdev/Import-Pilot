@@ -392,6 +392,7 @@ export async function cancelBulkImport(configId: string, shopDomain: string): Pr
     data: { status: "failed" },
   });
   invalidateNavCounts(shopDomain);
+  clearBulkActive(shopDomain);
 
   // Clean up work directory (A6: usar el workDir real del job — antes se
   // construía {shop}/{jobId} que no existe y el dir {shop}/{configId}/{logId} se fugaba)
@@ -400,6 +401,34 @@ export async function cancelBulkImport(configId: string, shopDomain: string): Pr
   } catch {}
 
   return { success: true, message: "Importación bulk cancelada" };
+}
+
+/**
+ * Cancela el BulkJob activo de una config (si existe) y libera el flag de bulk
+ * activo. Red de seguridad para CUALQUIER path de cancel (cancelQueueItem,
+ * intents, API): la fila de cola y el ImportLog por sí solos NO detienen el job
+ * → el runBulkImport vivo seguía lanzando ops tras el cancel (zombi).
+ */
+export async function cancelActiveBulkJobForConfig(configId: string, shopDomain: string): Promise<boolean> {
+  const activeJob = await prisma.bulkJob.findFirst({
+    where: { configId, shopDomain, phase: { in: ["lookup", "mutations", "finalizing"] } },
+  });
+  if (!activeJob) return false;
+
+  // Ops ya lanzadas en Shopify ANTES de marcar failed (mismo orden que cancel-bulk-job)
+  await cancelJobOpsViaShopify(activeJob.id, shopDomain);
+  await prisma.bulkJobOp.updateMany({
+    where: { jobId: activeJob.id, status: { in: ["pending", "launched", "processing"] } },
+    data: { status: "failed" },
+  });
+  await prisma.bulkJob.updateMany({
+    where: { id: activeJob.id, phase: { in: ["lookup", "mutations", "finalizing"] } },
+    data: { phase: "failed" },
+  });
+  clearBulkActive(shopDomain);
+  invalidateNavCounts(shopDomain);
+  console.log(`[Bulk] Job ${activeJob.id.slice(0, 8)} cancelado vía cola (config=${configId.slice(0, 8)}, shop=${shopDomain})`);
+  return true;
 }
 
 // --- productSet unified mutation (replaces productCreate + productUpdate + post-processing) ---
@@ -665,16 +694,29 @@ export async function runBulkImport({
 
   const targetedMaps = await queryProductsTargeted(admin, shopDomain, preScanSkus, preScanEans);
 
+  // Heartbeat de fase lookup: el guard de reconcile mata jobs lookup sin
+  // lookupOpId con updatedAt >15min (targeted lookup nunca crea lookupOpId) —
+  // tocamos updatedAt mientras la fase siga viva; un proceso realmente muerto
+  // deja de latir y el guard lo limpia como antes.
+  const touchLookup = () =>
+    prisma.bulkJob
+      .update({ where: { id: job.id }, data: { updatedAt: new Date() } })
+      .catch(() => {});
+  await touchLookup();
+
   // Build bySkuMapping from existing ProductMapping records
   const allMappings = await prisma.productMapping.findMany({
     where: { shopDomain },
   });
+  console.log(`[Bulk] Hidratación de mappings: ${allMappings.length} existentes para verificar`);
   const bySkuMapping = new Map<string, {
     lastPrice: number | null; lastQuantity: number | null; lastCost: number | null;
     lastTitle: string | null; lastDescription: string | null; lastVendor: string | null;
     lastProductType: string | null; lastTags: string | null;
   }>();
+  let hydratedCount = 0;
   for (const m of allMappings) {
+    if (++hydratedCount % 500 === 0) await touchLookup();
     if (targetedMaps.bySku.has(m.supplierSku)) {
       const existing = targetedMaps.bySku.get(m.supplierSku)!;
       if (!existing.inventoryItemId && m.shopifyInventoryItemId) existing.inventoryItemId = m.shopifyInventoryItemId;
@@ -757,7 +799,9 @@ export async function runBulkImport({
   });
   const locationId = await getLocationId(admin, shopDomain, fullConfig.id);
   if (incompleteMappings.length > 0) {
-    for (const mapping of incompleteMappings) {
+    for (let i = 0; i < incompleteMappings.length; i++) {
+      if (i > 0 && i % 10 === 0) await touchLookup();
+      const mapping = incompleteMappings[i];
       await retryPostProcess(admin, mapping, job, fullConfig, locationId).catch((e: any) => {
         console.error(`[Bulk] retryPostProcess failed for SKU ${mapping.supplierSku}: ${e?.message}`);
       });
@@ -3631,8 +3675,16 @@ async function queryProductsTargeted(
 
   // Query by SKUs in batches of 15 with retry — MUST complete fully or throw
   const uniqueSkus = [...new Set(skus)].filter(Boolean);
+  // Heartbeat: lookup dirigido no tiene lookupOpId; si esta fase dura >15min en
+  // catálogos grandes, el guard de reconcile mataría el job sano. Tocar
+  // updatedAt del job lookup de la tienda cada ~20 lotes lo mantiene vivo.
+  const beatLookup = () =>
+    prisma.bulkJob
+      .updateMany({ where: { shopDomain, phase: "lookup" }, data: { updatedAt: new Date() } })
+      .catch(() => {});
   const failedSkuBatches: string[][] = [];
   for (let i = 0; i < uniqueSkus.length; i += 15) {
+    if (i > 0 && (i / 15) % 20 === 0) await beatLookup();
     const batch = uniqueSkus.slice(i, i + 15);
     const query = batch.map((s) => `sku:'${String(s).replace(/'/g, "")}'`).join(" OR ");
     let succeeded = false;
@@ -3703,6 +3755,7 @@ async function queryProductsTargeted(
   console.log(`[Bulk] Barcode lookup: ${uniqueEans.length} EANs to check via productVariants`);
   const failedEanBatches: string[][] = [];
   for (let i = 0; i < uniqueEans.length; i += 50) {
+    if (i > 0 && (i / 50) % 20 === 0) await beatLookup();
     const batch = uniqueEans.slice(i, i + 50);
     const query = batch.map((e) => `barcode:${String(e).replace(/'/g, "")}`).join(" OR ");
     let succeeded = false;

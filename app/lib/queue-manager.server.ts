@@ -2,7 +2,7 @@ import { prisma, getConfigById, cleanupOldLogs, ensureSingleSession, ensureFresh
 import { isImportActive, tryAcquireImport, releaseImport, abortImport, canStartImport, maxActiveImports } from "./import-locks.server";
 import shopify from "~/shopify.server";
 import { runImport } from "./import-engine.server";
-import { runBulkImport } from "./bulk-import.server";
+import { runBulkImport, cancelActiveBulkJobForConfig } from "./bulk-import.server";
 import { sendNotification } from "./notifications.server";
 import { invalidateNavCounts } from "./nav-counts.server";
 
@@ -21,6 +21,7 @@ export interface QueueItem {
   position: number;
   status: string;
   logId: string | null;
+  bulkJobId?: string | null;
   startedAt: Date | null;
   finishedAt: Date | null;
   createdAt: Date;
@@ -354,6 +355,10 @@ export async function cancelQueueItem(itemId: string, shopDomain: string): Promi
         data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([{ sku: "SYSTEM", error: "systemError.cancelled_manually" }]) },
       }).catch(() => {});
     }
+    // El modo bulk vive en el BulkJob, no en la fila de la cola: sin esto el
+    // job vivo seguía lanzando ops tras el cancel (zombi). Cancela el job
+    // activo de esta config si existe (ops de Shopify + phase failed + flag).
+    await cancelActiveBulkJobForConfig(item.configId, shopDomain);
     await sendNotification({
       shopDomain,
       status: "cancelled",
@@ -727,13 +732,18 @@ export async function getQueueStatus(shopDomain: string): Promise<{
   const bulkJobByLogId = new Map(activeBulkJobs.filter((bj) => bj.logId).map((bj) => [bj.logId!, bj]));
 
   const activeWithProgress = active.map((item) => {
-    if (!item.logId) return item;
+    // bulkJobId en items de cola activos: el botón Cancelar debe ejecutar
+    // cancel-bulk-job (job + ops Shopify + logs). Sin esto la fila de cola
+    // enmascaraba el BulkJob (Loop 2 la salta) → cancel solo marcaba la fila
+    // y el job seguía vivo (zombi; test Lote 2c 2026-10-03).
+    const bulkJob = bulkJobByConfig.get(item.configId) || (item.logId ? bulkJobByLogId.get(item.logId) : undefined);
+    const withJobRef = bulkJob ? { ...item, bulkJobId: bulkJob.id } : item;
+    if (!item.logId) return withJobRef;
     const log = logByLogId.get(item.logId);
-    if (!log) return item;
+    if (!log) return withJobRef;
 
     const processed = (log.created || 0) + (log.updated || 0) + (log.unchanged || 0) + (log.excludedCount || 0);
     const errorCount = log.errors ? (JSON.parse(log.errors) as any[]).length : 0;
-    const bulkJob = bulkJobByLogId.get(item.logId);
 
     const activeOp = bulkJob?.ops?.[0] || null;
     const opFrac = activeOp && activeOp.status === "processing" && activeOp.progressTotal
@@ -792,7 +802,7 @@ export async function getQueueStatus(shopDomain: string): Promise<{
         : null;
     }
 
-    return { ...item, progress };
+    return { ...withJobRef, progress };
   });
 
   return {
