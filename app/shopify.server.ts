@@ -215,10 +215,13 @@ export const addDocumentResponseHeaders = shopify.addDocumentResponseHeaders;
  * el ErrorBoundary de /app la renderiza (marker `data-loader-bounce`).
  * Cada llamada crea una Response NUEVA: su body solo puede leerse una vez.
  */
-// El mismo Request llega al loader padre y a los hijos en paralelo → log UNA
-// sola vez por petición (el WeakSet comparte la instancia). Nivel info: el
-// bounce es la ruta esperada (sano), no un error.
-const bounceLogged = new WeakSet<Request>();
+// RR pasa instancias de Request DIFERENTES a cada loader (comprobado en E2E),
+// así que la dedupe es por clave (ruta+dest+mode) en una ventana de 3s: el
+// loader padre y los hijos disparan el bounce en el mismo milisegundo →
+// UNA línea por petición en vez de 2-3. Nivel info: el bounce es la ruta
+// esperada (sana), no un error.
+const bounceLoggedAt = new Map<string, number>();
+const BOUNCE_DEDUP_MS = 3_000;
 
 export async function shoplessBounceResponse(request: Request, label = "loader"): Promise<Response | null> {
   const url = new URL(request.url);
@@ -244,8 +247,13 @@ export async function shoplessBounceResponse(request: Request, label = "loader")
   }
   const target = buildAdminAppUrl(shop, `${url.pathname}${url.search}`);
   const refHost = (() => { try { return referer ? new URL(referer).host + new URL(referer).pathname : "-"; } catch { return "-"; } })();
-  if (!bounceLogged.has(request)) {
-    bounceLogged.add(request);
+  const now = Date.now();
+  const dedupeKey = `${url.pathname}|${dest}|${mode}`;
+  if (now - (bounceLoggedAt.get(dedupeKey) ?? 0) > BOUNCE_DEDUP_MS) {
+    bounceLoggedAt.set(dedupeKey, now);
+    if (bounceLoggedAt.size > 200) {
+      for (const [key, at] of bounceLoggedAt) if (now - at > BOUNCE_DEDUP_MS) bounceLoggedAt.delete(key);
+    }
     console.info(`[Bounce:${label}] URL sin shop en ${url.pathname} → bounce a ${target} (fuente: ${source || "universal"}, dest=${dest || "-"}, mode=${mode || "-"}, referer=${refHost})`);
   }
   return new Response(
