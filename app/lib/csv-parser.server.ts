@@ -184,16 +184,22 @@ export async function* streamCSV(
         const decoder = new TextDecoder(enc);
         buffer += decoder.decode(firstChunk.value, { stream: true });
 
+        // El buffer se procesa tras CADA decode (incluido el primer chunk): antes
+        // solo se procesaba cuando llegaba un chunk 2, así que un cuerpo que llegaba
+        // en un único read (CSV pequeño) se devolvía con 0 filas en silencio.
+        let eof = false;
         while (true) {
-          const { done, value } = await reader.read();
-          if (done) {
-            // Flush remaining bytes from the decoder
-            const remaining = decoder.decode();
-            if (remaining) buffer += remaining;
-            break;
+          if (!eof) {
+            const { done, value } = await reader.read();
+            if (done) {
+              // Flush remaining bytes from the decoder
+              const remaining = decoder.decode();
+              if (remaining) buffer += remaining;
+              eof = true;
+            } else {
+              buffer += decoder.decode(value, { stream: true });
+            }
           }
-
-          buffer += decoder.decode(value, { stream: true });
 
           if (!effectiveDelimiter && buffer.includes("\n")) {
             const sample = buffer.split("\n").slice(0, 20).join("\n");
@@ -258,6 +264,8 @@ export async function* streamCSV(
 
             yield { headers, row, lineNumber };
           }
+
+          if (eof) break;
         }
 
         if (incompleteLine.trim()) {
