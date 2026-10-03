@@ -49,6 +49,12 @@ function normalizeHtml(html: string): string {
     .toLowerCase();
 }
 
+// El feed trae ZWSP (\u200b) en algunos títulos; Shopify lo elimina al guardar.
+// Sin esta limpieza la comparación title csv vs live nunca empata → update fantasma cada run.
+function stripInvisible(s: string | null): string {
+  return (s ?? "").replace(/[\u200B-\u200D\u2060\uFEFF\u00AD]/g, "").trim();
+}
+
 /**
  * Creates a fresh GraphQL client that always reads the current access token from DB.
  * Returns a Response-like object compatible with Shopify's admin.graphql() interface.
@@ -1577,7 +1583,7 @@ async function prepareAndLaunch(
       const descBaseline = match.shopifyDescription ?? lastDescription ?? "";
       const vendorBaseline = match.shopifyVendor ?? lastVendor ?? "";
       const ptBaseline = match.shopifyProductType ?? lastProductType ?? "";
-      const titleChanged = effectiveOpts.has("name") && csvTitle !== titleBaseline;
+      const titleChanged = effectiveOpts.has("name") && stripInvisible(csvTitle) !== stripInvisible(titleBaseline);
       const descriptionChanged = effectiveOpts.has("description") && normalizeHtml(csvDescription).trim() !== normalizeHtml(descBaseline).trim();
       const vendorChanged = effectiveOpts.has("vendor") && csvVendor.trim() !== "" && csvVendor.trim() !== vendorBaseline.trim();
 
