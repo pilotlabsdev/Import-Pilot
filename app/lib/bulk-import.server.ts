@@ -3224,10 +3224,16 @@ async function reconcileLookupPhase(job: any): Promise<void> {
         const locationId = await getLocationId(admin, job.shopDomain, job.configId);
         await prepareAndLaunch(job, config, admin, columnMaps, rules, targetedMaps, bySkuMapping, job.filterType, job.filterSkus, job.filterCategories, locationId, sourceKey);
       } catch (e: any) {
-        console.error(`[Bulk] Reconcile lookup: re-run failed: ${e?.message}`);
-        if (e?.message?.includes("Lookup incomplete")) {
+        if (e?.message?.includes("Lookup aborted")) {
+          // El job salió de la fase lookup mientras corría (cancel/fallo externo):
+          // ya está cerrado — ni log de error ni failJob (que sobrescribiría).
+          console.log(`[Bulk] Reconcile lookup: re-run omitido — ${e.message}`);
         } else {
-          await failJob(job, e?.message || "systemError.reconcile_lookup_rerun_failed");
+          console.error(`[Bulk] Reconcile lookup: re-run failed: ${e?.message}`);
+          if (e?.message?.includes("Lookup incomplete")) {
+          } else {
+            await failJob(job, e?.message || "systemError.reconcile_lookup_rerun_failed");
+          }
         }
       }
       return;
@@ -3697,13 +3703,28 @@ async function queryProductsTargeted(
   // Heartbeat: lookup dirigido no tiene lookupOpId; si esta fase dura >15min en
   // catálogos grandes, el guard de reconcile mataría el job sano. Tocar
   // updatedAt del job lookup de la tienda cada ~20 lotes lo mantiene vivo.
-  const beatLookup = () =>
-    prisma.bulkJob
-      .updateMany({ where: { shopDomain, phase: "lookup" }, data: { updatedAt: new Date() } })
-      .catch(() => {});
+  // count=0 = el job salió de la fase lookup (cancelado/fallido) → bucles lo usan
+  // como guard para detenerse en silencio en vez de seguir consultando y logueando.
+  const beatLookup = async (): Promise<number> => {
+    try {
+      const r = await prisma.bulkJob.updateMany({
+        where: { shopDomain, phase: "lookup" },
+        data: { updatedAt: new Date() },
+      });
+      return r.count;
+    } catch {
+      return 1; // error de BD transitorio → no abortar por eso
+    }
+  };
+  const abortIfLookupDead = (where: string, count: number) => {
+    if (count === 0) {
+      console.log(`[Bulk] Lookup abortado en ${where}: el job ya no está en fase lookup — se detiene sin reintentos`);
+      throw new Error(`Lookup aborted: job fuera de fase lookup (${where})`);
+    }
+  };
   const failedSkuBatches: string[][] = [];
   for (let i = 0; i < uniqueSkus.length; i += 15) {
-    if (i > 0 && (i / 15) % 20 === 0) await beatLookup();
+    if (i > 0 && (i / 15) % 20 === 0) abortIfLookupDead("SKU batches", await beatLookup());
     const batch = uniqueSkus.slice(i, i + 15);
     const query = batch.map((s) => `sku:'${String(s).replace(/'/g, "")}'`).join(" OR ");
     let succeeded = false;
@@ -3776,7 +3797,7 @@ async function queryProductsTargeted(
   console.log(`[Bulk] Barcode lookup: ${uniqueEans.length} EANs to check via productVariants`);
   const failedEanBatches: string[][] = [];
   for (let i = 0; i < uniqueEans.length; i += 50) {
-    if (i > 0 && (i / 50) % 20 === 0) await beatLookup();
+    if (i > 0 && (i / 50) % 20 === 0) abortIfLookupDead("barcode batches", await beatLookup());
     const batch = uniqueEans.slice(i, i + 50);
     const query = batch.map((e) => `barcode:${String(e).replace(/'/g, "")}`).join(" OR ");
     let succeeded = false;

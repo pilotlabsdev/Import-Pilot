@@ -299,6 +299,14 @@ async function processQueueItem(
         where: { id: item.id },
         data: { status: "cancelled", finishedAt: new Date() },
       });
+    } else if (error?.message?.includes("Lookup aborted")) {
+      // El job murió fuera de runBulkImport (cancel o fallo externo durante el
+      // lookup) y el guard lo paró: sin notificación. Si la fila sigue running
+      // (nadie la cerró), cerrarla; si ya está cancelada/failed, no tocarla.
+      await prisma.importQueue.updateMany({
+        where: { id: item.id, status: "running" },
+        data: { status: "failed", finishedAt: new Date() },
+      });
     } else {
       await prisma.importQueue.update({
         where: { id: item.id },
