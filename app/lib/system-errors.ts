@@ -77,6 +77,16 @@ const TEMPLATE_PATTERNS: Array<{ prefix: string; key: string; extractVars: (s: s
     },
   },
   {
+    prefix: "Cabeceras CSV no válidas",
+    key: "systemError.invalid_headers",
+    extractVars: () => ({}),
+  },
+  {
+    prefix: "Feed ilegible",
+    key: "systemError.feed_unreadable",
+    extractVars: () => ({}),
+  },
+  {
     prefix: "Job excedió tiempo máximo de vida",
     key: "systemError.job_too_old",
     extractVars: (s) => {

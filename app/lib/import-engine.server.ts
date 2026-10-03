@@ -926,7 +926,7 @@ async function runImportInner({ shopDomain, admin, filterType, filterSkus, filte
       let pcSkipping = !!resumeFromSku;
       let pcRows = 0;
       let n = 0;
-      for await (const item of streamFile(await resolveFileUrl(getEffectiveUrl(config)), config.csvDelimiter, 3, signal)) {
+      for await (const item of streamFile(await resolveFileUrl(getEffectiveUrl(config)), config.csvDelimiter, 3, signal, { skuOf: (row) => (getField(row, columnMaps, "sku") || row["sku"] || "").trim() })) {
         const { row } = item;
         if (++pcRows % 1000 === 0 && signal?.aborted) {
           cancelled = true;
@@ -972,7 +972,7 @@ async function runImportInner({ shopDomain, admin, filterType, filterSkus, filte
     if (signal?.aborted) cancelled = true;
 
     let currentChunk: Array<{ headers: string[]; row: any; lineNumber: number }> = [];
-    for await (const item of streamFile(await resolveFileUrl(getEffectiveUrl(config)), config.csvDelimiter, 3, signal)) {
+    for await (const item of streamFile(await resolveFileUrl(getEffectiveUrl(config)), config.csvDelimiter, 3, signal, { skuOf: (row) => (getField(row, columnMaps, "sku") || row["sku"] || "").trim() })) {
       const { row } = item;
       const rowSku = (getField(row, columnMaps, "sku") || row["sku"] || "").trim().toLowerCase();
 

@@ -735,6 +735,8 @@
   "systemError.resume_lookup_failed": "Bulk-Query für bestehende Produkte konnte nicht gestartet werden (resume)",
   "systemError.resume_no_manifest": "Job in Mutations-Phase ohne Manifest (resume): Wiederaufnahme nicht möglich",
   "systemError.finalize_error": "Fehler beim Abschluss des Bulk-Imports",
+  "systemError.feed_unreadable": "Die Feed-Datei enthält keine verwendbaren Daten (SKU-Spalte leer oder fehlend). Versuche es in wenigen Minuten erneut.",
+  "systemError.invalid_headers": "Die Datei hat nicht die erwarteten Spalten (SKU oder EAN fehlt). Prüfe die Einstellungen des Lieferanten.",
   "systemError.query_bad_status": "Bulk-Query für bestehende Produkte mit Status \"{{status}}\" abgeschlossen",
   "systemError.op_bad_status": "Bulk-Operation {{kind}} #{{index}} mit Status \"{{status}}\" abgeschlossen",
   "systemError.job_too_old": "Job hat maximale Lebenszeit überschritten ({{minutes}}min).",

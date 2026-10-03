@@ -737,6 +737,8 @@
   "systemError.resume_lookup_failed": "No se pudo lanzar la bulk query de productos existentes (resume)",
   "systemError.resume_no_manifest": "Job en fase mutations sin manifest (resume): imposible reanudar",
   "systemError.finalize_error": "Error finalizando importación bulk",
+  "systemError.feed_unreadable": "El archivo del feed no tiene datos utilizables (columna SKU vacía o ausente). Vuelve a intentarlo en unos minutos.",
+  "systemError.invalid_headers": "El archivo no tiene las columnas esperadas (falta SKU o EAN). Revisa la configuración del proveedor.",
   "systemError.query_bad_status": "La bulk query de productos existentes terminó con estado \"{{status}}\"",
   "systemError.op_bad_status": "Operación bulk {{kind}} #{{index}} terminó con estado \"{{status}}\"",
   "systemError.job_too_old": "Job excedió tiempo máximo de vida ({{minutes}}min).",

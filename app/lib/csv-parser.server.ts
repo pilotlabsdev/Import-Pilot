@@ -2,6 +2,10 @@ export interface ProductRow {
   [key: string]: string | undefined;
 }
 
+export interface StreamOptions {
+  skuOf?: (row: ProductRow) => string;
+}
+
 import * as XLSX from "xlsx";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -12,6 +16,11 @@ function isLocalFilePath(url: string): boolean {
 
 function detectEncoding(buffer: Uint8Array): string {
   if (buffer.length >= 3 && buffer[0] === 0xEF && buffer[1] === 0xBB && buffer[2] === 0xBF) return "utf-8";
+  // <3 bytes: aún no se puede confirmar BOM ni detectar fiablemente → utf-8
+  // (con stream:true el decoder une secuencias partidas entre chunks). Antes un
+  // primer trozo partido con byte alto caía a latin1 → mojibake "ï»¿" en la
+  // cabecera ("ï»¿sku" ≠ "sku") y el import seguía con todas las filas sin SKU.
+  if (buffer.length < 3) return "utf-8";
   let hasHighBytes = false;
   for (let i = 0; i < buffer.length; i++) {
     if (buffer[i] > 127) { hasHighBytes = true; break; }
@@ -47,6 +56,12 @@ async function fetchAsLocalUrl(filePath: string): Promise<string> {
 // solo alargaría el fallo (el caller muestra el error y el job/usuario re-lanza).
 const TTFB_TIMEOUT_MS = 120_000;
 
+// Guard: N filas seguidas sin SKU → el feed no es utilizable (cabecera rota,
+// variante basura del servidor, columnas desplazadas). Dentro del try de
+// streamCSV → dispara sus reintentos (re-descarga) y, si persiste, falla el
+// job de forma visible en vez de reportar "todo sin cambios".
+const EMPTY_SKU_STREAK_LIMIT = 20;
+
 async function fetchWithTtfbTimeout(url: string): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TTFB_TIMEOUT_MS);
@@ -68,7 +83,9 @@ export function parseCSVLine(line: string, delimiter: string = "|"): string[] {
   let current = "";
   let inQuotes = false;
 
-  line = line.replace(/^\uFEFF/, "");
+  // BOM utf-8 y su mojibake si la codificación se detectó mal (latin1)
+  if (line.charCodeAt(0) === 0xfeff) line = line.slice(1);
+  else if (line.startsWith("ï»¿")) line = line.slice(3);
 
   for (let i = 0; i < line.length; i++) {
     const char = line[i];
@@ -135,7 +152,8 @@ export function autoDetectDelimiter(sample: string): string {
 export async function* streamCSV(
   url: string,
   delimiter: string = "|",
-  maxRetries: number = 3
+  maxRetries: number = 3,
+  opts?: StreamOptions
 ): AsyncGenerator<{ headers: string[]; row: ProductRow; lineNumber: number }> {
   // Normalize Google Drive URLs to bypass viewer/consent page
   if (url.includes("drive.google.com") && url.includes("export=download") && !url.includes("confirm=")) {
@@ -157,6 +175,7 @@ export async function* streamCSV(
         let headers: string[] = [];
         let lineNumber = 0;
         let incompleteLine = "";
+        let emptySkuStreak = 0;
         let effectiveDelimiter = delimiter === "auto" ? null : delimiter;
 
         const firstChunk = await reader.read();
@@ -226,6 +245,16 @@ export async function* streamCSV(
             headers.forEach((header, index) => {
               row[header] = values[index] || "";
             });
+
+            if (opts?.skuOf) {
+              if (opts.skuOf(row)) {
+                emptySkuStreak = 0;
+              } else if (++emptySkuStreak >= EMPTY_SKU_STREAK_LIMIT) {
+                const detail = `Feed ilegible: ${EMPTY_SKU_STREAK_LIMIT} filas seguidas sin SKU (cerca de la línea ${lineNumber}). Cabeceras: [${headers.slice(0, 12).join(", ")}]`;
+                console.error(`[CSV] ${detail}`);
+                throw new Error(detail);
+              }
+            }
 
             yield { headers, row, lineNumber };
           }
@@ -486,7 +515,8 @@ export async function* streamFile(
   url: string,
   delimiter: string = "|",
   maxRetries: number = 3,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  opts?: StreamOptions
 ): AsyncGenerator<{ headers: string[]; row: ProductRow; lineNumber: number }> {
   if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
 
@@ -503,7 +533,7 @@ export async function* streamFile(
   if (isExcelUrl(url)) {
     yield* streamExcel(url, maxRetries);
   } else {
-    yield* streamCSV(url, delimiter, maxRetries);
+    yield* streamCSV(url, delimiter, maxRetries, opts);
   }
 }
 

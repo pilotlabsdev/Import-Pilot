@@ -1319,7 +1319,7 @@ async function prepareAndLaunch(
   const resumeFromLine = job.resumeFromLine || 0;
   let checkpointCounter = 0;
 
-  for await (const item of streamFile(await resolveFileUrl(getEffectiveUrl(config)), config.csvDelimiter)) {
+  for await (const item of streamFile(await resolveFileUrl(getEffectiveUrl(config)), config.csvDelimiter, 3, undefined, { skuOf: (row) => (getField(row, columnMaps, "sku") || row["sku"] || "").trim() })) {
     const { row, lineNumber } = item;
 
     const sku = (getField(row, columnMaps, "sku") || row["sku"] || "").trim();
@@ -3611,7 +3611,7 @@ async function preScanCsv(
   const skuFilter = filterSkus ? new Set(filterSkus.split(",").map((s) => s.trim().toLowerCase())) : null;
   const catFilter = filterCategories ? new Set(filterCategories.split(",").map((s) => s.trim().toLowerCase())) : null;
 
-  for await (const item of streamFile(await resolveFileUrl(getEffectiveUrl(config)), config.csvDelimiter)) {
+  for await (const item of streamFile(await resolveFileUrl(getEffectiveUrl(config)), config.csvDelimiter, 3, undefined, { skuOf: (row) => (getField(row, columnMaps, "sku") || row["sku"] || "").trim() })) {
     const { row } = item;
     const sku = (getField(row, columnMaps, "sku") || row["sku"] || "").trim();
     if (!sku) continue;

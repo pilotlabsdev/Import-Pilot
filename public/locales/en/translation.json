@@ -738,6 +738,8 @@
   "systemError.resume_lookup_failed": "Failed to launch bulk query for existing products (resume)",
   "systemError.resume_no_manifest": "Job in mutations phase without manifest (resume): unable to resume",
   "systemError.finalize_error": "Error finalizing bulk import",
+  "systemError.feed_unreadable": "The feed file has no usable data (SKU column empty or missing). Try again in a few minutes.",
+  "systemError.invalid_headers": "The file does not have the expected columns (SKU or EAN missing). Check the supplier settings.",
   "systemError.query_bad_status": "Bulk query for existing products finished with status \"{{status}}\"",
   "systemError.op_bad_status": "Bulk operation {{kind}} #{{index}} finished with status \"{{status}}\"",
   "systemError.job_too_old": "Job exceeded maximum lifetime ({{minutes}}min).",
