@@ -215,6 +215,11 @@ export const addDocumentResponseHeaders = shopify.addDocumentResponseHeaders;
  * el ErrorBoundary de /app la renderiza (marker `data-loader-bounce`).
  * Cada llamada crea una Response NUEVA: su body solo puede leerse una vez.
  */
+// El mismo Request llega al loader padre y a los hijos en paralelo → log UNA
+// sola vez por petición (el WeakSet comparte la instancia). Nivel info: el
+// bounce es la ruta esperada (sano), no un error.
+const bounceLogged = new WeakSet<Request>();
+
 export async function shoplessBounceResponse(request: Request, label = "loader"): Promise<Response | null> {
   const url = new URL(request.url);
   if (url.searchParams.get("shop")) return null;
@@ -239,7 +244,10 @@ export async function shoplessBounceResponse(request: Request, label = "loader")
   }
   const target = buildAdminAppUrl(shop, `${url.pathname}${url.search}`);
   const refHost = (() => { try { return referer ? new URL(referer).host + new URL(referer).pathname : "-"; } catch { return "-"; } })();
-  console.error(`[Bounce:${label}] URL sin shop en ${url.pathname} → bounce a ${target} (fuente: ${source || "universal"}, dest=${dest || "-"}, mode=${mode || "-"}, referer=${refHost})`);
+  if (!bounceLogged.has(request)) {
+    bounceLogged.add(request);
+    console.info(`[Bounce:${label}] URL sin shop en ${url.pathname} → bounce a ${target} (fuente: ${source || "universal"}, dest=${dest || "-"}, mode=${mode || "-"}, referer=${refHost})`);
+  }
   return new Response(
     `<script data-loader-bounce>try{window.top.location.replace(${JSON.stringify(target)})}catch(e){window.open(${JSON.stringify(target)},"_top")}</script>`,
     { headers: { "content-type": "text/html;charset=utf-8", "cache-control": "no-store" } }
