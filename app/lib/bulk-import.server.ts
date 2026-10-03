@@ -25,20 +25,25 @@ import { setBulkActive, clearBulkActive } from "./bulk-active-cache.server";
 import { invalidateNavCounts } from "./nav-counts.server";
 import shopify from "~/shopify.server";
 
+const HTML_ENTITY_MAP: Record<string, string> = {
+  amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ",
+  eacute: "é", agrave: "à", auml: "ä", ouml: "ö", uuml: "ü",
+  ccordil: "ç", ntide: "ñ", iquest: "¿", iexcl: "¡", times: "×",
+  divide: "÷", euro: "€", pound: "£", cent: "¢", copy: "©",
+  reg: "®", trade: "™", mdash: "—", ndash: "–", lsquo: "'", rsquo: "'",
+  ldquo: '"', rdquo: '"', bull: "•", middot: "·", hellip: "…",
+  laquo: "«", raquo: "»", para: "§", micro: "µ", acute: "´",
+  cedil: "¸", tilde: "~", circ: "ˆ", deg: "°", brvbar: "¦",
+  sect: "§", curren: "¤", yen: "¥", not: "¬",
+  shy: "\u00AD", macr: "¯",
+};
 function normalizeHtml(html: string): string {
   if (!html) return "";
   return html
     .normalize("NFC")
     .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
     .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
-    .replace(/&(\w+);/g, (entity) => {
-      const map: Record<string, string> = {
-        amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ",
-        eacute: "é", agrave: "à", auml: "ä", ouml: "ö", uuml: "ü",
-        ccordil: "ç", ntide: "ñ", iquest: "¿", iexcl: "¡",
-      };
-      return map[entity] || "";
-    })
+    .replace(/&(\w+);/g, (_, name) => HTML_ENTITY_MAP[name] ?? " ")
     .replace(/<\/?[a-zA-Z][^>]*>/g, " ")
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u200B\u200C\u200D\u00AD\u2060\uFEFF]/g, "")
     .replace(/[^a-záéíóúñüàèìòùäëïöûçñ0-9\s]/gi, " ")
