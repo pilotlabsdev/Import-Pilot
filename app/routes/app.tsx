@@ -7,14 +7,13 @@ import { useTranslation } from "react-i18next";
 import { useState, useEffect } from "react";
 import { useRevalidator } from "react-router";
 
-import { safeAuthenticate, isDeveloperStore } from "~/shopify.server";
-import { prisma } from "~/lib/db.server";
+import { safeAuthenticate, isDeveloperStore, shoplessBounceResponse } from "~/shopify.server";
 import { TutorialProvider, stopTutorial } from "~/components/TutorialProvider";
 import { CrispChat } from "~/components/CrispChat";
 import { getSubscriptionInfo, type SubscriptionInfo } from "~/lib/billing.server";
 import { ReconnectingOverlay, triggerReconnect } from "~/components/ReconnectingOverlay";
 import { AppBridgeBounce } from "~/components/AppBridgeBounce";
-import { ADMIN_ORIGIN, SHOP_COOKIE, buildAdminAppUrl, buildPlansUrl, shopFromCookieHeader, CTX_KEY } from "~/lib/admin-link";
+import { SHOP_COOKIE, buildPlansUrl, CTX_KEY } from "~/lib/admin-link";
 import { getNavCounts } from "~/lib/nav-counts.server";
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -65,48 +64,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // URL sin parámetros `shop` (deep-link borrado, pestaña restaurada, recarga
   // de una URL SPA desnuda — p.ej. F5 con foco en el iframe: el fetch pasa por
   // nuestro Service Worker y llega con dest=empty + mode=navigate).
-  // SOLO se interviene un documento top-level de verdad — las peticiones .data
-  // de navegación SPA tampoco llevan `shop` (los params viven en el documento
-  // actual, no en el destino del link) y redirigirlas a admin hacía que el
-  // router navegase el iframe a admin.shopify.com → X-Frame-Options deny.
-  // - documento (dest=document / mode=navigate, puro o vía SW) → bounce inline
-  //   (MISMO patrón que el gate de planes): window.top.location.replace navega
-  //   la ventana top al admin con la misma ruta y Shopify re-embebe con params
-  //   frescos. NUNCA un 302: si la petición vive dentro del iframe, el
-  //   navegador seguiría la redirección DENTRO del marco → X-Frame-Options
-  //   deny (pantalla del gatito). El script funciona en ambos contextos
-  //   (top===self en documento puro).
-  // - dest=iframe o Referer=admin → bounce oficial de App Bridge (sin shop)
-  // - .data / prefetch (dest=empty, mode=cors) → authenticate normal (token)
-  if (!url.searchParams.get("shop")) {
-    const dest = (request.headers.get("Sec-Fetch-Dest") || "").toLowerCase();
-    const mode = (request.headers.get("Sec-Fetch-Mode") || "").toLowerCase();
-    const accept = request.headers.get("Accept") || "";
-    const referer = request.headers.get("Referer") || "";
-    const embedded = dest === "iframe" || referer.startsWith(ADMIN_ORIGIN);
-    const isTopLevelDocument = !embedded && (
-      dest === "document" ||
-      mode === "navigate" ||
-      (dest === "" && mode === "" && accept.includes("text/html"))
-    );
-    if (isTopLevelDocument) {
-      let shop = shopFromCookieHeader(request.headers.get("Cookie"));
-      let source = shop ? "cookie" : null;
-      if (!shop) {
-        try {
-          const rows = await prisma.session.findMany({ select: { shop: true }, distinct: ["shop"] });
-          if (rows.length === 1) { shop = rows[0].shop; source = "db-unico"; }
-        } catch {}
-      }
-      const target = buildAdminAppUrl(shop, `${url.pathname}${url.search}`);
-      const refHost = (() => { try { return referer ? new URL(referer).host + new URL(referer).pathname : "-"; } catch { return "-"; } })();
-      console.error(`[App Loader] URL sin shop en ${url.pathname} → bounce a ${target} (fuente: ${source || "universal"}, dest=${dest || "-"}, mode=${mode || "-"}, referer=${refHost})`);
-      throw new Response(
-        `<script data-loader-bounce>try{window.top.location.replace(${JSON.stringify(target)})}catch(e){window.open(${JSON.stringify(target)},"_top")}</script>`,
-        { headers: { "content-type": "text/html;charset=utf-8", "cache-control": "no-store" } }
-      );
-    }
-  }
+  // Bounce inline (MISMO patrón que el gate de planes): window.top.location
+  // .replace navega la ventana top al admin con la misma ruta y Shopify
+  // re-embebe con params frescos. NUNCA un 302: la redirección seguiría
+  // DENTRO del marco → X-Frame-Options deny (pantalla del gatito).
+  // SOLO documentos top-level de verdad: las peticiones .data de navegación
+  // SPA tampoco llevan `shop` y redirigirlas a admin hacía que el router
+  // navegase el iframe a admin.shopify.com. La clasificación (document vs
+  // .data/prefetch vs embeddada) vive en el helper compartido para que
+  // safeAuthenticate (loaders HIJO) lance exactamente el mismo bounce — ver
+  // su docstring: un redirect("/") de hijo le gana al error del padre.
+  const shoplessBounce = await shoplessBounceResponse(request, "app-loader");
+  if (shoplessBounce) throw shoplessBounce;
 
   // Retorno del welcome link de Shopify App Pricing: llega como documento
   // top-level con plan_handle+shop pero SIN `host` — authenticate.admin lo

@@ -9,6 +9,7 @@ import { shopifyApi, type BillingConfigRecurringLineItem } from "@shopify/shopif
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import { redirect } from "react-router";
 import { prisma } from "~/lib/db.server";
+import { ADMIN_ORIGIN, buildAdminAppUrl, shopFromCookieHeader } from "~/lib/admin-link";
 import { PLAN_HANDLES, PLAN_LIMITS } from "~/lib/plans";
 import { EventEmitter } from "node:events";
 
@@ -193,12 +194,70 @@ export const login = shopify.login;
 export const addDocumentResponseHeaders = shopify.addDocumentResponseHeaders;
 
 /**
+ * Respuesta de bounce para documentos top-level que llegan SIN el parámetro
+ * `shop` (F5 con foco en el iframe — el fetch pasa por nuestro Service Worker
+ * con dest=empty+mode=navigate —, URL SPA desnuda, pestaña stale).
+ * Devuelve null si la petición no debe intervenirse: lleva `shop`, es una
+ * petición .data/prefetch (dest=empty, mode=cors) o está embebida
+ * (dest=iframe / Referer=admin → sigue el bounce oficial de App Bridge).
+ *
+ * NUNCA un 302: si la petición vive dentro del iframe, el navegador seguiría
+ * la redirección DENTRO del marco → admin.shopify.com responde
+ * X-Frame-Options: deny (pantalla del gatito). El HTML con script funciona en
+ * ambos contextos (top===self en documento puro).
+ *
+ * OJO (bug corregido aquí): React Router ejecuta en paralelo los loaders
+ * padre (/app) e hijo (/app/queue, /app/supplier/...). Los hijos llaman a
+ * safeAuthenticate → 401 sin sesión → redirect("/") — un redirect de hijo LE
+ * GANA al error lanzado por el padre → la respuesta final era un 302 dentro
+ * del iframe → gatito. Por eso este bounce se lanza TAMBIÉN desde
+ * safeAuthenticate: padre e hijo lanzan la MISMA respuesta 200 con script y
+ * el ErrorBoundary de /app la renderiza (marker `data-loader-bounce`).
+ * Cada llamada crea una Response NUEVA: su body solo puede leerse una vez.
+ */
+export async function shoplessBounceResponse(request: Request, label = "loader"): Promise<Response | null> {
+  const url = new URL(request.url);
+  if (url.searchParams.get("shop")) return null;
+  const dest = (request.headers.get("Sec-Fetch-Dest") || "").toLowerCase();
+  const mode = (request.headers.get("Sec-Fetch-Mode") || "").toLowerCase();
+  const accept = request.headers.get("Accept") || "";
+  const referer = request.headers.get("Referer") || "";
+  if (dest === "iframe" || referer.startsWith(ADMIN_ORIGIN)) return null;
+  const isTopLevelDocument =
+    dest === "document" ||
+    mode === "navigate" ||
+    (dest === "" && mode === "" && accept.includes("text/html"));
+  if (!isTopLevelDocument) return null;
+
+  let shop = shopFromCookieHeader(request.headers.get("Cookie"));
+  let source = shop ? "cookie" : null;
+  if (!shop) {
+    try {
+      const rows = await prisma.session.findMany({ select: { shop: true }, distinct: ["shop"] });
+      if (rows.length === 1) { shop = rows[0].shop; source = "db-unico"; }
+    } catch {}
+  }
+  const target = buildAdminAppUrl(shop, `${url.pathname}${url.search}`);
+  const refHost = (() => { try { return referer ? new URL(referer).host + new URL(referer).pathname : "-"; } catch { return "-"; } })();
+  console.error(`[Bounce:${label}] URL sin shop en ${url.pathname} → bounce a ${target} (fuente: ${source || "universal"}, dest=${dest || "-"}, mode=${mode || "-"}, referer=${refHost})`);
+  return new Response(
+    `<script data-loader-bounce>try{window.top.location.replace(${JSON.stringify(target)})}catch(e){window.open(${JSON.stringify(target)},"_top")}</script>`,
+    { headers: { "content-type": "text/html;charset=utf-8", "cache-control": "no-store" } }
+  );
+}
+
+/**
  * Safe wrapper around authenticate.admin() that handles session expiry gracefully.
  * When the session is expired, the library throws a raw Response(401).
  * This wrapper catches it and redirects to "/" which triggers App Bridge session refresh.
  * Uses throw redirect() so React Router follows it automatically (no ErrorBoundary).
  */
 export async function safeAuthenticate(request: Request) {
+  // Documento top-level sin `shop` → bounce inline (ver shoplessBounceResponse).
+  // Sin esto, el 401 de un loader HIJO → redirect("/") le ganaría al bounce
+  // del loader padre y la respuesta final sería un 302 dentro del iframe.
+  const shoplessBounce = await shoplessBounceResponse(request, "safeAuthenticate");
+  if (shoplessBounce) throw shoplessBounce;
   try {
     // Pre-validación con los helpers OFICIALES utils.sanitizeShop/sanitizeHost
     // (solo se llaman si el parámetro está presente). Sin ella, shops/hosts de
