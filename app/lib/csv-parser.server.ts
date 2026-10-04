@@ -10,6 +10,31 @@ import * as XLSX from "xlsx";
 import fs from "node:fs/promises";
 import path from "node:path";
 
+/**
+ * Normaliza URLs de Google Sheets a su export CSV (en vivo, sin guardar nada):
+ * - /spreadsheets/d/{id}/edit… → /export?format=csv[&gid=N] (gid de #gid= o ?gid=)
+ * - /spreadsheets/d/e/{key}/pubhtml… → /pub?output=csv (doc oficial "Publish to web")
+ * Idempotente: si ya es un export/pub CSV (format=csv/output=csv/tqx=out:csv) o no
+ * es una URL de Sheets → se devuelve byte a byte intacta (cualquier otra URL,
+ * incl. Mediamax/Drive/bucket/data:, nunca toca esta función).
+ */
+export function normalizeGoogleSheetsUrl(value: string): string {
+  if (!value.includes("docs.google.com/spreadsheets")) return value;
+  if (value.includes("format=csv") || value.includes("output=csv") || value.includes("tqx=out:csv")) return value;
+  const pubMatch = value.match(/^(https?:\/\/docs\.google\.com\/spreadsheets\/d\/e\/[a-zA-Z0-9_-]+\/)pubhtml(?:\?(.*))?/i);
+  if (pubMatch) {
+    const query = pubMatch[2] ? `&${pubMatch[2]}` : "";
+    return `${pubMatch[1]}pub?output=csv${query}`;
+  }
+  const idMatch = value.match(/^(https?:\/\/docs\.google\.com\/spreadsheets\/(?:u\/\d+\/)?d\/)([a-zA-Z0-9_-]+)(?:\/|$)/i);
+  if (idMatch && idMatch[2] !== "e") {
+    const gidMatch = value.match(/[?&#]gid=(\d+)/);
+    const gid = gidMatch ? `&gid=${gidMatch[1]}` : "";
+    return `${idMatch[1]}${idMatch[2]}/export?format=csv${gid}`;
+  }
+  return value;
+}
+
 function isLocalFilePath(url: string): boolean {
   return url.startsWith("/") || url.match(/^[A-Z]:\\/i) !== null || url.startsWith("file:");
 }
@@ -159,6 +184,7 @@ export async function* streamCSV(
   if (url.includes("drive.google.com") && url.includes("export=download") && !url.includes("confirm=")) {
     url = `${url}&confirm=t`;
   }
+  url = normalizeGoogleSheetsUrl(url);
   let lastError: Error | null = null;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
@@ -436,6 +462,7 @@ export async function* streamExcel(
   if (url.includes("drive.google.com") && url.includes("export=download") && !url.includes("confirm=")) {
     url = `${url}&confirm=t`;
   }
+  url = normalizeGoogleSheetsUrl(url);
   let lastError: Error | null = null;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
@@ -713,6 +740,7 @@ export async function fetchCSVHeaders(
   if (effectiveUrl.includes("drive.google.com") && effectiveUrl.includes("export=download") && !effectiveUrl.includes("confirm=")) {
     effectiveUrl = `${effectiveUrl}&confirm=t`;
   }
+  effectiveUrl = normalizeGoogleSheetsUrl(effectiveUrl);
   if (isExcelUrl(effectiveUrl)) {
     const response = await fetch(effectiveUrl);
     if (!response.ok) throw new Error(`Error descargando Excel: ${response.status}`);

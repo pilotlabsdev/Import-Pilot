@@ -1,5 +1,6 @@
 import { S3Client, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand, GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { normalizeGoogleSheetsUrl } from "./csv-parser.server";
 
 const BUCKET = process.env.STORAGE_BUCKET || "";
 const ENDPOINT = process.env.STORAGE_ENDPOINT || "";
@@ -108,7 +109,8 @@ export async function resolveFileUrl(value: string): Promise<string> {
   if (value.includes("drive.google.com") && value.includes("export=download") && !value.includes("confirm=")) {
     return `${value}&confirm=t`;
   }
-  return value;
+  // Google Sheets edit/published URLs → live CSV export (nothing stored in the bucket)
+  return normalizeGoogleSheetsUrl(value);
 }
 
 /** Get file size from the bucket. Returns size in bytes or -1 if not found. */
