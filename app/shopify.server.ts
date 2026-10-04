@@ -222,6 +222,11 @@ export const addDocumentResponseHeaders = shopify.addDocumentResponseHeaders;
 // esperada (sana), no un error.
 const bounceLoggedAt = new Map<string, number>();
 const BOUNCE_DEDUP_MS = 3_000;
+// Ídem para el log de 401+retry: el loader padre y los hijos de RR lo disparan
+// en el mismo ms (2-4 líneas por ráfaga) → dedupe por pathname en 3s = 1 línea.
+// console.info en vez de warn: es el evento ESPERADO (token caducado en reposo,
+// App Bridge renueva), no un error → Railway lo pinta en su nivel real.
+const retry401LoggedAt = new Map<string, number>();
 
 export async function shoplessBounceResponse(request: Request, label = "loader"): Promise<Response | null> {
   const url = new URL(request.url);
@@ -330,7 +335,16 @@ export async function safeAuthenticate(request: Request) {
       // para el resto de 401/410 (API upstream, bots) donde un token nuevo
       // no arregla nada.
       if (res.status === 401 && res.headers.get("X-Shopify-Retry-Invalid-Session-Request")) {
-        console.warn("[Auth] 401 con retry oficial de App Bridge → re-lanzado sin navegar (misma página)");
+        const now401 = Date.now();
+        const path401 = (() => { try { return new URL(request.url).pathname; } catch { return "-"; } })();
+        const key401 = `401-retry|${path401}`;
+        if (now401 - (retry401LoggedAt.get(key401) ?? 0) > BOUNCE_DEDUP_MS) {
+          retry401LoggedAt.set(key401, now401);
+          if (retry401LoggedAt.size > 200) {
+            for (const [k, at] of retry401LoggedAt) if (now401 - at > BOUNCE_DEDUP_MS) retry401LoggedAt.delete(k);
+          }
+          console.info("[Auth] 401 con retry oficial de App Bridge → re-lanzado sin navegar (misma página)");
+        }
         throw res;
       }
       // 401/410 sin retry — redirect a / as before
