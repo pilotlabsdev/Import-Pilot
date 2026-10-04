@@ -17,6 +17,7 @@ import {
 } from "@shopify/polaris";
 import { safeAuthenticate } from "~/shopify.server";
 import { SearchableMultiSelect } from "~/components/SearchableMultiSelect";
+import { parseSystemError } from "~/lib/system-errors";
 import { useTranslation } from "react-i18next";
 
 const CHUNK_SIZE = 5000;
@@ -164,7 +165,8 @@ export default function Preview() {
         if (loadIdRef.current !== myLoadId) return;
 
         if (d.error) {
-          setError(d.error);
+          const parsed = parseSystemError(d.error);
+          setError(t(parsed.key, parsed.vars || {}));
           break;
         }
 

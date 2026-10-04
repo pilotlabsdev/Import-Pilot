@@ -747,6 +747,7 @@
   "systemError.finalize_error": "The import couldn't complete its final steps. Try again.",
   "systemError.feed_unreadable": "The feed file has no usable data (SKU column empty or missing). Try again in a few minutes.",
   "systemError.invalid_headers": "The file does not have the expected columns (SKU or EAN missing). Check the supplier settings.",
+  "systemError.google_not_shared": "Google won't let you download the sheet or file because it isn't shared. Share the sheet with anyone with the link and try again.",
   "systemError.query_bad_status": "The check for existing products in the store finished with status \"{{status}}\".",
   "systemError.op_bad_status": "A part of the import to Shopify finished with status \"{{status}}\" (part {{index}}).",
   "systemError.job_too_old": "The import exceeded the maximum allowed time ({{minutes}} min).",

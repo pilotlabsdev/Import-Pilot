@@ -18,6 +18,7 @@ import { prisma, getConfigById, getEffectiveUrl, getSourceKey } from "~/lib/db.s
 import { resolveFileUrl } from "~/lib/storage.server";
 import { safeAuthenticate } from "~/shopify.server";
 import { getCachedHeaders } from "~/lib/csv-cache.server";
+import { parseSystemError } from "~/lib/system-errors";
 import { useTranslation } from "react-i18next";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
@@ -153,10 +154,14 @@ export default function Columns() {
           setCsvColumns(d.headers);
           setHeaderError(null);
         } else if (d.error) {
-          setHeaderError(d.error);
+          const parsed = parseSystemError(d.error);
+          setHeaderError(t(parsed.key, parsed.vars || {}));
         }
       } catch (e: any) {
-        if (!cancelled) setHeaderError(e.message);
+        if (!cancelled) {
+          const parsed = parseSystemError(e.message);
+          setHeaderError(t(parsed.key, parsed.vars || {}));
+        }
       } finally {
         if (!cancelled) setLoadingHeaders(false);
       }

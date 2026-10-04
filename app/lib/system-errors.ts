@@ -87,6 +87,11 @@ const TEMPLATE_PATTERNS: Array<{ prefix: string; key: string; extractVars: (s: s
     extractVars: () => ({}),
   },
   {
+    prefix: "No se puede descargar de Google",
+    key: "systemError.google_not_shared",
+    extractVars: () => ({}),
+  },
+  {
     prefix: "Job excedió tiempo máximo de vida",
     key: "systemError.job_too_old",
     extractVars: (s) => {

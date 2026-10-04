@@ -744,6 +744,7 @@
   "systemError.finalize_error": "A importação não conseguiu dar os últimos passos. Tente novamente.",
   "systemError.feed_unreadable": "O arquivo do feed não tem dados utilizáveis (coluna SKU vazia ou ausente). Tente novamente em alguns minutos.",
   "systemError.invalid_headers": "O arquivo não tem as colunas esperadas (SKU ou EAN ausente). Verifique as configurações do fornecedor.",
+  "systemError.google_not_shared": "O Google não deixa baixar a planilha ou o arquivo porque não está compartilhado. Compartilhe a planilha com qualquer pessoa com o link e tente novamente.",
   "systemError.query_bad_status": "A verificação de produtos existentes na loja terminou com o estado \"{{status}}\".",
   "systemError.op_bad_status": "Uma parte da importação para a Shopify terminou com o estado \"{{status}}\" (parte {{index}}).",
   "systemError.job_too_old": "A importação excedeu o tempo máximo permitido ({{minutes}} min).",

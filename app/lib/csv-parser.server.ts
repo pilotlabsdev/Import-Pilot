@@ -35,6 +35,17 @@ export function normalizeGoogleSheetsUrl(value: string): string {
   return value;
 }
 
+/**
+ * 401/403 de Google (Sheets/Drive) = la hoja/archivo no está compartido → mensaje
+ * accionable en vez del crudo "Error descargando CSV: 401 Unauthorized".
+ * Devuelve null para cualquier otra URL/estado (el llamante usa su mensaje original).
+ */
+function googleDownloadError(url: string, status: number): string | null {
+  if (status !== 401 && status !== 403) return null;
+  if (!url.includes("docs.google.com") && !url.includes("drive.google.com")) return null;
+  return "No se puede descargar de Google: la hoja o archivo no está compartido. Comparte la hoja con cualquiera que tenga el enlace.";
+}
+
 function isLocalFilePath(url: string): boolean {
   return url.startsWith("/") || url.match(/^[A-Z]:\\/i) !== null || url.startsWith("file:");
 }
@@ -190,7 +201,7 @@ export async function* streamCSV(
     try {
       const response = await fetchWithTtfbTimeout(url);
       if (!response.ok) {
-        throw new Error(`Error descargando CSV: ${response.status} ${response.statusText}`);
+        throw new Error(googleDownloadError(url, response.status) ?? `Error descargando CSV: ${response.status} ${response.statusText}`);
       }
 
       const reader = response.body?.getReader();
@@ -468,7 +479,7 @@ export async function* streamExcel(
     try {
       const response = await fetchWithTtfbTimeout(url);
       if (!response.ok) {
-        throw new Error(`Error descargando Excel: ${response.status} ${response.statusText}`);
+        throw new Error(googleDownloadError(url, response.status) ?? `Error descargando Excel: ${response.status} ${response.statusText}`);
       }
 
       const buffer = await response.arrayBuffer();
@@ -743,7 +754,7 @@ export async function fetchCSVHeaders(
   effectiveUrl = normalizeGoogleSheetsUrl(effectiveUrl);
   if (isExcelUrl(effectiveUrl)) {
     const response = await fetch(effectiveUrl);
-    if (!response.ok) throw new Error(`Error descargando Excel: ${response.status}`);
+    if (!response.ok) throw new Error(googleDownloadError(effectiveUrl, response.status) ?? `Error descargando Excel: ${response.status}`);
 
     const buffer = await response.arrayBuffer();
     const workbook = XLSX.read(buffer, { type: "array" });
@@ -781,7 +792,7 @@ export async function fetchCSVHeaders(
     try {
       const response = await fetch(effectiveUrl);
       if (!response.ok) {
-        throw new Error(`Error descargando CSV: ${response.status}`);
+        throw new Error(googleDownloadError(effectiveUrl, response.status) ?? `Error descargando CSV: ${response.status}`);
       }
 
       const reader = response.body?.getReader();

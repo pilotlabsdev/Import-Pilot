@@ -744,6 +744,7 @@
   "systemError.finalize_error": "L'importation n'a pas pu effectuer ses dernières étapes. Réessayez.",
   "systemError.feed_unreadable": "Le fichier du flux ne contient pas de données utilisables (colonne SKU vide ou absente). Réessayez dans quelques minutes.",
   "systemError.invalid_headers": "Le fichier n'a pas les colonnes attendues (SKU ou EAN manquant). Vérifiez les paramètres du fournisseur.",
+  "systemError.google_not_shared": "Google ne permet pas de télécharger la feuille ou le fichier car il n'est pas partagé. Partagez la feuille avec toute personne disposant du lien et réessayez.",
   "systemError.query_bad_status": "La vérification des produits existants dans la boutique s'est terminée avec le statut \"{{status}}\".",
   "systemError.op_bad_status": "Une partie de l'importation vers Shopify s'est terminée avec le statut \"{{status}}\" (partie {{index}}).",
   "systemError.job_too_old": "L'importation a dépassé le temps maximal autorisé ({{minutes}} min).",
