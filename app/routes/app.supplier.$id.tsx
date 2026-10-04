@@ -113,9 +113,15 @@ export default function SupplierLayout() {
   const handleTabChange = useCallback(
     (index: number) => {
       shopify.saveBar.leaveConfirmation();
-      navigate(basePath + SUPPLIER_TAB_KEYS[index].url);
+      // Preservar los query params actuales (shop/host/embedded/locale): navegar
+      // solo con pathname deja la URL "desnuda" sin `shop` y dispara [ParamHeal]
+      // en cada cambio de tab.
+      navigate({
+        pathname: basePath + SUPPLIER_TAB_KEYS[index].url,
+        search: location.search,
+      });
     },
-    [shopify, navigate, basePath]
+    [shopify, navigate, basePath, location.search]
   );
 
   const handleRename = useCallback(() => {

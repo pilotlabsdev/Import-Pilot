@@ -264,8 +264,11 @@ export async function shoplessBounceResponse(request: Request, label = "loader")
 
 /**
  * Safe wrapper around authenticate.admin() that handles session expiry gracefully.
- * When the session is expired, the library throws a raw Response(401).
- * This wrapper catches it and redirects to "/" which triggers App Bridge session refresh.
+ * - 401 CON el header oficial X-Shopify-Retry-Invalid-Session-Request (token de
+ *   sesión inválido): se re-lanza tal cual → App Bridge renueva el token y
+ *   reintenta la petición en la MISMA página (ver catch abajo).
+ * - Resto de 401/410 (API upstream, bots): redirect a "/" como fallback.
+ * - Responses con Location (OAuth, bounce de documentos): se re-lanzan intactos.
  * Uses throw redirect() so React Router follows it automatically (no ErrorBoundary).
  */
 export async function safeAuthenticate(request: Request) {
@@ -317,7 +320,20 @@ export async function safeAuthenticate(request: Request) {
       if (location) {
         throw res;
       }
-      // 401/410 without Location — redirect to / to trigger App Bridge session refresh
+      // 401 CON el header oficial de retry → re-lanzarlo tal cual (status +
+      // headers intactos). Doc oficial (shopify.dev implement-token-exchange):
+      // "App Bridge intercepts the response, fetches a fresh ID token, and
+      // retries the request once" → la petición se repite en la MISMA página,
+      // sin navegar. Antes lo convertíamos en redirect("/") → perdíamos la
+      // ruta y el usuario aterrizaba en el dashboard tras dejar la pestaña en
+      // reposo (los ID tokens caducan a los ~1 min). El redirect("/") sigue
+      // para el resto de 401/410 (API upstream, bots) donde un token nuevo
+      // no arregla nada.
+      if (res.status === 401 && res.headers.get("X-Shopify-Retry-Invalid-Session-Request")) {
+        console.warn("[Auth] 401 con retry oficial de App Bridge → re-lanzado sin navegar (misma página)");
+        throw res;
+      }
+      // 401/410 sin retry — redirect a / as before
       if (res.status === 401 || res.status === 410) {
         throw redirect("/");
       }

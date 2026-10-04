@@ -30,12 +30,14 @@ function handleNavClick(e: React.MouseEvent<HTMLAnchorElement>) {
 }
 
 // --- Restauración de ruta tras rebote de auth (solo pestaña inactiva) ---
-// safeAuthenticate redirige a "/" cuando el token caduca; eso desmonta y
-// remonta el layout App (las únicas rutas fuera de /app son raíz), y el
-// usuario aterriza en /app (dashboard). Guardamos la última ruta de este
-// documento y la restauramos SOLO si App remonta dentro del mismo documento
-// (rebote). Cargas de documento nuevas (abrir desde admin, F5, NavMenu que
-// usa <a>) resetean los flags → nunca restauran.
+// safeAuthenticate re-lanza el 401 con header de retry (App Bridge renueva y
+// reintenta en la misma página) o, para el resto de 401/410, redirige a "/"
+// cuando el token caduca; eso desmonta y remonta el layout App (las únicas
+// rutas fuera de /app son raíz), y el usuario aterriza en /app (dashboard).
+// Guardamos la última ruta de este documento y la restauramos SOLO si App
+// remonta dentro del mismo documento (rebote). Cargas de documento nuevas
+// (abrir desde admin, F5, NavMenu que usa <a>) resetean los flags → nunca
+// restauran.
 const LAST_ROUTE_KEY = "ip_last_route";
 const VOLATILE_PARAMS = ["shop", "host", "id_token", "session_token", "hmac", "timestamp", "locale", "embedded", "session", "billing_id"];
 const RESTORE_COOLDOWN_MS = 30_000;
@@ -306,16 +308,19 @@ export default function App() {
 
     if (isRemount && location.pathname === "/app") {
       const saved = sessionStorage.getItem(LAST_ROUTE_KEY);
-      if (
-        saved &&
-        saved !== "/app" &&
-        saved.startsWith("/app") &&
-        Date.now() - lastRestoreAt > RESTORE_COOLDOWN_MS
-      ) {
-        lastRestoreAt = Date.now();
-        sessionStorage.removeItem(LAST_ROUTE_KEY);
-        console.log(`[RouteRestore] Rebote de auth detectado → restaurando ${saved}`);
-        navigate(saved, { replace: true });
+      if (saved && saved !== "/app" && saved.startsWith("/app")) {
+        if (Date.now() - lastRestoreAt > RESTORE_COOLDOWN_MS) {
+          lastRestoreAt = Date.now();
+          sessionStorage.removeItem(LAST_ROUTE_KEY);
+          console.log(`[RouteRestore] Rebote de auth detectado → restaurando ${saved}`);
+          navigate(saved, { replace: true });
+          return;
+        }
+        // Rebote dentro del cooldown de 30s: conservar la ruta guardada.
+        // Antes caíamos al setItem de abajo y guardábamos "/app" → el rebote
+        // siguiente (y todos los demás) perdían la ruta y quedaban en el
+        // dashboard para siempre.
+        console.log("[RouteRestore] Rebote dentro del cooldown → conservando ruta guardada");
         return;
       }
     }
@@ -419,6 +424,7 @@ function AutoRedirect({ url, delayMs }: { url: string; delayMs?: number }) {
 export function ErrorBoundary() {
   const error = useRouteError();
   const location = useLocation();
+  const { t } = useTranslation();
 
   const rrStatus = isRouteErrorResponse(error) ? error.status : 0;
   const rawStatus = error instanceof Response ? error.status : 0;
@@ -448,6 +454,27 @@ export function ErrorBoundary() {
   if (isAppBridgeHtml) {
     console.log("[App ErrorBoundary] Bounce HTML (App Bridge o gate de planes) — entregando al navegador");
     return <AppBridgeBounce html={typeof error.data === "string" ? error.data : ""} />;
+  }
+
+  // 401 de sesión (token inválido tras reposo): NUNCA navegar a /app — eso
+  // exactamente es la "vuelta al dashboard" que este errorBoundary causaba con
+  // el AutoRedirect de abajo. Pintar "Reconectando..." (i18n 6 idiomas) y
+  // recargar la MISMA URL como red de seguridad; el interceptor de fetch
+  // (triggerReconnect) ya recarga la URL actual a los ~1s y, si en su lugar
+  // recarga esta URL, la maquinaria de bounce oficial de documentos conserva
+  // la ruta. Los 401 sin locación NO son errores de la app.
+  if (status === 401) {
+    console.warn("[App ErrorBoundary] 401 de sesión → pantalla de reconexión (sin redirect a /app)");
+    return (
+      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "60vh" }}>
+        <div style={{ textAlign: "center", color: "#6d7175" }}>
+          <div style={{ width: "24px", height: "24px", border: "3px solid #ddd", borderTopColor: "#006fbb", borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 12px" }} />
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+          <p style={{ fontSize: "14px" }}>{t("systemError.reconnecting")}</p>
+        </div>
+        <AutoRedirect url={`${location.pathname}${location.search}`} delayMs={2500} />
+      </div>
+    );
   }
 
   const errorText = isRouteErrorResponse(error)
