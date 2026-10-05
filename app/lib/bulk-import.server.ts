@@ -759,7 +759,7 @@ export async function runBulkImport({
           const productDescription = product.descriptionHtml || undefined;
           const productVendor = product.vendor || undefined;
           const productProductType = product.productType || undefined;
-          const productTags: string[] | undefined = product.tags?.length > 0 ? product.tags : undefined;
+          const productTags: string[] | undefined = product.tags ?? undefined;
           const productImages: StoredImage[] | undefined = product.images?.edges?.length > 0
             ? product.images.edges.map((e: any) => ({ mediaId: e.node.id || "", url: e.node.url })).filter((img: StoredImage) => img.url)
             : undefined;
@@ -1593,10 +1593,13 @@ async function prepareAndLaunch(
       const vendorChanged = effectiveOpts.has("vendor") && csvVendor.trim() !== "" && csvVendor.trim() !== vendorBaseline.trim();
 
       const productTypeChanged = effectiveOpts.has("productType") && csvProductType !== ptBaseline;
-      const tagsBaselineRaw: string[] = match.shopifyTags?.length
+      // Baseline de tags: el valor VIVO de Shopify manda, incluido [] (borrado).
+      // Antes `?.length` con tags vacíos caía a lastTags de la BD (stale, y a
+      // veces string plano no-JSON → JSON.parse crasheaba y mataba el job).
+      const tagsBaselineRaw: string[] = match.shopifyTags != null
         ? match.shopifyTags
         : lastTags
-          ? (typeof lastTags === "string" ? JSON.parse(lastTags) : lastTags) as string[]
+          ? (() => { try { return (typeof lastTags === "string" ? JSON.parse(lastTags) : lastTags) as string[]; } catch { return [lastTags]; } })()
           : [];
       const tagsBaseline = (Array.isArray(tagsBaselineRaw) ? tagsBaselineRaw : [])
         .flatMap((t: string) => (typeof t === "string" ? t.split(",").map((s: string) => s.trim()) : []))
@@ -2424,8 +2427,10 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
                   if (rm.productType && existedBefore.lastProductType !== null && rm.productType !== existedBefore.lastProductType) rePtChanged = true;
                   if (rm.tags && existedBefore.lastTags !== null) {
                     const csvTagsJson = JSON.stringify(rm.tags);
-                    const existingTagsNormalized = (JSON.parse(existedBefore.lastTags || "[]") as string[])
-                      .flatMap((t: string) => t.split(",").map((s: string) => s.trim()))
+                    let existingTagsArr: unknown;
+                    try { existingTagsArr = JSON.parse(existedBefore.lastTags || "[]"); } catch { existingTagsArr = [existedBefore.lastTags || ""]; }
+                    const existingTagsNormalized = (Array.isArray(existingTagsArr) ? existingTagsArr : [])
+                      .flatMap((t: unknown) => (typeof t === "string" ? t.split(",").map((s: string) => s.trim()) : []))
                       .filter(Boolean).sort();
                     if (csvTagsJson !== JSON.stringify(existingTagsNormalized)) reTagsChanged = true;
                   }
@@ -2877,7 +2882,7 @@ async function finalizeBulkImport(job: any, admin: any): Promise<void> {
   }
 }
 
-async function failJob(job: any, message: string): Promise<void> {
+export async function failJob(job: any, message: string): Promise<void> {
   console.error(`[Bulk] Job ${job.id} fallido: ${message}`);
 
   await prisma.bulkJob.update({
@@ -3739,7 +3744,7 @@ async function queryProductsTargeted(
           const productDescription = node.descriptionHtml || undefined;
           const productVendor = node.vendor || undefined;
           const productProductType = node.productType || undefined;
-          const productTags: string[] | undefined = node.tags?.length > 0 ? node.tags : undefined;
+          const productTags: string[] | undefined = node.tags ?? undefined;
           const productImages: StoredImage[] | undefined = node.images?.edges?.length > 0
             ? node.images.edges.map((e: any) => ({ mediaId: e.node.id || "", url: e.node.url })).filter((img: StoredImage) => img.url)
             : undefined;
@@ -3822,7 +3827,7 @@ async function queryProductsTargeted(
             shopifyDescription: prod.descriptionHtml || undefined,
             shopifyVendor: prod.vendor || undefined,
             shopifyProductType: prod.productType || undefined,
-            shopifyTags: prod.tags?.length > 0 ? prod.tags : undefined,
+            shopifyTags: prod.tags ?? undefined,
             shopifyImages: prod.images?.edges?.length > 0
               ? prod.images.edges.map((e: any) => ({ mediaId: e.node.id || "", url: e.node.url })).filter((img: StoredImage) => img.url)
               : undefined,

@@ -253,9 +253,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       if (newVendor != null && newVendor !== mapping.lastVendor) patch.lastVendor = newVendor;
       if (newPt != null && newPt !== mapping.lastProductType) patch.lastProductType = newPt;
       if (newTags != null) {
-        const sorted = newTags.split(",").map((t: string) => t.trim()).filter(Boolean).sort().join(",");
-        const lastSorted = (mapping.lastTags ?? "").split(",").map((t: string) => t.trim()).filter(Boolean).sort().join(",");
-        if (sorted !== lastSorted) patch.lastTags = newTags;
+        // Guardar SIEMPRE como JSON array (formato del schema) — antes se
+        // guardaba el string plano de Shopify y bulk lo leía con JSON.parse
+        // (crash) o como baseline stale (miss silencioso). Comparación
+        // normalizada (case-insensitive + sort) para no reescribir por mayúsculas
+        // ni por migración JSON→JSON.
+        const normTags = (raw: string | null | undefined): string[] => {
+          const s = (raw ?? "").trim();
+          if (!s) return [];
+          if (s.startsWith("[")) {
+            try { const p = JSON.parse(s); if (Array.isArray(p)) return p.map((t: any) => String(t).trim()).filter(Boolean); } catch {}
+          }
+          return s.split(",").map((t: string) => t.trim()).filter(Boolean);
+        };
+        const incoming = normTags(newTags).sort();
+        const existing = normTags(mapping.lastTags);
+        const tagKey = (a: string[]) => JSON.stringify(a.map((t) => t.toLowerCase()).sort());
+        if (tagKey(incoming) !== tagKey(existing)) patch.lastTags = JSON.stringify(incoming);
       }
 
       if (Object.keys(patch).length > 0) {

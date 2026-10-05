@@ -2,7 +2,7 @@ import { prisma, getConfigById, cleanupOldLogs, ensureSingleSession, ensureFresh
 import { isImportActive, tryAcquireImport, releaseImport, abortImport, canStartImport, maxActiveImports } from "./import-locks.server";
 import shopify from "~/shopify.server";
 import { runImport } from "./import-engine.server";
-import { runBulkImport, cancelActiveBulkJobForConfig } from "./bulk-import.server";
+import { runBulkImport, cancelActiveBulkJobForConfig, failJob } from "./bulk-import.server";
 import { sendNotification } from "./notifications.server";
 import { invalidateNavCounts } from "./nav-counts.server";
 
@@ -308,20 +308,43 @@ async function processQueueItem(
         data: { status: "failed", finishedAt: new Date() },
       });
     } else {
+      // SIEMPRE loguear el error real: antes se perdía en el silencio de este
+      // catch y solo llegaba un mensaje genérico del watchdog 15 min después.
+      console.error(`[Queue] Importación fallida (config=${item.configId}, shop=${shopDomain}): ${error?.message || error}`);
+      if (error?.stack) console.error(error.stack);
+
       await prisma.importQueue.update({
         where: { id: item.id },
         data: { status: "failed", finishedAt: new Date() },
       });
 
-      await sendNotification({
-        shopDomain,
-        status: "failed",
-        totalProducts: 0, created: 0, updated: 0, unchanged: 0,
-        priceChanges: 0, stockChanges: 0, costChanges: 0,
-        titleChanges: 0, descriptionChanges: 0, vendorChanges: 0, productTypeChanges: 0, tagsChanges: 0, imageChanges: 0,
-        errors: [{ sku: "SYSTEM", error: error?.message || "systemError.unknown_error", lineNumber: 0 }],
-        duration: `${Math.round((Date.now() - startTime) / 1000)}s`,
-      }).catch(() => {});
+      // Crash irreversible de la fase de preparación (mutations sin manifestPath:
+      // el run ya murió, no hay nada que reanudar) → failJob YA con mensaje
+      // traducido en Historial, en vez del watchdog de 15 min con mensaje genérico.
+      // NO se tocan las fases recuperables: lookup → reintento de reconcile,
+      // mutations con manifest → resume de ops, finalizing → resume de finalize.
+      let failedFast = false;
+      try {
+        const deadPrepareJob = await prisma.bulkJob.findFirst({
+          where: { shopDomain, configId: item.configId, phase: "mutations", manifestPath: null },
+        });
+        if (deadPrepareJob) {
+          await failJob(deadPrepareJob, "systemError.mutations_no_manifest");
+          failedFast = true;
+        }
+      } catch {}
+
+      if (!failedFast) {
+        await sendNotification({
+          shopDomain,
+          status: "failed",
+          totalProducts: 0, created: 0, updated: 0, unchanged: 0,
+          priceChanges: 0, stockChanges: 0, costChanges: 0,
+          titleChanges: 0, descriptionChanges: 0, vendorChanges: 0, productTypeChanges: 0, tagsChanges: 0, imageChanges: 0,
+          errors: [{ sku: "SYSTEM", error: error?.message || "systemError.unknown_error", lineNumber: 0 }],
+          duration: `${Math.round((Date.now() - startTime) / 1000)}s`,
+        }).catch(() => {});
+      }
     }
   } finally {
     releaseImport(item.configId);
