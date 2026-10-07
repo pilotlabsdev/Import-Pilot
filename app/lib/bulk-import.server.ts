@@ -15,6 +15,8 @@ import {
   mapCsvRowToProductSet,
   mapCsvRowToProductSetUpdate,
   parseUpdateOptions,
+  parseTagOwnership,
+  computeTargetTags,
   getField,
 } from "./product-mapper.server";
 import { getLocationId } from "./location.server";
@@ -1593,20 +1595,23 @@ async function prepareAndLaunch(
       const vendorChanged = effectiveOpts.has("vendor") && csvVendor.trim() !== "" && csvVendor.trim() !== vendorBaseline.trim();
 
       const productTypeChanged = effectiveOpts.has("productType") && csvProductType !== ptBaseline;
-      // Baseline de tags: el valor VIVO de Shopify manda, incluido [] (borrado).
-      // Antes `?.length` con tags vacíos caía a lastTags de la BD (stale, y a
-      // veces string plano no-JSON → JSON.parse crasheaba y mataba el job).
-      const tagsBaselineRaw: string[] = match.shopifyTags != null
-        ? match.shopifyTags
-        : lastTags
-          ? (() => { try { return (typeof lastTags === "string" ? JSON.parse(lastTags) : lastTags) as string[]; } catch { return [lastTags]; } })()
-          : [];
-      const tagsBaseline = (Array.isArray(tagsBaselineRaw) ? tagsBaselineRaw : [])
-        .flatMap((t: string) => (typeof t === "string" ? t.split(",").map((s: string) => s.trim()) : []))
-        .filter(Boolean).sort();
-      const tagsChanged = effectiveOpts.has("tags") && csvTags.length > 0 && JSON.stringify(csvTags.map((t: string) => t.toLowerCase()).sort()) !== JSON.stringify(tagsBaseline.map((t: string) => t.toLowerCase()).sort());
+      // Opción 2: target = appTags ∪ (live − ownership) — preserva tags manuales
+      // del merchant y poda los tags de config que ya no existen. El valor VIVO
+      // de Shopify manda como baseline (incluso [] = borrado); sin live (lookup
+      // sin tags) no se tocan tags. ownership = lastTags SOLO si es JSON array
+      // (string plano del webhook pre-fix = sin propiedad → nada se poda).
+      const tagLogicApplied = effectiveOpts.has("tags") && match.shopifyTags != null;
+      const tagResult = tagLogicApplied
+        ? computeTargetTags(csvTags, match.shopifyTags, parseTagOwnership(lastTags))
+        : null;
+      const tagsChanged = !!tagResult?.changed;
+      // Ownership (lastTags) en updates: solo con lógica de tags aplicada, y
+      // SIEMPRE (incluso csvTags vacío → "[]"): ownership = appTags gestionadas.
+      // Sin lógica (checkbox off o sin live) → undefined → el ternario de
+      // lastTags deja el campo intacto en BD.
+      meta.tags = tagLogicApplied ? csvTags : undefined;
       if (tagsChanged && tagDebugCount < 5) {
-        console.log(`[Bulk] TAG DEBUG sku=${sku} csvTags=${JSON.stringify(csvTags)} baseline=${JSON.stringify(tagsBaseline)} shopifyTags=${JSON.stringify(match.shopifyTags)} lastTags=${lastTags}`);
+        console.log(`[Bulk] TAG DEBUG sku=${sku} target=${JSON.stringify(tagResult?.target)} csvTags=${JSON.stringify(csvTags)} shopifyTags=${JSON.stringify(match.shopifyTags)} ownership=${JSON.stringify(parseTagOwnership(lastTags))} lastTags=${lastTags}`);
         tagDebugCount++;
       }
 
@@ -1672,6 +1677,11 @@ async function prepareAndLaunch(
         categoryTags || undefined,
         shopifyProductType
       );
+      // Opción 2: enviar SOLO el target calculado; sin cambios (o sin live /
+      // checkbox off) se OMITE el campo → productSet deja tags intactos.
+      // Sin esto, un config sin tags enviaría `tags: []` y limpiaría todos.
+      if (tagResult && tagsChanged) inputObj.tags = tagResult.target;
+      else delete inputObj.tags;
       // In "update" mode, preserve the existing Shopify SKU — don't send the file's SKU
       if (matchMode === "update" && inputObj.variants?.[0]) {
         delete inputObj.variants[0].sku;

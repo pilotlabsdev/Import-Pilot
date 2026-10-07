@@ -246,31 +246,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const newDesc = payload.body_html as string | null;
       const newVendor = payload.vendor as string | null;
       const newPt = payload.product_type as string | null;
-      const newTags = payload.tags as string | null;
 
       if (newTitle != null && newTitle !== mapping.lastTitle) patch.lastTitle = newTitle;
       if (newDesc != null && newDesc !== mapping.lastDescription) patch.lastDescription = newDesc;
       if (newVendor != null && newVendor !== mapping.lastVendor) patch.lastVendor = newVendor;
       if (newPt != null && newPt !== mapping.lastProductType) patch.lastProductType = newPt;
-      if (newTags != null) {
-        // Guardar SIEMPRE como JSON array (formato del schema) — antes se
-        // guardaba el string plano de Shopify y bulk lo leía con JSON.parse
-        // (crash) o como baseline stale (miss silencioso). Comparación
-        // normalizada (case-insensitive + sort) para no reescribir por mayúsculas
-        // ni por migración JSON→JSON.
-        const normTags = (raw: string | null | undefined): string[] => {
-          const s = (raw ?? "").trim();
-          if (!s) return [];
-          if (s.startsWith("[")) {
-            try { const p = JSON.parse(s); if (Array.isArray(p)) return p.map((t: any) => String(t).trim()).filter(Boolean); } catch {}
-          }
-          return s.split(",").map((t: string) => t.trim()).filter(Boolean);
-        };
-        const incoming = normTags(newTags).sort();
-        const existing = normTags(mapping.lastTags);
-        const tagKey = (a: string[]) => JSON.stringify(a.map((t) => t.toLowerCase()).sort());
-        if (tagKey(incoming) !== tagKey(existing)) patch.lastTags = JSON.stringify(incoming);
-      }
+      // Opción 2: NO sincronizar lastTags desde el webhook. lastTags = propiedad
+      // de la app (los tags que ELLA aplicó); si el webhook escribiera live aquí,
+      // pliega los tags manuales del merchant como "propiedad" y el próximo
+      // import los borraría. Los lectores usan live de Shopify como baseline.
 
       if (Object.keys(patch).length > 0) {
         await prisma.productMapping.update({

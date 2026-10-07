@@ -282,6 +282,80 @@ export function mapCsvRowToBulkUpdateInput(
   return input;
 }
 
+// === Opción 2: tags — propiedad de la app vs tags manuales del merchant ===
+//
+// ownership (mapping.lastTags) = SOLO los tags que la app aplicó en su último
+// import. Formatos en BD: JSON array (escrito por los motores — chunks en
+// minúsculas vía normalizeTags, bulk con casing original) o string plano
+// "a,b,c" (escrito por el webhook pre-fix = contaminado con live incluyendo
+// manuales → NO es propiedad fiable → null = sin propiedad = no se poda nada).
+export function parseTagOwnership(raw: string | null | undefined): string[] | null {
+  if (!raw) return null;
+  const s = raw.trim();
+  if (!s.startsWith("[")) return null;
+  try {
+    const p = JSON.parse(s);
+    if (!Array.isArray(p)) return null;
+    return p.map((t) => unknownToString(t)).filter(Boolean);
+  } catch {
+    return null;
+  }
+}
+
+function unknownToString(t: unknown): string {
+  return typeof t === "string" ? t.trim() : typeof t === "number" ? String(t) : "";
+}
+
+function normTagList(tags: Array<string | unknown> | string | null | undefined): string[] {
+  if (tags == null) return [];
+  const arr = Array.isArray(tags) ? tags : String(tags).split(",");
+  return arr.map((t) => unknownToString(t)).filter(Boolean);
+}
+
+export type TagTargetResult = {
+  /** Array final a enviar en la mutación (reemplaza tags completo). */
+  target: string[];
+  /** true si target ≠ live (case-insensitive) → hay que enviarlo. */
+  changed: boolean;
+};
+
+// target = appTags ∪ (live − ownership)
+//   manual  = lo que la app nunca puso (merchant) → siempre se conserva
+//   podado  = lo que la app puso y ya no está en config → se elimina
+//   appTags = config (defaultTags + tags de categoría) → siempre aplicados
+// Comparaciones case-insensitive sin churn de mayúsculas: si solo difiere el
+// casing, changed=false y no se envía nada.
+// Devuelve null si no hay live → NO tocar tags (conservador).
+export function computeTargetTags(
+  appTags: string[] | string | null | undefined,
+  liveTags: string[] | string | null | undefined,
+  ownership: string[] | null
+): TagTargetResult | null {
+  if (liveTags == null) return null;
+  const live = normTagList(liveTags);
+  const app = normTagList(appTags);
+
+  const key = (t: string) => t.trim().toLowerCase();
+  const appKeys = new Set<string>();
+  const appDedup: string[] = [];
+  for (const t of app) {
+    const k = key(t);
+    if (!appKeys.has(k)) {
+      appKeys.add(k);
+      appDedup.push(t);
+    }
+  }
+  const ownKeys = new Set((ownership ?? []).map(key));
+  const manual = live.filter((t) => !ownKeys.has(key(t)) && !appKeys.has(key(t)));
+  const target = [...appDedup, ...manual];
+
+  const targetKeys = new Set(target.map(key));
+  const liveKeys = new Set(live.map(key));
+  const changed =
+    targetKeys.size !== liveKeys.size || [...targetKeys].some((k) => !liveKeys.has(k));
+  return { target, changed };
+}
+
 export function mapCsvRowToProductSet(
   row: ProductRow,
   columnMaps: ColumnMap[],

@@ -3,7 +3,7 @@ import { prisma, getOrCreateConfig, getEffectiveUrl, getSourceKey, cleanupOldLog
 import { resolveFileUrl } from "./storage.server";
 import { streamFile, isExcluded, parseExcludeFieldRules, getExcludedFields } from "./csv-parser.server";
 import { calculatePrices } from "./price-rules.server";
-import { mapCsvRowToProductSet, parseUpdateOptions, getField } from "./product-mapper.server";
+import { mapCsvRowToProductSet, parseUpdateOptions, parseTagOwnership, computeTargetTags, getField } from "./product-mapper.server";
 import { getLocationId } from "./location.server";
 import { checkDuplicate, logExternalDuplicate } from "./duplicate-detection.server";
 import { rateLimitedGraphql } from "./import-locks.server";
@@ -57,6 +57,8 @@ interface BarcodeMatch {
   productId: string;
   variantId: string;
   sku: string;
+  /** Opción 2: tags vivos del producto (para calcular target en priority replace) */
+  tags?: string[] | null;
 }
 
 // A1: contexto por-tienda para GraphQL (AsyncLocalStorage — docs Node: Stability 2;
@@ -109,6 +111,7 @@ async function lookupBarcodeMatchesForChunk(
         edges {
           node {
             id
+            tags
             variants(first: 10) {
               edges { node { id sku barcode } }
             }
@@ -120,7 +123,7 @@ async function lookupBarcodeMatchesForChunk(
   const VARIANT_QUERY = `#graphql
     query ($q: String!) {
       productVariants(first: 250, query: $q) {
-        edges { node { id sku barcode product { id } } }
+        edges { node { id sku barcode product { id tags } } }
       }
     }`;
 
@@ -136,7 +139,7 @@ async function lookupBarcodeMatchesForChunk(
         const node = edge.node;
         for (const vEdge of node.variants?.edges || []) {
           const v = vEdge.node;
-          const match: BarcodeMatch = { productId: node.id, variantId: v.id, sku: v.sku || "" };
+          const match: BarcodeMatch = { productId: node.id, variantId: v.id, sku: v.sku || "", tags: node.tags ?? null };
           if (v.barcode) map.set(String(v.barcode), match);
           if (v.sku && !map.has(String(v.sku))) map.set(String(v.sku), match);
         }
@@ -156,7 +159,7 @@ async function lookupBarcodeMatchesForChunk(
       const json: any = await graphqlWithRetry(admin, VARIANT_QUERY, { q: query });
       for (const edge of json.data?.productVariants?.edges || []) {
         const v = edge.node;
-        const match: BarcodeMatch = { productId: v.product?.id || "", variantId: v.id, sku: v.sku || "" };
+        const match: BarcodeMatch = { productId: v.product?.id || "", variantId: v.id, sku: v.sku || "", tags: v.product?.tags ?? null };
         if (v.barcode) map.set(String(v.barcode), match);
         if (v.sku && !map.has(String(v.sku))) map.set(String(v.sku), match);
       }
@@ -1229,6 +1232,34 @@ async function processProduct({
 
       const matchMode0 = shopSettings0?.matchMode || "overwrite";
 
+      // Opción 2 (tags): query de variantes subida ANTES del patch (añade
+      // `tags` → 0 queries extra) para poder calcular el target con live.
+      let variantId2: string | undefined;
+      let invItemId2: string | undefined;
+      const rowEanForReplace = getField(row, columnMaps, "ean") || row["ean"] || "";
+      let liveTags1: string[] | null = null;
+      try {
+        const variantRes2 = await graphqlWithRetry(admin,
+          `#graphql
+          query { product(id: "${existing.shopifyProductId}") {
+            tags
+            variants(first: 1) { edges { node { id inventoryItem { id } } } }
+          }}`,
+          {}
+        );
+        variantId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.id;
+        invItemId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.inventoryItem?.id;
+        liveTags1 = variantRes2.data?.product?.tags ?? null;
+      } catch (e: any) {
+        console.error(`[Import] Priority replace (inter): variants query failed for ${existing.shopifyProductId}:`, e?.message);
+      }
+      // Checkbox "tags" también gobierna aquí (consistente con bulk, donde
+      // priority cae al path normal de update). Sin live → no se tocan tags.
+      const tagLogic1 = updateOpts.has("tags") && liveTags1 != null;
+      const tagResult1 = tagLogic1
+        ? computeTargetTags(productInput2.tags, liveTags1, parseTagOwnership(existing.lastTags))
+        : null;
+
       // Build productUpdate patch based on matchMode + updateOpts
       try {
         const productPatch: any = { id: existing.shopifyProductId };
@@ -1237,7 +1268,7 @@ async function processProduct({
           productPatch.descriptionHtml = productInput2.descriptionHtml;
           productPatch.productType = productInput2.productType;
           productPatch.vendor = productInput2.vendor;
-          productPatch.tags = productInput2.tags;
+          if (tagResult1?.changed) productPatch.tags = tagResult1.target;
           productPatch.metafields = productInput2.metafields;
           productPatch.seo = productInput2.seo;
         } else {
@@ -1249,7 +1280,7 @@ async function processProduct({
           }
           if (updateOpts.has("vendor")) productPatch.vendor = productInput2.vendor;
           if (updateOpts.has("productType")) productPatch.productType = productInput2.productType;
-          if (updateOpts.has("tags")) productPatch.tags = productInput2.tags;
+          if (tagResult1?.changed) productPatch.tags = tagResult1.target;
           if (updateOpts.has("metafields")) productPatch.metafields = productInput2.metafields;
         }
         if (Object.keys(productPatch).length > 1) {
@@ -1276,22 +1307,7 @@ async function processProduct({
       }
 
       // Update variant: price + compareAt + barcode (only if price selected)
-      let variantId2: string | undefined;
-      let invItemId2: string | undefined;
-      const rowEanForReplace = getField(row, columnMaps, "ean") || row["ean"] || "";
-      try {
-        const variantRes2 = await graphqlWithRetry(admin,
-          `#graphql
-          query { product(id: "${existing.shopifyProductId}") {
-            variants(first: 1) { edges { node { id inventoryItem { id } } } }
-          }}`,
-          {}
-        );
-        variantId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.id;
-        invItemId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.inventoryItem?.id;
-      } catch (e: any) {
-        console.error(`[Import] Priority replace (inter): variants query failed for ${existing.shopifyProductId}:`, e?.message);
-      }
+      // (la query de variantes ahora está ANTES del patch — ver arriba, Opción 2)
       if (variantId2 && updateOpts.has("price")) {
         try {
           const variantPatch: any = {
@@ -1389,7 +1405,7 @@ async function processProduct({
           lastDescription: productInput2.descriptionHtml ?? null,
           lastVendor: productInput2.vendor ?? null,
           lastProductType: productInput2.productType ?? null,
-          lastTags: productInput2.tags?.length ? normalizeTags(productInput2.tags) : null,
+          lastTags: tagLogic1 ? normalizeTags(productInput2.tags ?? []) : null,
           lastImportSource: sourceKey,
           ...(newShopifyImages ? { shopifyImages: newShopifyImages } : {}),
         },
@@ -1407,7 +1423,7 @@ async function processProduct({
           lastDescription: productInput2.descriptionHtml ?? undefined,
           lastVendor: productInput2.vendor ?? undefined,
           lastProductType: productInput2.productType ?? undefined,
-          lastTags: productInput2.tags?.length ? normalizeTags(productInput2.tags) : undefined,
+          lastTags: tagLogic1 ? normalizeTags(productInput2.tags ?? []) : undefined,
           lastImportSource: sourceKey,
           ...(newShopifyImages ? { shopifyImages: newShopifyImages } : {}),
         },
@@ -1458,6 +1474,35 @@ async function processProduct({
 
         const matchMode2 = shopSettings?.matchMode || "overwrite";
 
+        // Opción 2 (tags): query de variantes subida ANTES del patch (añade
+        // `tags` → 0 queries extra) + ownership del mapping antiguo (1 query BD)
+        // para calcular target con live. Checkbox "tags" también gobierna aquí.
+        let variantId2: string | undefined;
+        let invItemId2: string | undefined;
+        let liveTags2: string[] | null = null;
+        try {
+          const variantRes2 = await graphqlWithRetry(admin,
+            `#graphql
+            query { product(id: "${dupCheck.existingShopifyProductId}") {
+              tags
+              variants(first: 1) { edges { node { id inventoryItem { id } } } }
+            }}`,
+            {}
+          );
+          variantId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.id;
+          invItemId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.inventoryItem?.id;
+          liveTags2 = variantRes2.data?.product?.tags ?? null;
+        } catch (e: any) {
+          console.error(`[Import] Priority replace (EAN): variants query failed for ${dupCheck.existingShopifyProductId}:`, e?.message);
+        }
+        const oldMap2 = await prisma.productMapping
+          .findUnique({ where: { id: dupCheck.existingMappingId }, select: { lastTags: true } })
+          .catch(() => null);
+        const tagLogic2 = updateOpts.has("tags") && liveTags2 != null;
+        const tagResult2 = tagLogic2
+          ? computeTargetTags(productInput2.tags, liveTags2, parseTagOwnership(oldMap2?.lastTags ?? null))
+          : null;
+
         // Build productUpdate patch based on matchMode + updateOpts
         try {
           const productPatch: any = { id: dupCheck.existingShopifyProductId };
@@ -1466,7 +1511,7 @@ async function processProduct({
             productPatch.descriptionHtml = productInput2.descriptionHtml;
             productPatch.productType = productInput2.productType;
             productPatch.vendor = productInput2.vendor;
-            productPatch.tags = productInput2.tags;
+            if (tagResult2?.changed) productPatch.tags = tagResult2.target;
             productPatch.metafields = productInput2.metafields;
             productPatch.seo = productInput2.seo;
           } else {
@@ -1478,7 +1523,7 @@ async function processProduct({
             }
             if (updateOpts.has("vendor")) productPatch.vendor = productInput2.vendor;
             if (updateOpts.has("productType")) productPatch.productType = productInput2.productType;
-            if (updateOpts.has("tags")) productPatch.tags = productInput2.tags;
+            if (tagResult2?.changed) productPatch.tags = tagResult2.target;
             if (updateOpts.has("metafields")) productPatch.metafields = productInput2.metafields;
           }
           if (Object.keys(productPatch).length > 1) {
@@ -1510,21 +1555,7 @@ async function processProduct({
         }
 
         // Update variant: SKU + price + compareAt + barcode
-        let variantId2: string | undefined;
-        let invItemId2: string | undefined;
-        try {
-          const variantRes2 = await graphqlWithRetry(admin,
-            `#graphql
-            query { product(id: "${dupCheck.existingShopifyProductId}") {
-              variants(first: 1) { edges { node { id inventoryItem { id } } } }
-            }}`,
-            {}
-          );
-          variantId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.id;
-          invItemId2 = variantRes2.data?.product?.variants?.edges?.[0]?.node?.inventoryItem?.id;
-        } catch (e: any) {
-          console.error(`[Import] Priority replace (EAN): variants query failed for ${dupCheck.existingShopifyProductId}:`, e?.message);
-        }
+        // (la query de variantes ahora está ANTES del patch — ver arriba, Opción 2)
         if (variantId2 && updateOpts.has("price")) {
           try {
             const variantPatch: any = {
@@ -1646,6 +1677,7 @@ async function processProduct({
               lastComparePrice: prices2.compareAtPrice,
               lastQuantity: newQty,
               lastCost: costPrice > 0 ? costPrice : null,
+              lastTags: tagLogic2 ? normalizeTags(productInput2.tags ?? []) : null,
               lastImportSource: sourceKey,
               ...(newShopifyImages2 ? { shopifyImages: newShopifyImages2 } : {}),
             },
@@ -1659,6 +1691,7 @@ async function processProduct({
               lastComparePrice: prices2.compareAtPrice,
               lastQuantity: newQty,
               lastCost: costPrice > 0 ? costPrice : null,
+              lastTags: tagLogic2 ? normalizeTags(productInput2.tags ?? []) : undefined,
               lastImportSource: sourceKey,
               ...(newShopifyImages2 ? { shopifyImages: newShopifyImages2 } : {}),
             },
@@ -1839,7 +1872,7 @@ async function processProduct({
   }
 
   // If no existing mapping, try to find product in Shopify via barcodeMap (pre-loaded)
-  let priorityReplaceTarget: { mappingId: string; shopifyProductId: string; supplierName: string; configId: string } | null = null;
+  let priorityReplaceTarget: { mappingId: string; shopifyProductId: string; supplierName: string; configId: string; tags: string[] | null } | null = null;
   if (!existing) {
     if (config.skipZeroStockCreate && newQty <= 0) {
       result.excluded++;
@@ -1868,7 +1901,7 @@ async function processProduct({
           // Inter-supplier: different supplier owns this product
           if (dupPolicy2 === "priority") {
             const suppName2 = (await prisma.importConfig.findUnique({ where: { id: foundMapping.configId } }))?.name || "desconocido";
-            priorityReplaceTarget = { mappingId: foundMapping.id, shopifyProductId: foundMapping.shopifyProductId, supplierName: suppName2, configId: foundMapping.configId };
+            priorityReplaceTarget = { mappingId: foundMapping.id, shopifyProductId: foundMapping.shopifyProductId, supplierName: suppName2, configId: foundMapping.configId, tags: foundBarcode.tags ?? null };
           } else if (dupPolicy2 === "create_both") {
             // Inter + create_both: create new (fall through to create)
           } else {
@@ -1880,7 +1913,7 @@ async function processProduct({
         } else {
           // External product with no mapping (or same supplier) — handle by dupPolicy
           if (dupPolicy2 === "priority") {
-            priorityReplaceTarget = { mappingId: "", shopifyProductId: foundBarcode.productId, supplierName: "EXTERNAL", configId: "" };
+            priorityReplaceTarget = { mappingId: "", shopifyProductId: foundBarcode.productId, supplierName: "EXTERNAL", configId: "", tags: foundBarcode.tags ?? null };
           } else if (dupPolicy2 === "create_both") {
             // create_both: fall through to create new product
           } else {
@@ -1957,6 +1990,19 @@ async function processProduct({
     const shopSettingsPR = await prisma.shopSettings.findUnique({ where: { shopDomain } });
     const matchModePR = shopSettingsPR?.matchMode || "overwrite";
 
+    // Opción 2 (tags): live viene del lookup por barcode (0 queries extra) y
+    // ownership del mapping antiguo (1 query BD; externo sin mapping → null =
+    // sin propiedad = nada se poda, conservador). Checkbox "tags" gobierna aquí.
+    const oldMap3 = priorityReplaceTarget.mappingId
+      ? await prisma.productMapping
+          .findUnique({ where: { id: priorityReplaceTarget.mappingId }, select: { lastTags: true } })
+          .catch(() => null)
+      : null;
+    const tagLogic3 = updateOpts.has("tags") && priorityReplaceTarget.tags != null;
+    const tagResult3 = tagLogic3
+      ? computeTargetTags(productInput2.tags, priorityReplaceTarget.tags, parseTagOwnership(oldMap3?.lastTags ?? null))
+      : null;
+
     // Build productUpdate patch based on matchMode + updateOpts
     try {
       const productPatch: any = { id: priorityReplaceTarget.shopifyProductId };
@@ -1965,7 +2011,7 @@ async function processProduct({
         productPatch.descriptionHtml = productInput2.descriptionHtml;
         productPatch.productType = productInput2.productType;
         productPatch.vendor = productInput2.vendor;
-        productPatch.tags = productInput2.tags;
+        if (tagResult3?.changed) productPatch.tags = tagResult3.target;
         productPatch.metafields = productInput2.metafields;
         productPatch.seo = productInput2.seo;
       } else {
@@ -1977,7 +2023,7 @@ async function processProduct({
         }
         if (updateOpts.has("vendor")) productPatch.vendor = productInput2.vendor;
         if (updateOpts.has("productType")) productPatch.productType = productInput2.productType;
-        if (updateOpts.has("tags")) productPatch.tags = productInput2.tags;
+        if (tagResult3?.changed) productPatch.tags = tagResult3.target;
         if (updateOpts.has("metafields")) productPatch.metafields = productInput2.metafields;
       }
       if (Object.keys(productPatch).length > 1) {
@@ -2125,7 +2171,7 @@ async function processProduct({
         lastDescription: productInput2.descriptionHtml ?? null,
         lastVendor: productInput2.vendor ?? null,
         lastProductType: productInput2.productType ?? null,
-        lastTags: productInput2.tags?.length ? normalizeTags(productInput2.tags) : null,
+        lastTags: tagLogic3 ? normalizeTags(productInput2.tags ?? []) : null,
         lastImportSource: sourceKey,
         ...(newShopifyImages3 ? { shopifyImages: newShopifyImages3 } : {}),
       },
@@ -2144,8 +2190,10 @@ async function processProduct({
           lastDescription: productInput2.descriptionHtml ?? undefined,
           lastVendor: productInput2.vendor ?? undefined,
           lastProductType: productInput2.productType ?? undefined,
-          lastTags: productInput2.tags?.length ? normalizeTags(productInput2.tags) : undefined,
         } : {}),
+        // Ownership de tags: se escribe en ambos matchMode solo si la lógica
+        // corrió (antes solo en overwrite y siempre con appTags).
+        ...(tagLogic3 ? { lastTags: normalizeTags(productInput2.tags ?? []) } : {}),
         lastImportSource: sourceKey,
         ...(newShopifyImages3 ? { shopifyImages: newShopifyImages3 } : {}),
       },
@@ -2274,12 +2322,17 @@ async function processProduct({
     const descriptionChanged = updateOpts.has("description") && productInput.descriptionHtml && csvDescNorm !== liveDescNorm;
     const vendorChanged = updateOpts.has("vendor") && productInput.vendor && productInput.vendor !== liveVendor;
     const productTypeChanged = updateOpts.has("productType") && productInput.productType && productInput.productType !== liveProductType;
-    const tagsBaseline = liveTags != null
-      ? normalizeTags(Array.isArray(liveTags) ? liveTags : liveTags.split(","))
-      : existing.lastTags ?? null;
-    const tagsChanged = updateOpts.has("tags") && productInput.tags?.length && normalizeTags(productInput.tags as string[]) !== tagsBaseline;
+    // Opción 2: target = appTags ∪ (live − ownership) — preserva tags manuales
+    // del merchant y poda los tags de config que ya no existen. Sin live (query
+    // falló y no hubo shopifyLiveTags) → no se tocan tags. ownership = lastTags
+    // SOLO si es JSON array (string plano del webhook pre-fix = sin propiedad).
+    const tagLogicApplied = updateOpts.has("tags") && liveTags != null;
+    const tagResult = tagLogicApplied
+      ? computeTargetTags(productInput.tags, liveTags, parseTagOwnership(existing.lastTags))
+      : null;
+    const tagsChanged = !!tagResult?.changed;
     if (tagsChanged) {
-      console.log(`[Import] SKU ${sku}: TAGS CHANGED baseline=${tagsBaseline} new=${normalizeTags(productInput.tags as string[])} liveTags=${JSON.stringify(liveTags)}`);
+      console.log(`[Import] SKU ${sku}: TAGS CHANGED target=${JSON.stringify(tagResult?.target)} live=${JSON.stringify(liveTags)} ownership=${JSON.stringify(parseTagOwnership(existing.lastTags))}`);
     }
     if (titleChanged) {
       console.log(`[Import] SKU ${sku}: TITLE CHANGED liveTitle=${JSON.stringify(liveTitle)} csvTitle=${JSON.stringify(productInput.title)}`);
@@ -2415,7 +2468,9 @@ async function processProduct({
     }
     if (updateOpts.has("productType")) productPatch.productType = productInput.productType;
     if (updateOpts.has("vendor")) productPatch.vendor = productInput.vendor;
-    if (updateOpts.has("tags") && productInput.tags?.length) productPatch.tags = productInput.tags;
+    // Opción 2: enviar SOLO el target si cambió; sin cambios o sin live →
+    // omitir el campo (productUpdate deja tags intactos).
+    if (tagResult && tagsChanged) productPatch.tags = tagResult.target;
     if (updateOpts.has("metafields")) {
       productPatch.metafields = productInput.metafields;
     } else {
@@ -2551,7 +2606,9 @@ async function processProduct({
           lastDescription: productInput.descriptionHtml ?? undefined,
           lastVendor: productInput.vendor ?? undefined,
           lastProductType: productInput.productType ?? undefined,
-          lastTags: productInput.tags?.length ? normalizeTags(productInput.tags) : undefined,
+          // Ownership (Opción 2): solo si la lógica de tags corrió — ownership
+          // = appTags gestionadas (NO el target, o lo manual se podaría).
+          ...(tagLogicApplied ? { lastTags: normalizeTags(productInput.tags ?? []) } : {}),
           lastSyncAt: new Date(),
           ...(newShopifyImages4 ? { shopifyImages: newShopifyImages4 } : {}),
         },
