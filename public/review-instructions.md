@@ -6,7 +6,9 @@ These instructions walk you through the complete workflow of the app using the s
 
 The sample file is a standard comma-separated CSV with 5 demo products. You can either paste the URL above into the app, or download the file and upload it from your computer (the app supports both). Product images are hosted on our domain and imported automatically.
 
-CSV columns: `sku, ean, name, short_description, description, category, quantity, price, brand, product_type, weight, image1`
+CSV columns: `sku, ean, name, short_description, description, category, quantity, price, brand, product_type, weight, image1, image2, image3`
+
+Each product includes 3 images (the app supports up to 5 per product).
 
 ---
 
@@ -32,7 +34,7 @@ From your Shopify admin, go to **Apps → Import Pilot**. The dashboard shows yo
 
 1. Open the **Columns** tab. The app reads the CSV header and lists its columns.
 2. For each column, choose the matching Shopify field in the dropdown:
-   - `sku` → **SKU**, `ean` → **EAN/barcode**, `name` → **Title**, `short_description` → **Short description (SEO)**, `description` → **Description (HTML)**, `category` → **Category**, `quantity` → **Quantity**, `price` → **Price**, `brand` → **Brand/Vendor**, `product_type` → **Product type**, `weight` → **Weight**, `image1` → **Image 1**.
+   - `sku` → **SKU**, `ean` → **EAN/barcode**, `name` → **Title**, `short_description` → **Short description (SEO)**, `description` → **Description (HTML)**, `category` → **Category**, `quantity` → **Quantity**, `price` → **Price**, `brand` → **Brand/Vendor**, `product_type` → **Product type**, `weight` → **Weight**, `image1` → **Image 1**, `image2` → **Image 2**, `image3` → **Image 3**.
 3. The default mappings already match this sample, so you only need to confirm and save.
 
 ## 5. Configure which fields update existing products
