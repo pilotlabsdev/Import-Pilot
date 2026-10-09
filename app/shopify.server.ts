@@ -233,6 +233,16 @@ const retry401LoggedAt = new Map<string, number>();
 // cadena se detiene — nunca bucle de navegación.
 const reauthAt = new Map<string, number>();
 const REAUTH_COOLDOWN_MS = 60_000;
+// Ventana de "hermanos": React Router ejecuta en paralelo los loaders padre
+// (/app) e hijo de la MISMA petición — el segundo en llegar ve el cooldown
+// activo y caería al bounce 302, cuyo redirect("/") LE GANA al error REAUTH
+// del primero (mismo bug documentado en shoplessBounceResponse). Los hermanos
+// llegan en el mismo milisegundo (con `shop` el shoplessBounce sale al
+// instante, sin awaits) → dentro de 2s se re-lanza la MISMA respuesta REAUTH
+// sin renovar el timestamp; fuera de 2s es un intento de recuperación REAL y
+// aplica el cooldown. El timestamp solo se renueva al lanzar → como máximo 1
+// rescate por ventana de 60s, con sus hermanos incluidos.
+const REAUTH_SIBLING_MS = 2_000;
 
 export async function shoplessBounceResponse(request: Request, label = "loader"): Promise<Response | null> {
   const url = new URL(request.url);
@@ -319,12 +329,17 @@ export async function safeAuthenticate(request: Request) {
     const targetA = buildAdminAppUrl(shopA, `${urlA.pathname}${urlA.search}`);
     const keyA = `reauth|${shopA || "-"}|${urlA.pathname}`;
     const nowA = Date.now();
-    if (nowA - (reauthAt.get(keyA) ?? 0) > REAUTH_COOLDOWN_MS) {
-      reauthAt.set(keyA, nowA);
-      if (reauthAt.size > 200) {
-        for (const [k, at] of reauthAt) if (nowA - at > REAUTH_COOLDOWN_MS) reauthAt.delete(k);
+    const gapA = nowA - (reauthAt.get(keyA) ?? 0);
+    // Fuera de cooldown O dentro de la ventana de hermanos (ver REAUTH_SIBLING_MS):
+    // se lanza la MISMA respuesta en todos los loaders de la petición.
+    if (gapA > REAUTH_COOLDOWN_MS || gapA <= REAUTH_SIBLING_MS) {
+      if (gapA > REAUTH_COOLDOWN_MS) {
+        reauthAt.set(keyA, nowA);
+        if (reauthAt.size > 200) {
+          for (const [k, at] of reauthAt) if (nowA - at > REAUTH_COOLDOWN_MS) reauthAt.delete(k);
+        }
+        console.info(`[Auth] Recovery de App Bridge sin idToken → REAUTH al admin: ${targetA}`);
       }
-      console.info(`[Auth] Recovery de App Bridge sin idToken → REAUTH al admin: ${targetA}`);
       throw new Response(
         `<script data-loader-bounce>try{window.top.location.replace(${JSON.stringify(targetA)})}catch(e){window.open(${JSON.stringify(targetA)},"_top")}</script>`,
         {
@@ -337,7 +352,8 @@ export async function safeAuthenticate(request: Request) {
         }
       );
     }
-    // En cooldown → cae en el bounce oficial de abajo (302), un intento por ventana.
+    // Cooldown activo (2s < gap ≤ 60s): intento de rescate REAL dentro de la
+    // ventana → cae en el bounce oficial de abajo (302), un intento por ventana.
   }
   try {
     // Pre-validación con los helpers OFICIALES utils.sanitizeShop/sanitizeHost
