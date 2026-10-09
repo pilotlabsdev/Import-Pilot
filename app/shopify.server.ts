@@ -227,6 +227,12 @@ const BOUNCE_DEDUP_MS = 3_000;
 // console.info en vez de warn: es el evento ESPERADO (token caducado en reposo,
 // App Bridge renueva), no un error → Railway lo pinta en su nivel real.
 const retry401LoggedAt = new Map<string, number>();
+// Cooldown del gate REAUTH (ver safeAuthenticate): un solo intento de rescate
+// por tienda+ruta cada 60s. Si el admin sigue sin poder embeber la app con
+// id_token fresco, el segundo intento cae en el bounce oficial (302) y la
+// cadena se detiene — nunca bucle de navegación.
+const reauthAt = new Map<string, number>();
+const REAUTH_COOLDOWN_MS = 60_000;
 
 export async function shoplessBounceResponse(request: Request, label = "loader"): Promise<Response | null> {
   const url = new URL(request.url);
@@ -282,6 +288,57 @@ export async function safeAuthenticate(request: Request) {
   // del loader padre y la respuesta final sería un 302 dentro del iframe.
   const shoplessBounce = await shoplessBounceResponse(request, "safeAuthenticate");
   if (shoplessBounce) throw shoplessBounce;
+
+  // Gate REAUTH — fetch de recuperación de App Bridge (shopify-reload) con el
+  // canal idToken muerto. Tras un reposo largo el host admin no responde al
+  // SessionToken.request (timeout 60s de App Bridge → "idToken unavailable"):
+  // App Bridge borra el documento y fetchea la URL original con el header
+  // `X-Shopify-Bounce` pero, al fallar el idToken, SIN Authorization. El
+  // bounce oficial responde 302 → App Bridge escribe esa página-bounce sobre
+  // el documento ya vacío → iframe en blanco para siempre (hasta F5 manual).
+  //
+  // Respondemos con el header OFICIAL X-Shopify-API-Request-Failure-Reauthorize-Url
+  // (patrón redirectWithAppBridgeHeaders de la propia librería; el interceptor
+  // fetch de App Bridge v4 hace Navigation.redirect.remote a esa URL → la
+  // ventana top navega al admin → Shopify re-embebe la app con id_token
+  // fresco). El body lleva además el bounce inline ya probado en prod
+  // (shoplessBounce/plans-gate) como red de seguridad: si el header no
+  // llegase a procesarse, el documento escrito navega al admin igualmente.
+  // Status 200 (no 401 como el helper oficial): es un document request y el
+  // ErrorBoundary solo entrega el bounce HTML con status 200 (isAppBridgeHtml).
+  // Cooldown en memoria 60s por tienda+ruta → sin bucles de navegación.
+  if (
+    request.method === "GET" &&
+    request.headers.get("X-Shopify-Bounce") &&
+    !request.headers.get("Authorization") &&
+    (request.headers.get("Accept") || "").includes("text/html")
+  ) {
+    const urlA = new URL(request.url);
+    const rawShopA = urlA.searchParams.get("shop");
+    const shopA = (rawShopA ? shopifyCore.utils.sanitizeShop(rawShopA) : null) || shopFromCookieHeader(request.headers.get("Cookie"));
+    const targetA = buildAdminAppUrl(shopA, `${urlA.pathname}${urlA.search}`);
+    const keyA = `reauth|${shopA || "-"}|${urlA.pathname}`;
+    const nowA = Date.now();
+    if (nowA - (reauthAt.get(keyA) ?? 0) > REAUTH_COOLDOWN_MS) {
+      reauthAt.set(keyA, nowA);
+      if (reauthAt.size > 200) {
+        for (const [k, at] of reauthAt) if (nowA - at > REAUTH_COOLDOWN_MS) reauthAt.delete(k);
+      }
+      console.info(`[Auth] Recovery de App Bridge sin idToken → REAUTH al admin: ${targetA}`);
+      throw new Response(
+        `<script data-loader-bounce>try{window.top.location.replace(${JSON.stringify(targetA)})}catch(e){window.open(${JSON.stringify(targetA)},"_top")}</script>`,
+        {
+          status: 200,
+          headers: {
+            "content-type": "text/html;charset=utf-8",
+            "cache-control": "no-store",
+            "X-Shopify-API-Request-Failure-Reauthorize-Url": targetA,
+          },
+        }
+      );
+    }
+    // En cooldown → cae en el bounce oficial de abajo (302), un intento por ventana.
+  }
   try {
     // Pre-validación con los helpers OFICIALES utils.sanitizeShop/sanitizeHost
     // (solo se llaman si el parámetro está presente). Sin ella, shops/hosts de
