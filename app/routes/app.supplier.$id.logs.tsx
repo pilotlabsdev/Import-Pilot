@@ -99,7 +99,7 @@ export default function Logs() {
               const parsed = parseSystemError(e.error || "");
               return (
                 <li key={i}>
-                  <strong>{e.sku || "?"}</strong>: {t(parsed.key, parsed.vars || {})}{e.lineNumber ? ` (${t("history.line")} ${e.lineNumber})` : ""}
+                  {e.sku ? <><strong>{e.sku}</strong>: </> : ""}{t(parsed.key, parsed.vars || {})}{e.lineNumber ? ` (${t("history.line")} ${e.lineNumber})` : ""}
                 </li>
               );
             })}

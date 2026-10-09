@@ -43,6 +43,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return data({ error: "Este proveedor está deshabilitado por límite de plan. Sube de plan para reactivarlo." }, { status: 403 });
     }
 
+    // Causa raíz: sin URL ni archivo no hay nada que importar — fetch("") lanza
+    // TypeError crudo de undici. Se rechaza aquí con clave i18n antes de encolar.
+    if (!getEffectiveUrl(config)) {
+      return data({ error: "systemError.empty_url", errorIsKey: true }, { status: 400 });
+    }
+
     const isActive = isImportActive(config.id);
 
     // Also check for active BulkJob (bulk mode) and running ImportLogs

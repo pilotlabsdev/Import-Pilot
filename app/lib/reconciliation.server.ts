@@ -89,7 +89,13 @@ export async function reconcileAllShops(): Promise<void> {
       try {
         await reconcileOrphanedMappings(shopDomain);
       } catch (e: any) {
-        console.error(`[Reconciliation] Error reconciling ${shopDomain}:`, e?.message);
+        // Tienda con mappings pero sin sesión offline = esperado (p.ej. desinstalada
+        // sin APP_UNINSTALLED); no es un error real de reconciliación.
+        if (/no session found/i.test(String(e?.message))) {
+          console.info(`[Reconciliation] Sin sesión offline — se omite ${shopDomain}`);
+        } else {
+          console.error(`[Reconciliation] Error reconciling ${shopDomain}:`, e?.message);
+        }
       }
     }
   } finally {

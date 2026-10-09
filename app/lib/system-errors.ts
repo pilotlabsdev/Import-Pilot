@@ -82,6 +82,29 @@ const TEMPLATE_PATTERNS: Array<{ prefix: string; key: string; extractVars: (s: s
     extractVars: () => ({}),
   },
   {
+    // "Error descargando CSV: 403 Forbidden" / "Error descargando Excel: 404 Not Found"
+    prefix: "Error descargando",
+    key: "systemError.download_failed",
+    extractVars: (s) => {
+      const m = s.match(/Error descargando (?:CSV|Excel): (\d+)/);
+      return { status: m?.[1] || "—" };
+    },
+  },
+  {
+    // TypeError crudo de undici cuando fetch recibe "" (logs legacy)
+    prefix: "Failed to parse URL",
+    key: "systemError.invalid_url",
+    extractVars: () => ({}),
+  },
+  {
+    prefix: "El servidor del feed no respondió",
+    key: "systemError.feed_timeout",
+    extractVars: (s) => {
+      const m = s.match(/tras (\d+)s/);
+      return { seconds: m?.[1] || "120" };
+    },
+  },
+  {
     prefix: "Feed ilegible",
     key: "systemError.feed_unreadable",
     extractVars: () => ({}),

@@ -37,7 +37,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     return data({ options: [], total: 0, offset, limit, error: "Proveedor no encontrado" });
   }
   if (!getEffectiveUrl(config)) {
-    return data({ options: [], total: 0, offset, limit, error: "CSV URL not configured" });
+    return data({ options: [], total: 0, offset, limit, error: "systemError.empty_url" });
   }
 
   console.log(`[api.csv-options] configId=${config.id}, type=${type}, effectiveUrl=${getEffectiveUrl(config)?.substring(0, 60)}`);

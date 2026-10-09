@@ -21,6 +21,7 @@ import { authenticate, safeAuthenticate, unauthenticated } from "~/shopify.serve
 import { prisma, getConfigById } from "~/lib/db.server";
 import { SearchableMultiSelect } from "~/components/SearchableMultiSelect";
 import { refreshSchedules } from "~/lib/scheduler.server";
+import { parseSystemError } from "~/lib/system-errors";
 import { useTranslation } from "react-i18next";
 
 const STATUS_TONE: Record<string, "success" | "critical" | "attention" | "info"> = {
@@ -365,7 +366,7 @@ export default function ImportTab() {
         {runAction?.error && (
           <Layout.Section>
             <Banner tone="critical" title={t("import.error")}>
-              {runAction.error}
+              {(() => { const pe = parseSystemError(runAction.error); return t(pe.key, pe.vars || {}); })()}
             </Banner>
           </Layout.Section>
         )}

@@ -114,6 +114,15 @@ function rethrowIfTimeout(error: any): void {
   }
 }
 
+// Guard de causa raíz: una URL vacía llega a fetch("") y undici lanza un
+// TypeError crudo ("Failed to parse URL from ") sin traducir. Se lanza una
+// clave i18n directa (parseSystemError la pasa sin tocar).
+function assertNonEmptyUrl(url: string): void {
+  if (!url || !url.trim()) {
+    throw new Error("systemError.empty_url");
+  }
+}
+
 export function parseCSVLine(line: string, delimiter: string = "|"): string[] {
   const result: string[] = [];
   let current = "";
@@ -191,6 +200,7 @@ export async function* streamCSV(
   maxRetries: number = 3,
   opts?: StreamOptions
 ): AsyncGenerator<{ headers: string[]; row: ProductRow; lineNumber: number }> {
+  assertNonEmptyUrl(url);
   // Normalize Google Drive URLs to bypass viewer/consent page
   if (url.includes("drive.google.com") && url.includes("export=download") && !url.includes("confirm=")) {
     url = `${url}&confirm=t`;
@@ -469,6 +479,7 @@ export async function* streamExcel(
   url: string,
   maxRetries: number = 3
 ): AsyncGenerator<{ headers: string[]; row: ProductRow; lineNumber: number }> {
+  assertNonEmptyUrl(url);
   // Normalize Google Drive URLs to bypass viewer/consent page
   if (url.includes("drive.google.com") && url.includes("export=download") && !url.includes("confirm=")) {
     url = `${url}&confirm=t`;
@@ -672,6 +683,7 @@ export async function fetchCSVHeaders(
   delimiter: string = "|",
   maxRetries: number = 3
 ): Promise<string[]> {
+  assertNonEmptyUrl(url);
   const localFile = isLocalFilePath(url) ? url : null;
 
   if (localFile && isExcelUrl(url)) {

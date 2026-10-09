@@ -299,7 +299,7 @@ export default function QueuePage() {
                               const parsed = parseSystemError(e.error || "");
                               return (
                                 <li key={i}>
-                                  <strong>{e.sku || "?"}</strong>: {t(parsed.key, parsed.vars || {})}
+                                  {e.sku ? <><strong>{e.sku}</strong>: </> : ""}{t(parsed.key, parsed.vars || {})}
                                 </li>
                               );
                             })}
