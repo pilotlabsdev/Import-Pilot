@@ -1,0 +1,6 @@
+sku,ean,name,description,category,quantity,price,brand,product_type,image1
+DEMO-001,8412345678901,Wireless Mouse Ergonomic,Comfortable wireless mouse with silent clicks,Accessories,25,14.95,DemoBrand,Mouse,https://placehold.co/600x600.png?text=Demo+Mouse
+DEMO-002,8412345678902,USB-C Hub 7-in-1,USB-C hub with HDMI PD and 3 USB ports,Accessories,40,29.95,DemoBrand,Hub,https://placehold.co/600x600.png?text=Demo+Hub
+DEMO-003,8412345678903,LED Desk Lamp Dimmable,Dimmable LED lamp with touch control and USB charger,Lighting,15,39.99,DemoBrand,Lamp,https://placehold.co/600x600.png?text=Demo+Lamp
+DEMO-004,8412345678904,Aluminum Laptop Stand,Adjustable aluminum stand for laptops up to 16 inches,Accessories,30,24.50,DemoBrand,Stand,https://placehold.co/600x600.png?text=Demo+Stand
+DEMO-005,8412345678905,Bluetooth Tracker Tag,Item tracker compatible with iOS and Android,Electronics,50,12.99,DemoBrand,Tracker,https://placehold.co/600x600.png?text=Demo+Tracker
