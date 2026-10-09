@@ -4,6 +4,25 @@ export interface ProductRow {
 
 export interface StreamOptions {
   skuOf?: (row: ProductRow) => string;
+  // Columnas CSV (en minúsculas) mapeadas a sku/ean en la pestaña Columnas.
+  // El guard de cabeceras acepta un CSV sin "sku"/"ean" literal si el merchant
+  // mapeó una columna no estándar (p.ej. "variant sku" del export de Shopify).
+  mappedSkuColumns?: string[];
+}
+
+// Columnas crudas (lowercase) mapeadas a sku/ean en la pestaña Columnas.
+// Acepta tanto el shape de Prisma ({shopifyField,csvColumn}) como el shape ya
+// proyectado de los engines.
+export function mappedSkuColumnsFrom(
+  columnMaps: Array<{ shopifyField: string; csvColumn?: string | null }>
+): string[] {
+  const cols: string[] = [];
+  for (const m of columnMaps) {
+    if ((m.shopifyField === "sku" || m.shopifyField === "ean") && m.csvColumn) {
+      cols.push(m.csvColumn.toLowerCase());
+    }
+  }
+  return cols;
 }
 
 import * as XLSX from "xlsx";
@@ -284,10 +303,17 @@ export async function* streamCSV(
 
             if (lineNumber === 1) {
               headers = parseCSVLine(trimmed, effectiveDelimiter || "|").map((h) => h.toLowerCase());
-              const required = ["sku", "ean"];
-              const found = headers.some((h) => required.includes(h));
-              if (!found) {
-                throw new Error(`Cabeceras CSV no válidas: falta columna "sku" o "ean". Cabeceras encontradas: [${headers.slice(0, 10).join(", ")}...]`);
+              // Guard de import: solo aplica con skuOf (la ruta de lectura de
+              // cabeceras/filtros no tiene por qué validar identificador). Acepta
+              // "sku"/"ean" literal o columnas mapeadas en la pestaña Columnas
+              // (p.ej. "variant sku" del export de Shopify).
+              if (opts?.skuOf) {
+                const required = ["sku", "ean"];
+                const mapped = opts.mappedSkuColumns ?? [];
+                const found = headers.some((h) => required.includes(h)) || mapped.some((c) => headers.includes(c));
+                if (!found) {
+                  throw new Error(`Cabeceras CSV no válidas: falta columna "sku" o "ean". Cabeceras encontradas: [${headers.slice(0, 10).join(", ")}...]`);
+                }
               }
               continue;
             }
