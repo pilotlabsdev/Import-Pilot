@@ -47,7 +47,7 @@ model ImportConfig {
   importMode      String   @default("chunks")
   chunkSize       Int      @default(50)
   maxRetries      Int      @default(3)
-  updateOptions   String   @default("[\"name\",\"description\",\"price\",\"stock\",\"images\",\"vendor\",\"productType\",\"tags\",\"metafields\",\"collections\"]")
+  updateOptions   String   @default("[\"price\",\"stock\"]")
   isActive        Boolean  @default(false)
   filterType      String   @default("all")
   filterSkus      String?

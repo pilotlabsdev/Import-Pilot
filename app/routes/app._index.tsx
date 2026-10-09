@@ -100,6 +100,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         shopDomain,
         name,
         csvUrl: "",
+        // Seguridad: proveedores nuevos solo actualizan precio y stock por
+        // defecto; el merchant habilita el resto en Configuración si quiere.
+        updateOptions: JSON.stringify(["price", "stock"]),
       },
     });
     await enforcePlanLimits(shopDomain);

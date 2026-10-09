@@ -171,6 +171,9 @@ export async function getOrCreateConfig(shopDomain: string) {
       shopDomain,
       csvUrl: "",
       name: "Proveedor",
+      // Seguridad: mismos defaults que el alta del dashboard — solo precio y
+      // stock; el merchant amplía campos en Configuración.
+      updateOptions: JSON.stringify(["price", "stock"]),
     },
   });
 }
