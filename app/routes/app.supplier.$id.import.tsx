@@ -18,7 +18,7 @@ import {
   Text,
 } from "@shopify/polaris";
 import { authenticate, safeAuthenticate, unauthenticated } from "~/shopify.server";
-import { prisma, getConfigById } from "~/lib/db.server";
+import { prisma, getConfigById, getEffectiveUrl } from "~/lib/db.server";
 import { SearchableMultiSelect } from "~/components/SearchableMultiSelect";
 import { refreshSchedules } from "~/lib/scheduler.server";
 import { parseSystemError } from "~/lib/system-errors";
@@ -114,12 +114,17 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   if (intent === "toggle-active") {
     const newIsActive = !config.isActive;
+    // No activar cron sin fuente de datos: mismo criterio que api.import.
+    // El scheduler encolaría imports que fallarían con empty_url cada N horas.
+    if (newIsActive && !getEffectiveUrl(config)) {
+      return data({ error: "systemError.empty_url" });
+    }
     await prisma.importConfig.update({
       where: { id: configId },
       data: { isActive: newIsActive },
     });
     await refreshSchedules().catch(() => {});
-    return data({ success: true, isActive: newIsActive });
+    return data({ toggled: true, isActive: newIsActive });
   }
 
   return data({ error: "supplier.invalidAttempt" });
@@ -191,6 +196,12 @@ export default function ImportTab() {
 
   const toggleScheduler = () => {
     const newActive = !schedulerActive;
+    // Sin URL no se puede activar: el server rechaza y devuelve systemError.empty_url.
+    // No flip el badge optimistamente para que el estado no parpadee a "Activo".
+    if (newActive && config?.dataSource !== "file" && !(config?.csvUrl || "").trim()) {
+      fetcher.submit({ intent: "toggle-active" }, { method: "POST" });
+      return;
+    }
     setSchedulerActive(newActive);
     fetcher.submit(
       { intent: "toggle-active" },

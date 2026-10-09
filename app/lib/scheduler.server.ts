@@ -702,6 +702,15 @@ async function runScheduledImport(configId: string) {
       return;
     }
 
+    // Fuente URL sin csvUrl: reprogramar sin encolar (el import fallaría con
+    // empty_url cada N horas y solo llenaría Historial de errores). Cubre el
+    // caso "cron activo y luego borraron la URL" (el toggle ya no permite activar sin URL).
+    if (!(config.csvUrl || "").trim()) {
+      console.warn(`[Scheduler] ${configId} (${config.shopDomain}): cron activo pero sin URL — importación omitida`);
+      scheduleNext(configId, scheduledFrequencies.get(configId) || "4h", null);
+      return;
+    }
+
     const sourceLabel = config.dataSource === "file"
       ? config.localFilePath?.split(/[/\\]/).pop() || "Archivo local"
       : config.csvUrl || "URL";
