@@ -26,6 +26,7 @@ import {
 import { prisma, getConfigById } from "~/lib/db.server";
 import { authenticate, safeAuthenticate, unauthenticated } from "~/shopify.server";
 import { getCollections } from "~/lib/collections.server";
+import { parseSystemError } from "~/lib/system-errors";
 import { ViewIcon } from "@shopify/polaris-icons";
 import { useTranslation } from "react-i18next";
 
@@ -132,7 +133,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         }
       }
     } else {
-      await prisma.categoryCollectionMapping.delete({ where: { id } });
+      // deleteMany: idempotente (doble clic / ya borrado → sin P2025 → sin 500)
+      await prisma.categoryCollectionMapping.deleteMany({ where: { id } });
     }
     return data({ success: true });
   }
@@ -170,10 +172,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       return data({ error: "Selecciona una colección" });
     }
 
-    await prisma.categoryCollectionMapping.update({
+    // updateMany: nunca lanza P2025 si la mapping fue borrada en otra pestaña
+    const updated = await prisma.categoryCollectionMapping.updateMany({
       where: { id: mappingId },
       data: { collectionId, collectionName, tags },
     });
+    if (updated.count === 0) {
+      return data({ error: "systemError.record_not_found" });
+    }
     return data({ success: true });
   }
 
@@ -300,7 +306,7 @@ export default function CategoryMapping() {
       <div style={{ paddingBottom: "40px" }}>
       <BlockStack gap="400">
         {actionData?.error && (
-          <Banner tone="critical">{actionData.error}</Banner>
+          <Banner tone="critical">{(() => { const pe = parseSystemError(actionData.error); return t(pe.key, pe.vars || {}); })()}</Banner>
         )}
         {actionData?.success && (
           <Banner tone="success">

@@ -230,7 +230,7 @@ export async function* streamCSV(
     try {
       const response = await fetchWithTtfbTimeout(url);
       if (!response.ok) {
-        throw new Error(googleDownloadError(url, response.status) ?? `Error descargando CSV: ${response.status} ${response.statusText}`);
+        throw new Error(googleDownloadError(url, response.status) ?? `Error descargando CSV: ${response.status} ${response.statusText} — URL: ${url}`);
       }
 
       const reader = response.body?.getReader();
@@ -516,7 +516,7 @@ export async function* streamExcel(
     try {
       const response = await fetchWithTtfbTimeout(url);
       if (!response.ok) {
-        throw new Error(googleDownloadError(url, response.status) ?? `Error descargando Excel: ${response.status} ${response.statusText}`);
+        throw new Error(googleDownloadError(url, response.status) ?? `Error descargando Excel: ${response.status} ${response.statusText} — URL: ${url}`);
       }
 
       const buffer = await response.arrayBuffer();
@@ -792,7 +792,7 @@ export async function fetchCSVHeaders(
   effectiveUrl = normalizeGoogleSheetsUrl(effectiveUrl);
   if (isExcelUrl(effectiveUrl)) {
     const response = await fetch(effectiveUrl);
-    if (!response.ok) throw new Error(googleDownloadError(effectiveUrl, response.status) ?? `Error descargando Excel: ${response.status}`);
+    if (!response.ok) throw new Error(googleDownloadError(effectiveUrl, response.status) ?? `Error descargando Excel: ${response.status} — URL: ${effectiveUrl}`);
 
     const buffer = await response.arrayBuffer();
     const workbook = XLSX.read(buffer, { type: "array" });
@@ -830,7 +830,7 @@ export async function fetchCSVHeaders(
     try {
       const response = await fetch(effectiveUrl);
       if (!response.ok) {
-        throw new Error(googleDownloadError(effectiveUrl, response.status) ?? `Error descargando CSV: ${response.status}`);
+        throw new Error(googleDownloadError(effectiveUrl, response.status) ?? `Error descargando CSV: ${response.status} — URL: ${effectiveUrl}`);
       }
 
       const reader = response.body?.getReader();

@@ -24,6 +24,7 @@ import { SearchableMultiSelect } from "~/components/SearchableMultiSelect";
 import { prisma, getConfigById } from "~/lib/db.server";
 import { evaluateFormula } from "~/lib/formula-parser";
 import { safeAuthenticate } from "~/shopify.server";
+import { parseSystemError } from "~/lib/system-errors";
 import { ViewIcon } from "@shopify/polaris-icons";
 import { useTranslation } from "react-i18next";
 
@@ -263,14 +264,19 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         },
       });
     } else if (intent === "update" && ruleId) {
-      await prisma.priceRule.update({
+      // updateMany: nunca lanza P2025 si la regla fue borrada en otra pestaña
+      const updated = await prisma.priceRule.updateMany({
         where: { id: ruleId },
         data: ruleData,
       });
+      if (updated.count === 0) {
+        return data({ error: "systemError.record_not_found" });
+      }
     }
   } else if (intent === "delete") {
     const ruleId = formData.get("ruleId") as string;
-    await prisma.priceRule.delete({ where: { id: ruleId } });
+    // deleteMany: idempotente (doble clic / regla ya borrada → sin P2025 → sin 500)
+    await prisma.priceRule.deleteMany({ where: { id: ruleId } });
   } else if (intent === "toggle") {
     const ruleId = formData.get("ruleId") as string;
     const current = await prisma.priceRule.findUnique({ where: { id: ruleId } });
@@ -687,7 +693,7 @@ export default function PriceRules() {
     <BlockStack gap="400">
       {actionData?.error && (
           <Banner tone="critical" title={t("common.error")} onDismiss={() => {}}>
-            {actionData.error}
+            {(() => { const pe = parseSystemError(actionData.error); return t(pe.key, pe.vars || {}); })()}
           </Banner>
         )}
         {actionData?.success && (

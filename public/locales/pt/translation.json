@@ -747,6 +747,8 @@
   "systemError.google_not_shared": "O Google não deixa baixar a planilha ou o arquivo porque não está compartilhado. Compartilhe a planilha com qualquer pessoa com o link e tente novamente.",
   "systemError.empty_url": "Este fornecedor não tem URL de arquivo configurado. Vá às configurações, salve a URL do feed ou carregue um arquivo e tente novamente.",
   "systemError.download_failed": "Não foi possível baixar o arquivo ({{status}}). Verifique a URL e as permissões do arquivo.",
+  "systemError.download_failed_url": "Não foi possível baixar o arquivo ({{status}}) de {{url}}. Verifique a URL e as permissões do arquivo.",
+  "systemError.record_not_found": "Este item não existe mais. Atualize a página.",
   "systemError.invalid_url": "A URL do arquivo não é válida. Verifique se começa com https:// e aponta para um arquivo CSV ou Excel.",
   "systemError.feed_timeout": "O servidor do feed não respondeu após {{seconds}}s. Tente novamente mais tarde.",
   "systemError.query_bad_status": "A verificação de produtos existentes na loja terminou com o estado \"{{status}}\".",

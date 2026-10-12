@@ -113,7 +113,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const configId = form.get("configId") as string;
     if (!configId) return data({ error: "Config ID requerido" }, { status: 400 });
 
-    await prisma.importConfig.delete({ where: { id: configId } });
+    // deleteMany: idempotente (doble clic / ya borrado → sin P2025 → sin 500);
+    // el cascado de FKs es idéntico al delete (onDelete: Cascade en el schema)
+    await prisma.importConfig.deleteMany({ where: { id: configId } });
     await enforcePlanLimits(shopDomain);
     return data({ success: true });
   }

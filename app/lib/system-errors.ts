@@ -28,7 +28,14 @@ const SPANISH_TO_KEY: Record<string, string> = {
  * Template literal patterns that contain dynamic values.
  * These are matched by prefix and the dynamic part is extracted.
  */
-const TEMPLATE_PATTERNS: Array<{ prefix: string; key: string; extractVars: (s: string) => Record<string, string> }> = [
+const TEMPLATE_PATTERNS: Array<{
+  prefix: string;
+  key: string;
+  extractVars: (s: string) => Record<string, string>;
+  /** Si está presente, el patrón solo aplica cuando this devuelve true
+   * (permite dos claves con el mismo prefix: con URL y sin URL). */
+  when?: (s: string) => boolean;
+}> = [
   {
     prefix: "La bulk query de productos existentes terminó con estado",
     key: "systemError.query_bad_status",
@@ -82,7 +89,20 @@ const TEMPLATE_PATTERNS: Array<{ prefix: string; key: string; extractVars: (s: s
     extractVars: () => ({}),
   },
   {
+    // "Error descargando CSV: 404 Not Found — URL: https://..." (nuevo formato,
+    // con la URL intentada para que el merchant vea su typo de una vez)
+    prefix: "Error descargando",
+    key: "systemError.download_failed_url",
+    when: (s) => s.includes(" — URL: "),
+    extractVars: (s) => {
+      const m = s.match(/Error descargando (?:CSV|Excel): (\d+)/);
+      const u = s.match(/ — URL: (\S+)/);
+      return { status: m?.[1] || "—", url: u?.[1] || "" };
+    },
+  },
+  {
     // "Error descargando CSV: 403 Forbidden" / "Error descargando Excel: 404 Not Found"
+    // (logs antiguos, sin URL)
     prefix: "Error descargando",
     key: "systemError.download_failed",
     extractVars: (s) => {
@@ -147,7 +167,7 @@ export function parseSystemError(errorStr: string): TranslatedError {
 
   // Template literal patterns
   for (const pattern of TEMPLATE_PATTERNS) {
-    if (errorStr.startsWith(pattern.prefix)) {
+    if (errorStr.startsWith(pattern.prefix) && (!pattern.when || pattern.when(errorStr))) {
       return { key: pattern.key, vars: pattern.extractVars(errorStr) };
     }
   }

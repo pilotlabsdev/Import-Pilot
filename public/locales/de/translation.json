@@ -747,6 +747,8 @@
   "systemError.google_not_shared": "Google lässt das Blatt oder die Datei nicht herunterladen, weil es nicht geteilt ist. Teilen Sie das Blatt mit jedem mit dem Link und versuchen Sie es erneut.",
   "systemError.empty_url": "Dieser Lieferant hat keine Datei-URL konfiguriert. Gehe zu den Einstellungen, speichere die Feed-URL oder lade eine Datei hoch, und versuche es erneut.",
   "systemError.download_failed": "Die Datei konnte nicht heruntergeladen werden ({{status}}). Prüfe die URL und die Dateiberechtigungen.",
+  "systemError.download_failed_url": "Die Datei konnte nicht heruntergeladen werden ({{status}}) von {{url}}. Prüfe die URL und die Dateiberechtigungen.",
+  "systemError.record_not_found": "Dieses Element existiert nicht mehr. Aktualisiere die Seite.",
   "systemError.invalid_url": "Die Datei-URL ist ungültig. Prüfe, ob sie mit https:// beginnt und auf eine CSV- oder Excel-Datei zeigt.",
   "systemError.feed_timeout": "Der Feed-Server hat nach {{seconds}}s nicht geantwortet. Versuche es später erneut.",
   "systemError.query_bad_status": "Die Prüfung vorhandener Produkte im Shop endete mit Status \"{{status}}\".",

@@ -192,7 +192,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   if (intent === "resolve") {
     const id = form.get("id") as string;
-    await prisma.duplicateLog.update({
+    // updateMany: idempotente ante doble clic (sin P2025 → sin 500)
+    await prisma.duplicateLog.updateMany({
       where: { id },
       data: { resolved: true },
     });
@@ -210,7 +211,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   if (intent === "unresolve") {
     const id = form.get("id") as string;
-    await prisma.duplicateLog.update({
+    await prisma.duplicateLog.updateMany({
       where: { id },
       data: { resolved: false },
     });

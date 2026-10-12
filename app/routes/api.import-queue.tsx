@@ -110,7 +110,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       where: { jobId: job.id, status: { in: ["pending", "launched", "processing"] } },
       data: { status: "failed" },
     });
-    await prisma.bulkJob.update({
+    // updateMany: si el job fue limpiado mientras cancelábamos ops en Shopify
+    // (ventana de segundos), no lanzar P2025 → 500
+    await prisma.bulkJob.updateMany({
       where: { id: job.id },
       data: { phase: "failed" },
     });
