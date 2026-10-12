@@ -1,7 +1,7 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
 import { data } from "react-router";
 
-import { useLoaderData, useActionData, Form, useRevalidator, useNavigation } from "react-router";
+import { useLoaderData, useActionData, Form, useRevalidator, useNavigation, useFetcher } from "react-router";
 import { useState, useCallback, useRef, useEffect } from "react";
 import {
   Badge,
@@ -920,6 +920,8 @@ function RuleSection({
   const [editingRule, setEditingRule] = useState<any>(null);
   const [previewRule, setPreviewRule] = useState<any>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<any>(null);
+  const fetcher = useFetcher();
+  const revalidator = useRevalidator();
 
   useEffect(() => {
     if (actionSuccess) {
@@ -927,6 +929,17 @@ function RuleSection({
       setDeleteConfirm(null);
     }
   }, [actionSuccess]);
+
+  // Delete vía fetcher (no fetch() crudo): RR revalida los loaders al
+  // completar la acción del fetcher → la regla desaparece en el acto.
+  // Antes: fetch(window.location.href) → RR no se enteraba de la acción →
+  // lista stale hasta el próximo revalidate automático (5-10s).
+  useEffect(() => {
+    if (fetcher.state === "idle" && fetcher.data) {
+      setDeleteConfirm(null);
+      if (fetcher.data.success) revalidator.revalidate();
+    }
+  }, [fetcher.state, fetcher.data]);
 
   if (rules.length === 0) return null;
 
@@ -1161,7 +1174,7 @@ function RuleSection({
               form.set("configId", configId);
               form.set("intent", "delete");
               form.set("ruleId", deleteConfirm.id);
-              fetch(window.location.href, { method: "POST", body: form });
+              fetcher.submit(form, { method: "POST" });
               setDeleteConfirm(null);
             },
             destructive: true,
