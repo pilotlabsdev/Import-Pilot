@@ -96,7 +96,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     console.warn(
       isAbort
         ? `[Webhook] Conexión abortada por el cliente durante la lectura del body (topic=${topicHeader || "?"}) — entrega fallida, Shopify reintentará`
-        : `[Webhook] validación/auth fallida (topic=${topicHeader || "?"}, ${detail})`
+        : `[Webhook] validación/auth fallida (topic=${topicHeader || "?"}, ${detail}, shop=${request.headers.get("X-Shopify-Shop-Domain") || "?"})`
     );
     throw new Response(null, { status: 401 });
   }
