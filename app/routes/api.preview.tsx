@@ -116,7 +116,12 @@ async function fetchShopifySkusByBatch(
         cursor = hasMore ? json.data.productVariants.pageInfo.endCursor : null;
       }
     } catch (e: any) {
-      console.error(`[Preview] Error in SKU batch ${Math.floor(i / BATCH_SIZE) + 1}:`, e?.message);
+      // admin.graphql lanza un Response en 401/500 (sin .message) → no loguear "undefined".
+      const detail =
+        e instanceof Response
+          ? `HTTP ${e.status}`
+          : e?.message ?? (e ? String(e) : "unknown");
+      console.error(`[Preview] Error in SKU batch ${Math.floor(i / BATCH_SIZE) + 1}: ${detail}`);
     }
   }
 

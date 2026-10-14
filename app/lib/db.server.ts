@@ -237,7 +237,12 @@ export async function refreshAccessToken(shop: string): Promise<string | null> {
   try {
     const response = await fetch(`https://${shop}/admin/oauth/access_token`, {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        // Doc oficial (refresh expiring offline token): pedir JSON para que los
+        // errores 4xx/5xx vengan como JSON y no como la página HTML del edge.
+        Accept: "application/json",
+      },
       body: new URLSearchParams({
         grant_type: "refresh_token",
         client_id: process.env.SHOPIFY_API_KEY!,
@@ -247,8 +252,13 @@ export async function refreshAccessToken(shop: string): Promise<string | null> {
     });
 
     if (!response.ok) {
-      const body = await response.text();
-      console.error(`[Token Refresh] Failed for ${shop}: HTTP ${response.status} - ${body}`);
+      // Truncar: si Shopify aún devuelve HTML (5xx transitorio), no volcar la
+      // página de error entera a los logs. 5xx/429 = transitorio (la doc
+      // oficial: reintentar con el mismo refresh_token); 401 = token terminal.
+      const body = (await response.text().catch(() => "")).replace(/\s+/g, " ").trim();
+      console.error(
+        `[Token Refresh] Failed for ${shop}: HTTP ${response.status} - ${body.slice(0, 200)}`
+      );
       return null;
     }
 
