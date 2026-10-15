@@ -23,6 +23,8 @@ import {
 } from "@shopify/polaris";
 import { NoteIcon } from "@shopify/polaris-icons";
 import { prisma, getConfigById } from "~/lib/db.server";
+import { assertSupportedUrl } from "~/lib/csv-parser.server";
+import { parseSystemError } from "~/lib/system-errors";
 import { isBucketKey, fileExistsInStorage } from "~/lib/storage.server";
 import { authenticate, safeAuthenticate, unauthenticated } from "~/shopify.server";
 import { refreshSchedules } from "~/lib/scheduler.server";
@@ -147,6 +149,16 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       (p) => p.dataSource === newDataSource && (p.fileName || undefined) === newFileName
     );
 
+    const switchCsvUrl =
+      newDataSource === "url" ? ((formData.get("csvUrl") as string) || config.csvUrl || "") : "";
+    if (switchCsvUrl.trim()) {
+      try {
+        assertSupportedUrl(switchCsvUrl.trim());
+      } catch (e: any) {
+        return data({ error: e.message });
+      }
+    }
+
     await prisma.importConfig.update({
       where: { id: config.id },
       data: {
@@ -168,6 +180,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   const newDataSource = (formData.get("dataSource") as string) || "url";
   const newLocalFilePath = (formData.get("localFilePath") as string) || null;
   const csvUrlChanged = newDataSource === "url" && newCsvUrl !== config.csvUrl;
+
+  if (newDataSource === "url" && newCsvUrl.trim()) {
+    try {
+      assertSupportedUrl(newCsvUrl.trim());
+    } catch (e: any) {
+      return data({ error: e.message });
+    }
+  }
 
   const updateData: Record<string, any> = {
     csvUrl: newDataSource === "url" ? newCsvUrl : config.csvUrl,
@@ -211,7 +231,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
 export default function Config() {
   const { config, shopDomain, channels, markets, fileExists } = useLoaderData<typeof loader>();
-  const actionData = useActionData<typeof action>() as { success?: boolean } | undefined;
+  const actionData = useActionData<typeof action>() as { success?: boolean; error?: string } | undefined;
   const fetcher = useFetcher();
   const { revalidate } = useRevalidator();
   const { t } = useTranslation();
@@ -466,6 +486,15 @@ export default function Config() {
     <>
       {actionData?.success && (
         <Banner tone="success" title={t("import.saved")} />
+      )}
+
+      {actionData?.error && (
+        <Banner tone="critical">
+          {(() => {
+            const pe = parseSystemError(actionData.error!);
+            return t(pe.key, pe.vars || {});
+          })()}
+        </Banner>
       )}
 
       {fileSwitched && csvUrl !== config.csvUrl && (

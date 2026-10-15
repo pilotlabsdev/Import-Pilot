@@ -748,6 +748,8 @@
   "systemError.empty_url": "Este fornecedor não tem URL de arquivo configurado. Vá às configurações, salve a URL do feed ou carregue um arquivo e tente novamente.",
   "systemError.download_failed": "Não foi possível baixar o arquivo ({{status}}). Verifique a URL e as permissões do arquivo.",
   "systemError.download_failed_url": "Não foi possível baixar o arquivo ({{status}}) de {{url}}. Verifique a URL e as permissões do arquivo.",
+  "systemError.download_network": "Não foi possível conectar ao feed ({{reason}}). Verifique se a URL está acessível pela internet: {{url}}",
+  "systemError.unsupported_url": "URL não suportada ({{protocol}}). Use uma URL http:// ou https://: {{url}}",
   "systemError.record_not_found": "Este item não existe mais. Atualize a página.",
   "systemError.invalid_url": "A URL do arquivo não é válida. Verifique se começa com https:// e aponta para um arquivo CSV ou Excel.",
   "systemError.feed_timeout": "O servidor do feed não respondeu após {{seconds}}s. Tente novamente mais tarde.",

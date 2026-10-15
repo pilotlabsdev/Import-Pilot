@@ -135,7 +135,10 @@ export async function getSubscriptionInfo(
   }
 
   // API no disponible (env/red/org) → fallback a la fila local.
-  console.warn(
+  // console.info (no warn): en instalaciones frescas el gate especulativo corre
+  // antes de que exista la sesión offline → "sin GIDs" es el camino normal, no
+  // un error; warn iba a stderr y Railway lo pintaba en rojo en cada install.
+  console.info(
     `[Billing] Partner API no disponible para ${shopDomain} (${partner.error}) — usando fila local`
   );
   return infoFromRow(row, false);

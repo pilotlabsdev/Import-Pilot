@@ -111,6 +111,32 @@ const TEMPLATE_PATTERNS: Array<{
     },
   },
   {
+    // "Error de red descargando el feed: ENOTFOUND — URL: https://..." (undici
+    // TypeError envuelto: DNS/conexión/TLS falló antes de recibir respuesta HTTP)
+    prefix: "Error de red descargando",
+    key: "systemError.download_network",
+    extractVars: (s) => {
+      const m = s.match(/Error de red descargando el feed: (.+?) — URL: (\S+)/);
+      return { reason: m?.[1] || "—", url: m?.[2] || "—" };
+    },
+  },
+  {
+    // "URL no soportada (chrome-extension:). Usa una URL http:// o https:// — URL: ..."
+    prefix: "URL no soportada",
+    key: "systemError.unsupported_url",
+    extractVars: (s) => {
+      const p = s.match(/URL no soportada \(([^)]+)\)/);
+      const u = s.match(/ — URL: (\S+)/);
+      return { protocol: p?.[1] || "—", url: u?.[1] || "—" };
+    },
+  },
+  {
+    // TypeError crudo de undici en logs legacy (sin URL, sin causa envuelta)
+    prefix: "fetch failed",
+    key: "systemError.download_network",
+    extractVars: () => ({ reason: "—", url: "—" }),
+  },
+  {
     // TypeError crudo de undici cuando fetch recibe "" (logs legacy)
     prefix: "Failed to parse URL",
     key: "systemError.invalid_url",

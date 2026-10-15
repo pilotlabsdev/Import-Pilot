@@ -751,6 +751,8 @@
   "systemError.empty_url": "This supplier has no file URL configured. Go to settings, save the feed URL or upload a file, and try again.",
   "systemError.download_failed": "Could not download the file ({{status}}). Check the URL and file permissions.",
   "systemError.download_failed_url": "Could not download the file ({{status}}) from {{url}}. Check the URL and file permissions.",
+  "systemError.download_network": "Couldn't connect to the feed ({{reason}}). Check that the URL is reachable from the internet: {{url}}",
+  "systemError.unsupported_url": "Unsupported URL ({{protocol}}). Use an http:// or https:// URL: {{url}}",
   "systemError.record_not_found": "This item no longer exists. Refresh the page.",
   "systemError.invalid_url": "The file URL is not valid. Check that it starts with https:// and points to a CSV or Excel file.",
   "systemError.feed_timeout": "The feed server did not respond after {{seconds}}s. Try again later.",

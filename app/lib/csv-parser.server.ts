@@ -122,8 +122,24 @@ async function fetchWithTtfbTimeout(url: string): Promise<Response> {
   const timer = setTimeout(() => controller.abort(), TTFB_TIMEOUT_MS);
   try {
     return await fetch(url, { signal: controller.signal });
+  } catch (err: any) {
+    // AbortError = timeout TTFB → lo traduce rethrowIfTimeout en el caller
+    if (err?.name === "AbortError") throw err;
+    throw networkFeedError(url, err);
   } finally {
     clearTimeout(timer);
+  }
+}
+
+// fetch sin timeout para los puntos que usaban fetch() crudo (fetchCSVHeaders),
+// con el mismo envoltorio de errores de red para no dejar pasar el TypeError
+// "fetch failed" sin URL ni causa.
+async function fetchPlain(url: string): Promise<Response> {
+  try {
+    return await fetch(url);
+  } catch (err: any) {
+    if (err?.name === "AbortError") throw err;
+    throw networkFeedError(url, err);
   }
 }
 
@@ -140,6 +156,50 @@ function assertNonEmptyUrl(url: string): void {
   if (!url || !url.trim()) {
     throw new Error("systemError.empty_url");
   }
+}
+
+// Esquemas que el servidor puede fetchar de verdad. chrome-extension://, file://,
+// ftp://, etc. hacen que undici falle con un TypeError crudo ("fetch failed",
+// cause "unknown scheme") sin contexto → se rechazan ANTES del bucle de
+// reintentos para un fallo instantáneo y traducible ({{protocol}} + {{url}}).
+// data: se permite: undici lo soporta y se usa en tests/E2E de configs.
+const SUPPORTED_FETCH_PROTOCOLS = new Set(["http:", "https:", "data:"]);
+
+export function assertSupportedUrl(url: string): void {
+  let protocol: string;
+  try {
+    protocol = new URL(url).protocol;
+  } catch {
+    // No parseable como URL absoluta (p.ej. "example.com/feed.csv" sin scheme) →
+    // fetch ya lanza "Failed to parse URL" que parseSystemError traduce (invalid_url).
+    return;
+  }
+  if (!SUPPORTED_FETCH_PROTOCOLS.has(protocol)) {
+    throw new Error(`URL no soportada (${protocol}). Usa una URL http:// o https:// — URL: ${url}`);
+  }
+}
+
+// TypeError crudo de undici ("fetch failed") cuando la conexión falla a nivel de
+// red (DNS, refused, TLS…). El detalle real vive en err.cause (nodejs/undici#1248:
+// cause.code = ENOTFOUND/ECONNRESET/ETIMEDOUT… o AggregateError.errors[0] con
+// errores múltiples dual-stack). Se envuelve con la URL para que el merchant vea
+// QUÉ feed falló y por qué, traducible vía parseSystemError (download_network).
+function networkFeedError(url: string, err: any): Error {
+  const cause = err?.cause;
+  let detail: string | undefined;
+  if (typeof cause?.code === "string" && cause.code) {
+    detail = cause.code;
+  } else if (Array.isArray(cause?.errors) && cause.errors.length > 0) {
+    const first = cause.errors[0];
+    detail =
+      (typeof first?.code === "string" && first.code) ||
+      (typeof first?.message === "string" && first.message) ||
+      undefined;
+  }
+  if (!detail && typeof cause?.message === "string" && cause.message) detail = cause.message;
+  if (!detail && typeof err?.message === "string" && err.message) detail = err.message;
+  if (!detail) detail = String(err);
+  return new Error(`Error de red descargando el feed: ${detail} — URL: ${url}`);
 }
 
 export function parseCSVLine(line: string, delimiter: string = "|"): string[] {
@@ -225,6 +285,7 @@ export async function* streamCSV(
     url = `${url}&confirm=t`;
   }
   url = normalizeGoogleSheetsUrl(url);
+  assertSupportedUrl(url);
   let lastError: Error | null = null;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
@@ -511,6 +572,7 @@ export async function* streamExcel(
     url = `${url}&confirm=t`;
   }
   url = normalizeGoogleSheetsUrl(url);
+  assertSupportedUrl(url);
   let lastError: Error | null = null;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
@@ -790,8 +852,9 @@ export async function fetchCSVHeaders(
     effectiveUrl = `${effectiveUrl}&confirm=t`;
   }
   effectiveUrl = normalizeGoogleSheetsUrl(effectiveUrl);
+  assertSupportedUrl(effectiveUrl);
   if (isExcelUrl(effectiveUrl)) {
-    const response = await fetch(effectiveUrl);
+    const response = await fetchPlain(effectiveUrl);
     if (!response.ok) throw new Error(googleDownloadError(effectiveUrl, response.status) ?? `Error descargando Excel: ${response.status} — URL: ${effectiveUrl}`);
 
     const buffer = await response.arrayBuffer();
@@ -828,7 +891,7 @@ export async function fetchCSVHeaders(
   let lastError: Error | null = null;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      const response = await fetch(effectiveUrl);
+      const response = await fetchPlain(effectiveUrl);
       if (!response.ok) {
         throw new Error(googleDownloadError(effectiveUrl, response.status) ?? `Error descargando CSV: ${response.status} — URL: ${effectiveUrl}`);
       }

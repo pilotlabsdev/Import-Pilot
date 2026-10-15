@@ -748,6 +748,8 @@
   "systemError.empty_url": "Dieser Lieferant hat keine Datei-URL konfiguriert. Gehe zu den Einstellungen, speichere die Feed-URL oder lade eine Datei hoch, und versuche es erneut.",
   "systemError.download_failed": "Die Datei konnte nicht heruntergeladen werden ({{status}}). Prüfe die URL und die Dateiberechtigungen.",
   "systemError.download_failed_url": "Die Datei konnte nicht heruntergeladen werden ({{status}}) von {{url}}. Prüfe die URL und die Dateiberechtigungen.",
+  "systemError.download_network": "Verbindung zum Feed nicht möglich ({{reason}}). Prüfe, ob die URL aus dem Internet erreichbar ist: {{url}}",
+  "systemError.unsupported_url": "Nicht unterstützte URL ({{protocol}}). Verwende eine http://- oder https://-URL: {{url}}",
   "systemError.record_not_found": "Dieses Element existiert nicht mehr. Aktualisiere die Seite.",
   "systemError.invalid_url": "Die Datei-URL ist ungültig. Prüfe, ob sie mit https:// beginnt und auf eine CSV- oder Excel-Datei zeigt.",
   "systemError.feed_timeout": "Der Feed-Server hat nach {{seconds}}s nicht geantwortet. Versuche es später erneut.",
