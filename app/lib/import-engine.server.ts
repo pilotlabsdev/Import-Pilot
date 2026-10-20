@@ -7,6 +7,7 @@ import { mapCsvRowToProductSet, parseUpdateOptions, parseTagOwnership, computeTa
 import { getLocationId } from "./location.server";
 import { checkDuplicate, logExternalDuplicate } from "./duplicate-detection.server";
 import { rateLimitedGraphql } from "./import-locks.server";
+import { getAutomaticCollectionIds } from "./collections.server";
 import { ensureMetafieldDefinitions } from "./metafield-definitions";
 import shopify from "~/shopify.server";
 
@@ -1200,6 +1201,12 @@ async function processProduct({
   mediaToResolve,
   barcodeMap,
 }: ProcessProductOptions): Promise<void> {
+  // Colecciones automáticas (ruleSet != null): el motor NO las gestiona.
+  // add/remove sobre smart = no-ops silenciosos (verificado 2026-07) y
+  // productSet.collections sobre smart fuerza membresía manual = contamina.
+  // Se filtran del mapeo y de la membresía actual (caché 10 min por tienda).
+  const autoCollectionIds = await getAutomaticCollectionIds(admin, shopDomain);
+
   let existing = await prisma.productMapping.findUnique({
     where: { shopDomain_supplierSku: { shopDomain, supplierSku: sku } },
   });
@@ -1220,7 +1227,7 @@ async function processProduct({
       const categoryMap2 = config.categoryMaps?.filter(
         (cm: any) => cm.csvCategory === category && cm.isActive
       ) || [];
-      const collectionIds2 = categoryMap2.map((cm: any) => cm.collectionId);
+      const collectionIds2 = categoryMap2.map((cm: any) => cm.collectionId).filter((id: string) => !autoCollectionIds.has(id));
       const categoryTags2 = categoryMap2.map((cm: any) => cm.tags).filter(Boolean).join(",");
       const shopifyProductType2 = categoryMap2.find((cm: any) => cm.shopifyProductType)?.shopifyProductType || null;
       const productInput2 = mapCsvRowToProductSet(
@@ -1462,7 +1469,7 @@ async function processProduct({
         const categoryMap2 = config.categoryMaps?.filter(
           (cm: any) => cm.csvCategory === category && cm.isActive
         ) || [];
-        const collectionIds2 = categoryMap2.map((cm: any) => cm.collectionId);
+        const collectionIds2 = categoryMap2.map((cm: any) => cm.collectionId).filter((id: string) => !autoCollectionIds.has(id));
         const categoryTags2 = categoryMap2.map((cm: any) => cm.tags).filter(Boolean).join(",");
         const shopifyProductType2 = categoryMap2.find((cm: any) => cm.shopifyProductType)?.shopifyProductType || null;
         const productInput2 = mapCsvRowToProductSet(
@@ -1781,7 +1788,7 @@ async function processProduct({
   const categoryMap = config.categoryMaps?.filter(
     (cm: any) => cm.csvCategory === category && cm.isActive
   ) || [];
-  const collectionIds = categoryMap.map((cm: any) => cm.collectionId);
+  const collectionIds = categoryMap.map((cm: any) => cm.collectionId).filter((id: string) => !autoCollectionIds.has(id));
   const categoryTags = categoryMap.map((cm: any) => cm.tags).filter(Boolean).join(",");
   const shopifyProductType = categoryMap.find((cm: any) => cm.shopifyProductType)?.shopifyProductType || null;
 
@@ -1977,7 +1984,7 @@ async function processProduct({
     const categoryMap2 = config.categoryMaps?.filter(
       (cm: any) => cm.csvCategory === category && cm.isActive
     ) || [];
-    const collectionIds2 = categoryMap2.map((cm: any) => cm.collectionId);
+    const collectionIds2 = categoryMap2.map((cm: any) => cm.collectionId).filter((id: string) => !autoCollectionIds.has(id));
     const categoryTags2 = categoryMap2.map((cm: any) => cm.tags).filter(Boolean).join(",");
     const shopifyProductType2 = categoryMap2.find((cm: any) => cm.shopifyProductType)?.shopifyProductType || null;
     const productInput2 = mapCsvRowToProductSet(
@@ -2364,9 +2371,15 @@ async function processProduct({
             : null;
         } while (cursor);
 
-        const desiredIds = productInput.collections.filter((c: any) => typeof c === "string" && c.startsWith("gid://"));
-        const toRemove = currentCollections.filter((id: string) => !desiredIds.includes(id));
-        const toAdd = desiredIds.filter((id: string) => !currentCollections.includes(id));
+        // Excluir colecciones automáticas (ruleSet): sus membresías las
+        // gobiernan las reglas de Shopify — remove sobre smart es no-op
+        // y add nunca entra. Solo se gestionan manuales.
+        const desiredIds = productInput.collections.filter(
+          (c: any) => typeof c === "string" && c.startsWith("gid://") && !autoCollectionIds.has(c)
+        );
+        const currentManual = currentCollections.filter((id: string) => !autoCollectionIds.has(id));
+        const toRemove = currentManual.filter((id: string) => !desiredIds.includes(id));
+        const toAdd = desiredIds.filter((id: string) => !currentManual.includes(id));
 
         for (const colId of toRemove) {
           await graphqlWithRetry(admin,
@@ -2647,7 +2660,9 @@ async function processProduct({
       seo: productInput.seo,
       status: config.productStatus,
       ...(productInput.files?.length ? { files: productInput.files } : {}),
-      ...(productInput.collections?.length ? { collections: productInput.collections } : {}),
+      ...(productInput.collections?.length
+        ? { collections: productInput.collections.filter((c: any) => typeof c === "string" && !autoCollectionIds.has(c)) }
+        : {}),
       productOptions: [
         {
           name: "Title",

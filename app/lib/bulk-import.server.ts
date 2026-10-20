@@ -9,6 +9,7 @@ import { streamFile, isExcluded, parseExcludeFieldRules, getExcludedFields, mapp
 import { getActivePriceRules, calculatePriceSync } from "./price-rules.server";
 import { checkDuplicate, logDuplicate, logExternalDuplicate } from "./duplicate-detection.server";
 import { rateLimitedGraphql } from "./import-locks.server";
+import { getAutomaticCollectionIds } from "./collections.server";
 import {
   mapCsvRowToBulkCreateInput,
   mapCsvRowToBulkUpdateInput,
@@ -1205,6 +1206,10 @@ async function prepareAndLaunch(
   }
   const workDir = job.workDir;
   const updateOpts = parseUpdateOptions(config.updateOptions);
+  // Colecciones automáticas (ruleSet != null): se excluyen del mapeo —
+  // add/remove sobre smart = no-ops y productSet.collections las contamina
+  // con productos ajenos a sus reglas (verificado 2026-07).
+  const autoCollectionIds = await getAutomaticCollectionIds(admin, job.shopDomain);
   const createFiles: string[] = [];
   const updateFiles: string[] = [];
 
@@ -1506,7 +1511,9 @@ async function prepareAndLaunch(
 
     const matchingCategoryMaps = (config.categoryMaps || [])
       .filter((cm: any) => cm.csvCategory === category && cm.isActive);
-    const collectionIds = matchingCategoryMaps.map((cm: any) => cm.collectionId);
+    const collectionIds = matchingCategoryMaps
+      .map((cm: any) => cm.collectionId)
+      .filter((id: string) => !autoCollectionIds.has(id));
     const categoryTags = matchingCategoryMaps.map((cm: any) => cm.tags).filter(Boolean).join(",");
     const shopifyProductType = matchingCategoryMaps.find((cm: any) => cm.shopifyProductType)?.shopifyProductType || null;
 
@@ -2371,7 +2378,7 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
           if (rm.regularPrice > 0) input.price = String(rm.regularPrice);
           if (rm.compareAtPrice && rm.compareAtPrice > 0) input.compareAtPrice = String(rm.compareAtPrice);
           if (rm.ean) input.barcode = rm.ean;
-          if (rm.collectionIds?.length) input.collectionIds = rm.collectionIds;
+          if (rm.collectionIds?.length) input.collections = rm.collectionIds;
 
           const res = await withRetry(
             () => gql(admin, PRODUCT_SET_MUTATION, { variables: { identifier, input } }, job.shopDomain),
