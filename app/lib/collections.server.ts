@@ -22,6 +22,7 @@
 
 const AUTO_COLLECTIONS_TTL_MS = 10 * 60 * 1000; // 10 min
 const autoIdsCache = new Map<string, { ids: Set<string>; at: number }>();
+const sourceIdCache = new Map<string, { id: string | null; at: number }>();
 
 /**
  * Colecciones MANUALES de la tienda (para el picker de mapeo de categorías).
@@ -129,5 +130,50 @@ export async function getAutomaticCollectionIds(admin: any, shopDomain: string):
     // fallo — el siguiente producto reintenta.
     console.error(`[Collections] Error obteniendo colecciones automáticas de ${shopDomain}:`, e?.message || e);
     return new Set<string>();
+  }
+}
+
+/**
+ * ID de la fuente conditions de una colección (CollectionConditionsSource),
+ * necesaria para `collectionUpdate` con
+ * `sourcesToUpdate[].condition.inclusion.selectionsToAdd / selectionsToRemove`
+ * = sustituto OFICIAL de las mutaciones DEPRECATED collectionAddProducts /
+ * collectionRemoveProducts (docs 2026-07; test 2026-10-20 sobre colección
+ * manual: apply inmediato + idempotente,0 userErrors).
+ *
+ * Caché 10 min por tienda+colección. Devuelve null si la colección no tiene
+ * fuente conditions (el llamante OMITE la operación y lo loguea) o si hay
+ * error transitorio (fail-open sin cachear el fallo).
+ */
+export async function getCollectionConditionsSourceId(
+  admin: any,
+  collectionId: string,
+  shopDomain: string
+): Promise<string | null> {
+  const key = `${shopDomain}|${collectionId}`;
+  const hit = sourceIdCache.get(key);
+  if (hit && Date.now() - hit.at < AUTO_COLLECTIONS_TTL_MS) return hit.id;
+
+  try {
+    const query = `#graphql
+      query($id: ID!) {
+        collection(id: $id) {
+          sources {
+            __typename
+            id
+          }
+        }
+      }`;
+    const response: any = await admin.graphql(query, { variables: { id: collectionId } });
+    const json = await response.json();
+    if (json.errors?.length) throw new Error(JSON.stringify(json.errors));
+    const sources: any[] = json.data?.collection?.sources || [];
+    const cond = sources.find((s) => s.__typename === "CollectionConditionsSource");
+    const id: string | null = cond?.id || null;
+    sourceIdCache.set(key, { id, at: Date.now() });
+    return id;
+  } catch (e: any) {
+    console.error(`[Collections] Error leyendo sources de ${collectionId} (${shopDomain}):`, e?.message || e);
+    return null;
   }
 }

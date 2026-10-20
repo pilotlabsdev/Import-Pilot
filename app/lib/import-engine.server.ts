@@ -7,7 +7,7 @@ import { mapCsvRowToProductSet, parseUpdateOptions, parseTagOwnership, computeTa
 import { getLocationId } from "./location.server";
 import { checkDuplicate, logExternalDuplicate } from "./duplicate-detection.server";
 import { rateLimitedGraphql } from "./import-locks.server";
-import { getAutomaticCollectionIds } from "./collections.server";
+import { getAutomaticCollectionIds, getCollectionConditionsSourceId } from "./collections.server";
 import { ensureMetafieldDefinitions } from "./metafield-definitions";
 import shopify from "~/shopify.server";
 
@@ -2381,30 +2381,53 @@ async function processProduct({
         const toRemove = currentManual.filter((id: string) => !desiredIds.includes(id));
         const toAdd = desiredIds.filter((id: string) => !currentManual.includes(id));
 
+        // Sustituto OFICIAL de las mutaciones DEPRECATED
+        // collectionRemoveProducts / collectionAddProducts (docs 2026-07):
+        // collectionUpdate con sourcesToUpdate[].condition.inclusion
+        // .selectionsToRemove / .selectionsToAdd. Test 2026-10-20 PASS sobre
+        // colección manual: apply inmediato (0s) e idempotente (repetir
+        // add/remove = 0 userErrors; el mutador antiguo lanzaba error al
+        // repetir add sobre un producto ya presente).
         for (const colId of toRemove) {
-          await graphqlWithRetry(admin,
+          const sourceId = await getCollectionConditionsSourceId(admin, colId, shopDomain);
+          if (!sourceId) {
+            console.warn(`[Import] SKU ${sku}: colección ${colId} sin CollectionConditionsSource — remove omitido`);
+            continue;
+          }
+          const rmRes = await graphqlWithRetry(admin,
             `#graphql
-            mutation collectionRemove($id: ID!, $productIds: [ID!]!) {
-              collectionRemoveProducts(id: $id, productIds: $productIds) {
+            mutation collectionUpdateRemove($collection: CollectionUpdateInput!) {
+              collectionUpdate(collection: $collection) {
+                collection { id }
                 userErrors { field message }
               }
             }`,
-            { id: colId, productIds: [existing.shopifyProductId] }
+            { collection: { id: colId, sourcesToUpdate: [{ condition: { id: sourceId, inclusion: { selectionsToRemove: [{ productId: existing.shopifyProductId }] } } }] } }
           );
+          const rmErrors = rmRes?.data?.collectionUpdate?.userErrors || [];
+          if (rmErrors.length > 0 || rmRes?.errors?.length > 0) {
+            console.error(`[Import] SKU ${sku}: collectionUpdate(remove) errors for ${colId}:`, JSON.stringify(rmErrors.length ? rmErrors : rmRes.errors));
+          }
         }
         for (const colId of toAdd) {
+          const sourceId = await getCollectionConditionsSourceId(admin, colId, shopDomain);
+          if (!sourceId) {
+            console.warn(`[Import] SKU ${sku}: colección ${colId} sin CollectionConditionsSource — add omitido`);
+            continue;
+          }
           const addRes = await graphqlWithRetry(admin,
             `#graphql
-            mutation collectionAdd($id: ID!, $productIds: [ID!]!) {
-              collectionAddProducts(id: $id, productIds: $productIds) {
+            mutation collectionUpdateAdd($collection: CollectionUpdateInput!) {
+              collectionUpdate(collection: $collection) {
+                collection { id }
                 userErrors { field message }
               }
             }`,
-            { id: colId, productIds: [existing.shopifyProductId] }
+            { collection: { id: colId, sourcesToUpdate: [{ condition: { id: sourceId, inclusion: { selectionsToAdd: [{ productId: existing.shopifyProductId }] } } }] } }
           );
-          const addErrors = addRes.data?.collectionAddProducts?.userErrors || [];
-          if (addErrors.length > 0) {
-            console.error(`[Import] SKU ${sku}: collectionAdd errors for ${colId}:`, JSON.stringify(addErrors));
+          const addErrors = addRes?.data?.collectionUpdate?.userErrors || [];
+          if (addErrors.length > 0 || addRes?.errors?.length > 0) {
+            console.error(`[Import] SKU ${sku}: collectionUpdate(add) errors for ${colId}:`, JSON.stringify(addErrors.length ? addErrors : addRes.errors));
           }
         }
       } catch (error: any) {
