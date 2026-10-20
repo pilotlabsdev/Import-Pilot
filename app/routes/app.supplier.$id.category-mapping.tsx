@@ -108,44 +108,13 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     return data({ success: true, savedCategory: csvCategoriesForm.join(", ") });
   }
 
-  if (intent === "delete") {
-    const id = formData.get("mappingId") as string;
-    if (id === "group") {
-      // Delete all mappings whose group matches any of the categories in the group
-      // We find the group by looking up any existing mapping and using the same group key
-      const categoryParam = formData.get("categories") as string;
-      if (categoryParam) {
-        const cats = categoryParam.split(",").map((c) => c.trim());
-        const existingMappings = await prisma.categoryCollectionMapping.findMany({
-          where: { configId: config.id, csvCategory: { in: cats } },
-        });
-        if (existingMappings.length > 0) {
-          const first = existingMappings[0];
-          const groupKey = [first.collectionId, first.shopifyProductType || "", first.tags || ""].join("::");
-          const allMappings = await prisma.categoryCollectionMapping.findMany({ where: { configId: config.id } });
-          const toDelete = allMappings.filter((m) => {
-            const key = [m.collectionId, m.shopifyProductType || "", m.tags || ""].join("::");
-            return key === groupKey;
-          });
-          await prisma.categoryCollectionMapping.deleteMany({
-            where: { id: { in: toDelete.map((m) => m.id) } },
-          });
-        }
-      }
-    } else {
+  if (intent === "deleteCategory") {
+    const csvCategory = formData.get("csvCategory") as string;
+    if (csvCategory) {
+      // Borra TODAS las filas de la categoría (1 entrada = 1 categoría)
       // deleteMany: idempotente (doble clic / ya borrado → sin P2025 → sin 500)
-      await prisma.categoryCollectionMapping.deleteMany({ where: { id } });
-    }
-    return data({ success: true });
-  }
-
-  if (intent === "toggle") {
-    const id = formData.get("mappingId") as string;
-    const current = await prisma.categoryCollectionMapping.findUnique({ where: { id } });
-    if (current) {
-      await prisma.categoryCollectionMapping.update({
-        where: { id },
-        data: { isActive: !current.isActive },
+      await prisma.categoryCollectionMapping.deleteMany({
+        where: { configId: config.id, csvCategory },
       });
     }
     return data({ success: true });
@@ -162,25 +131,46 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     return data({ success: true });
   }
 
-  if (intent === "update") {
-    const mappingId = formData.get("mappingId") as string;
-    const collectionId = formData.get("collectionId") as string;
-    const collectionName = formData.get("collectionName") as string;
-    const tags = (formData.get("tags") as string) || null;
+  if (intent === "updateCategory") {
+    // Edición = estado COMPLETO de la categoría: se sustituyen todas sus
+    // filas en transacción (así no quedan tags/colecciones divergentes).
+    const csvCategory = (formData.get("csvCategory") as string)?.trim();
+    const collectionIds = formData.getAll("collectionIds") as string[];
+    const collectionNames = formData.getAll("collectionNames") as string[];
+    const categoryTags = ((formData.get("categoryTags") as string) || "").trim();
+    const shopifyProductType = (formData.get("shopifyProductType") as string) || null;
 
-    if (!collectionId) {
-      return data({ error: "Selecciona una colección" });
-    }
-
-    // updateMany: nunca lanza P2025 si la mapping fue borrada en otra pestaña
-    const updated = await prisma.categoryCollectionMapping.updateMany({
-      where: { id: mappingId },
-      data: { collectionId, collectionName, tags },
-    });
-    if (updated.count === 0) {
+    if (!csvCategory) {
       return data({ error: "systemError.record_not_found" });
     }
-    return data({ success: true });
+    if (collectionIds.length === 0) {
+      return data({ error: "Selecciona al menos una colección" });
+    }
+
+    const existing = await prisma.categoryCollectionMapping.findMany({
+      where: { configId: config.id, csvCategory },
+      select: { isActive: true },
+    });
+    // Preservar el estado activo de la categoría al editar
+    const keepActive = existing.length > 0 ? existing.every((m) => m.isActive) : true;
+
+    await prisma.$transaction(async (tx) => {
+      await tx.categoryCollectionMapping.deleteMany({ where: { configId: config.id, csvCategory } });
+      await tx.categoryCollectionMapping.createMany({
+        data: collectionIds.map((cId, i) => ({
+          configId: config.id,
+          shopDomain,
+          csvCategory,
+          collectionId: cId,
+          collectionName: collectionNames[i] || "",
+          shopifyProductType,
+          tags: categoryTags || null,
+          isActive: keepActive,
+        })),
+      });
+    });
+
+    return data({ success: true, savedCategory: csvCategory });
   }
 
   return data({ error: "Acción desconocida" });
@@ -229,8 +219,8 @@ export default function CategoryMapping() {
   const [categoryTags, setCategoryTags] = useState("");
   const [selectedProductType, setSelectedProductType] = useState("");
   const [editingCategory, setEditingCategory] = useState<string | null>(null);
-  const [previewMapping, setPreviewMapping] = useState<any>(null);
-  const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; category: string } | null>(null);
+  const [previewMapping, setPreviewMapping] = useState<{ csvCategory: string; rows: any[] } | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ csvCategory: string } | null>(null);
 
   useEffect(() => {
     const loadCategories = async () => {
@@ -271,12 +261,18 @@ export default function CategoryMapping() {
     c.toLowerCase().includes(catSearch.toLowerCase())
   );
 
-  const groupedMappings = mappings.reduce<Record<string, typeof mappings>>((acc, m) => {
-    const key = `${m.collectionId}|${m.shopifyProductType || ""}|${m.tags || ""}`;
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(m);
+  // 1 entrada = 1 categoría CSV con todas sus colecciones dentro
+  // (patrón de apps profesionales; internamente sigue habiendo una fila por
+  // par categoría×colección, que los motores unifican al importar)
+  const categoryGroups = mappings.reduce<Record<string, typeof mappings>>((acc, m) => {
+    if (!acc[m.csvCategory]) acc[m.csvCategory] = [];
+    acc[m.csvCategory].push(m);
     return acc;
   }, {} as Record<string, typeof mappings>);
+
+  // Tags/colecciones unificados de la categoría (para tarjeta, preview y edición)
+  const groupTags = (rows: typeof mappings) =>
+    Array.from(new Set(rows.map((m) => m.tags).filter(Boolean))).join(", ");
 
   const allCollectionIds = Object.keys(selectedCollections);
 
@@ -481,50 +477,54 @@ export default function CategoryMapping() {
         <Card>
           <BlockStack gap="200">
             <Text as="h2" variant="headingMd">
-              {t("categories.existingMappings", { count: Object.keys(groupedMappings).length })}
+              {t("categories.existingMappings", { count: Object.keys(categoryGroups).length })}
             </Text>
             {mappings.length === 0 ? (
               <Text as="p" tone="subdued">
                 {t("categories.noMappings")}
               </Text>
             ) : (
-              Object.entries(groupedMappings).map(([groupKey, catMappings]) => {
-                const allActive = catMappings.every((m) => m.isActive);
+              Object.entries(categoryGroups).map(([csvCategory, catRows]) => {
+                const allActive = catRows.every((m) => m.isActive);
+                const rowType = catRows.find((m) => m.shopifyProductType)?.shopifyProductType;
+                const rowTags = groupTags(catRows);
                 return (
-                <BlockStack key={groupKey} gap="200">
+                <BlockStack key={csvCategory} gap="200">
                   <Divider />
-                  <InlineStack gap="300" blockAlign="center">
+                  <InlineStack gap="200" blockAlign="center" wrap>
                     <Text as="h3" variant="headingSm">
-                      {catMappings.map((m) => m.csvCategory).join(", ")}
+                      {csvCategory}
                     </Text>
-                    <Badge tone="success">{`→ ${catMappings[0]?.collectionName || catMappings[0]?.collectionId}`}</Badge>
-                    {catMappings[0]?.shopifyProductType ? (
-                      <Badge tone="info">{t("categories.typeLabel", { type: catMappings[0].shopifyProductType })}</Badge>
+                    {catRows.map((m) => (
+                      <Badge key={m.id} tone="success">{`→ ${m.collectionName || m.collectionId}`}</Badge>
+                    ))}
+                    {rowType ? (
+                      <Badge tone="info">{t("categories.typeLabel", { type: rowType })}</Badge>
+                    ) : null}
+                    {rowTags ? (
+                      <Badge tone="attention">{rowTags}</Badge>
                     ) : null}
                   </InlineStack>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
-                    {catMappings[0]?.tags ? (
-                      <Badge tone="attention">{catMappings[0].tags}</Badge>
-                    ) : null}
-                    <Button size="slim" icon={ViewIcon} onClick={() => setPreviewMapping({ ...catMappings[0], _groupCategories: catMappings.map((m) => m.csvCategory).join(" | ") })}>
+                  <InlineStack gap="200" blockAlign="center">
+                    <Button size="slim" icon={ViewIcon} onClick={() => setPreviewMapping({ csvCategory, rows: catRows })}>
                       {t("common.view")}
                     </Button>
-                    <Button size="slim" onClick={() => setEditingCategory(catMappings[0].csvCategory)}>
+                    <Button size="slim" onClick={() => setEditingCategory(csvCategory)}>
                       {t("common.edit")}
                     </Button>
                     <Form method="post" style={{ display: "inline" }}>
                       <input type="hidden" name="intent" value="toggleGroup" />
-                      {catMappings.map((m) => (
+                      {catRows.map((m) => (
                         <input key={m.id} type="hidden" name="mappingIds" value={m.id} />
                       ))}
                       <Button submit size="slim" variant={allActive ? "primary" : "secondary"}>
                         {allActive ? t("categories.active") : t("categories.inactive")}
                       </Button>
                     </Form>
-                    <Button size="slim" variant="primary" tone="critical" onClick={() => setDeleteConfirm({ id: "group", category: catMappings.map((m) => m.csvCategory).join(", ") })}>
+                    <Button size="slim" variant="primary" tone="critical" onClick={() => setDeleteConfirm({ csvCategory })}>
                       ×
                     </Button>
-                  </div>
+                  </InlineStack>
                 </BlockStack>
                 );
               })
@@ -536,10 +536,9 @@ export default function CategoryMapping() {
       {editingCategory && (
         <EditCategoryModal
           csvCategory={editingCategory}
-          catMappings={Object.values(groupedMappings).find(group => group.some(m => m.csvCategory === editingCategory)) || []}
+          catMappings={categoryGroups[editingCategory] || []}
           shopifyCollections={shopifyCollections}
           shopifyProductTypes={shopifyProductTypes}
-          shopDomain={shopDomain}
           onClose={() => setEditingCategory(null)}
         />
       )}
@@ -554,28 +553,30 @@ export default function CategoryMapping() {
             <BlockStack gap="300">
               <InlineStack gap="200" blockAlign="center">
                 <Text as="p" variant="bodyMd" fontWeight="semibold">{t("categories.fileCategory")}:</Text>
-                <Badge>{previewMapping._groupCategories || previewMapping.csvCategory}</Badge>
+                <Badge>{previewMapping.csvCategory}</Badge>
               </InlineStack>
-              <InlineStack gap="200" blockAlign="center">
+              <InlineStack gap="200" blockAlign="center" wrap>
                 <Text as="p" variant="bodyMd" fontWeight="semibold">{t("categories.shopifyCollection")}:</Text>
-                <Badge tone="success">{previewMapping.collectionName || previewMapping.collectionId}</Badge>
+                {previewMapping.rows.map((r: any) => (
+                  <Badge key={r.id} tone="success">{r.collectionName || r.collectionId}</Badge>
+                ))}
               </InlineStack>
-              {previewMapping.shopifyProductType && (
+              {previewMapping.rows.find((r: any) => r.shopifyProductType) && (
                 <InlineStack gap="200" blockAlign="center">
                   <Text as="p" variant="bodyMd" fontWeight="semibold">{t("categories.shopifyType")}:</Text>
-                  <Badge tone="info">{previewMapping.shopifyProductType}</Badge>
+                  <Badge tone="info">{previewMapping.rows.find((r: any) => r.shopifyProductType)?.shopifyProductType}</Badge>
                 </InlineStack>
               )}
-              {previewMapping.tags && (
+              {groupTags(previewMapping.rows) && (
                 <InlineStack gap="200" blockAlign="center">
                   <Text as="p" variant="bodyMd" fontWeight="semibold">Tags:</Text>
-                  <Badge tone="attention">{previewMapping.tags}</Badge>
+                  <Badge tone="attention">{groupTags(previewMapping.rows)}</Badge>
                 </InlineStack>
               )}
               <InlineStack gap="200" blockAlign="center">
                 <Text as="p" variant="bodyMd" fontWeight="semibold">{t("common.status")}:</Text>
-                <Badge tone={previewMapping.isActive ? "success" : "critical"}>
-                  {previewMapping.isActive ? t("categories.active") : t("categories.inactive")}
+                <Badge tone={previewMapping.rows.every((r: any) => r.isActive) ? "success" : "critical"}>
+                  {previewMapping.rows.every((r: any) => r.isActive) ? t("categories.active") : t("categories.inactive")}
                 </Badge>
               </InlineStack>
             </BlockStack>
@@ -590,11 +591,7 @@ export default function CategoryMapping() {
           primaryAction={{
             content: t("common.delete"),
             onAction: () => {
-              const submitData: Record<string, string> = { intent: "delete", mappingId: deleteConfirm.id };
-              if (deleteConfirm.id === "group") {
-                submitData.categories = deleteConfirm.category;
-              }
-              fetcher.submit(submitData, { method: "post" });
+              fetcher.submit({ intent: "deleteCategory", csvCategory: deleteConfirm.csvCategory }, { method: "post" });
               setDeleteConfirm(null);
             },
             destructive: true,
@@ -603,7 +600,7 @@ export default function CategoryMapping() {
         >
           <Modal.Section>
             <Text as="p">
-              {t("categories.deleteConfirm", { category: deleteConfirm.category })}
+              {t("categories.deleteConfirm", { category: deleteConfirm.csvCategory })}
             </Text>
           </Modal.Section>
         </Modal>
@@ -617,24 +614,26 @@ function EditCategoryModal({
   catMappings,
   shopifyCollections,
   shopifyProductTypes,
-  shopDomain,
   onClose,
 }: {
   csvCategory: string;
   catMappings: any[];
   shopifyCollections: Array<{ id: string; title: string }>;
   shopifyProductTypes: string[];
-  shopDomain: string;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
-  const allCategories = catMappings.map((m) => m.csvCategory);
-  const categoryLabel = allCategories.join(" | ");
   const [selectedCols, setSelectedCols] = useState<Record<string, string>>(
     Object.fromEntries(catMappings.map((m) => [m.collectionId, m.collectionName || m.collectionId]))
   );
-  const [tags, setTags] = useState(catMappings[0]?.tags || "");
-  const [productType, setProductType] = useState(catMappings[0]?.shopifyProductType || "");
+  // Tags/tipo unificados de las filas de la categoría (hoy ya no divergen:
+  // al guardar se aplican a todas)
+  const [tags, setTags] = useState(
+    Array.from(new Set(catMappings.map((m) => m.tags).filter(Boolean))).join(", ")
+  );
+  const [productType, setProductType] = useState(
+    catMappings.find((m) => m.shopifyProductType)?.shopifyProductType || ""
+  );
 
   const toggleCol = (id: string, title: string) => {
     setSelectedCols((prev) => {
@@ -654,9 +653,10 @@ function EditCategoryModal({
     <Modal
       open
       onClose={onClose}
-      title={`${t("common.edit")}: ${categoryLabel}`}
+      title={`${t("common.edit")}: ${csvCategory}`}
       primaryAction={{
         content: t("common.save"),
+        disabled: colIds.length === 0,
         onAction: () => {
           const form = document.getElementById(`edit-cat-form-${csvCategory}`) as HTMLFormElement;
           if (form) form.requestSubmit();
@@ -666,23 +666,19 @@ function EditCategoryModal({
     >
       <Modal.Section>
         <Form id={`edit-cat-form-${csvCategory}`} method="post">
-          <input type="hidden" name="intent" value="save" />
-          {allCategories.map((cat) => (
-            <input key={`c-${cat}`} type="hidden" name="csvCategories" value={cat} />
-          ))}
+          <input type="hidden" name="intent" value="updateCategory" />
+          <input type="hidden" name="csvCategory" value={csvCategory} />
           {colIds.map((cId) => (
             <input key={`h-${cId}`} type="hidden" name="collectionIds" value={cId} />
           ))}
           {colIds.map((cId) => (
             <input key={`n-${cId}`} type="hidden" name="collectionNames" value={selectedCols[cId]} />
           ))}
-          {colIds.map(() => (
-            <input key={`t-${csvCategory}`} type="hidden" name="categoryTags" value={tags} />
-          ))}
+          <input type="hidden" name="categoryTags" value={tags} />
           <input type="hidden" name="shopifyProductType" value={productType} />
           <FormLayout>
             <Text as="p" variant="bodyMd">
-              {t("categories.categoryLabel", { category: categoryLabel })}
+              {t("categories.categoryLabel", { category: csvCategory })}
             </Text>
 
             <BlockStack gap="200">
