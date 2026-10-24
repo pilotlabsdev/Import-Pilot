@@ -192,6 +192,8 @@
   "config.fieldCollections": "Collections",
   "config.defaultTags": "Default tags",
   "config.defaultTagsHelp": "Comma-separated tags added to all products. e.g., Imported, Sale, New",
+  "config.brandTag": "Add brand as tag",
+  "config.brandTagHelp": "Adds the 'brand' column value as a product tag. On updates it only applies if 'Tags' is enabled.",
   "config.salesChannels": "Sales channels",
   "config.salesChannelsHelp": "Select the channels where products will be published when created (CREATE only, not UPDATE).",
   "config.noChannels": "No channels detected.",

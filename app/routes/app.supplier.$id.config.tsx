@@ -199,6 +199,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     importMode: formData.get("importMode") as string,
     updateOptions: (formData.get("updateOptionsJson") as string) || "[]",
     defaultTags: (formData.get("defaultTags") as string) || null,
+    brandTagEnabled: formData.get("brandTagEnabled") === "true",
     skipZeroStockCreate: formData.get("skipZeroStockCreate") === "true",
     chunkSize: Math.min(Math.max(parseInt((formData.get("chunkSize") as string) || "50"), 1), 250),
     maxRetries: Math.min(Math.max(parseInt((formData.get("maxRetries") as string) || "3"), 0), 10),
@@ -254,6 +255,7 @@ export default function Config() {
   );
   const [skipZeroStock, setSkipZeroStock] = useState(config.skipZeroStockCreate ?? false);
   const [defaultTags, setDefaultTags] = useState(config.defaultTags || "");
+  const [brandTag, setBrandTag] = useState(config.brandTagEnabled ?? false);
   const [excludeTitleWords, setExcludeTitleWords] = useState(config.excludeTitleWords || "");
   const [excludeSkus, setExcludeSkus] = useState(config.excludeSkus || "");
   const [excludeEans, setExcludeEans] = useState(config.excludeEans || "");
@@ -302,6 +304,7 @@ export default function Config() {
     setUpdateOptions(parseUpdateOptions(cfg.updateOptions));
     setSkipZeroStock(cfg.skipZeroStockCreate ?? false);
     setDefaultTags(cfg.defaultTags || "");
+    setBrandTag(cfg.brandTagEnabled ?? false);
     setSelectedPublications(parseIds(cfg.publicationIds));
     setExcludeTitleWords(cfg.excludeTitleWords || "");
     setExcludeSkus(cfg.excludeSkus || "");
@@ -804,6 +807,13 @@ export default function Config() {
                 autoComplete="off"
                 helpText={t("config.defaultTagsHelp")}
               />
+              <Checkbox
+                label={t("config.brandTag")}
+                checked={brandTag}
+                onChange={(v) => { setBrandTag(v); markDirty(); }}
+                helpText={t("config.brandTagHelp")}
+              />
+              <input type="hidden" name="brandTagEnabled" value={brandTag ? "true" : "false"} />
               </div>
 
               <div data-tutorial="channels">

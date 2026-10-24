@@ -55,6 +55,7 @@ model ImportConfig {
   locationId      String?
   locationName    String?
   defaultTags     String?
+  brandTagEnabled Boolean @default(false) // Añadir columna "brand" del CSV como tag (nunca toca vendor)
   skipZeroStockCreate Boolean @default(false)
   publicationIds   String?
   marketIds        String?

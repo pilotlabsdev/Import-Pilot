@@ -192,6 +192,8 @@
   "config.fieldCollections": "Collections",
   "config.defaultTags": "Tags par défaut",
   "config.defaultTagsHelp": "Étiquettes séparées par une virgule ajoutées à tous les produits. Ex : Importé, Promo, Nouveau",
+  "config.brandTag": "Ajouter la marque comme tag",
+  "config.brandTagHelp": "Ajoute la valeur de la colonne 'brand' comme tag du produit. Lors des mises à jour, s'applique uniquement si « Tags » est activé.",
   "config.salesChannels": "Canaux de vente",
   "config.salesChannelsHelp": "Sélectionnez les canaux sur lesquels les produits seront publiés lors de leur création (CREATE uniquement, pas UPDATE).",
   "config.noChannels": "Aucun canal détecté.",

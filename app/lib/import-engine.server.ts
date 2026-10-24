@@ -1233,7 +1233,8 @@ async function processProduct({
       const productInput2 = mapCsvRowToProductSet(
         row, columnMaps, prices2, collectionIds2, locationId,
         config.defaultTags || undefined,
-        categoryTags2 || undefined
+        categoryTags2 || undefined,
+        config.brandTagEnabled
       );
       if (shopifyProductType2) productInput2.productType = shopifyProductType2;
 
@@ -1475,7 +1476,8 @@ async function processProduct({
         const productInput2 = mapCsvRowToProductSet(
           row, columnMaps, prices2, collectionIds2, locationId,
           config.defaultTags || undefined,
-          categoryTags2 || undefined
+          categoryTags2 || undefined,
+          config.brandTagEnabled
         );
         if (shopifyProductType2) productInput2.productType = shopifyProductType2;
 
@@ -1795,7 +1797,8 @@ async function processProduct({
   const productInput = mapCsvRowToProductSet(
     row, columnMaps, prices, collectionIds, locationId,
     config.defaultTags || undefined,
-    categoryTags || undefined
+    categoryTags || undefined,
+    config.brandTagEnabled
   );
 
   if (shopifyProductType) productInput.productType = shopifyProductType;
@@ -1990,7 +1993,8 @@ async function processProduct({
     const productInput2 = mapCsvRowToProductSet(
       row, columnMaps, prices2, collectionIds2, locationId,
       config.defaultTags || undefined,
-      categoryTags2 || undefined
+      categoryTags2 || undefined,
+      config.brandTagEnabled
     );
     if (shopifyProductType2) productInput2.productType = shopifyProductType2;
 

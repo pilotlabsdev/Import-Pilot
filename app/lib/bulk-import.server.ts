@@ -1523,7 +1523,7 @@ async function prepareAndLaunch(
     const csvDescription = getField(row, columnMaps, "description") || "";
     const csvVendor = getField(row, columnMaps, "brand") || "";
     const csvProductType = shopifyProductType || getField(row, columnMaps, "category") || "";
-    const csvTagsRaw = [config.defaultTags, categoryTags, getField(row, columnMaps, "tags") || ""].filter(Boolean);
+    const csvTagsRaw = [config.defaultTags, categoryTags, getField(row, columnMaps, "tags") || "", ...(config.brandTagEnabled ? [csvVendor] : [])].filter(Boolean);
     const csvTags = csvTagsRaw.flatMap((t: string) => t.split(",").map((s: string) => s.trim()).filter(Boolean)).sort();
 
     const meta: MetaLine = {
@@ -1682,6 +1682,7 @@ async function prepareAndLaunch(
         effectiveOpts,
         config.defaultTags || undefined,
         categoryTags || undefined,
+        config.brandTagEnabled,
         shopifyProductType
       );
       // Opción 2: enviar SOLO el target calculado; sin cambios (o sin live /
@@ -1706,6 +1707,7 @@ async function prepareAndLaunch(
         locationId!,
         config.defaultTags || undefined,
         categoryTags || undefined,
+        config.brandTagEnabled,
         shopifyProductType,
         config.productStatus || undefined
       );

@@ -364,6 +364,7 @@ export function mapCsvRowToProductSet(
   locationId: string,
   defaultTags?: string,
   categoryTags?: string,
+  brandAsTag?: boolean,
   shopifyProductType?: string | null,
   productStatus?: string
 ): ProductSetInput {
@@ -396,6 +397,12 @@ export function mapCsvRowToProductSet(
     for (const t of categoryTags.split(",")) {
       const trimmed = t.trim();
       if (trimmed && !tags.includes(trimmed)) tags.push(trimmed);
+    }
+  }
+  if (brandAsTag && brand) {
+    for (const t of brand.split(",")) {
+      const trimmed = t.trim();
+      if (trimmed && !tags.some((x) => x.toLowerCase() === trimmed.toLowerCase())) tags.push(trimmed);
     }
   }
 
@@ -471,6 +478,7 @@ export function mapCsvRowToProductSetUpdate(
   updateOptions?: Set<UpdateOption>,
   defaultTags?: string,
   categoryTags?: string,
+  brandAsTag?: boolean,
   shopifyProductType?: string | null
 ): ProductSetInput {
   const opts = updateOptions ?? new Set<UpdateOption>(UPDATE_OPTIONS);
@@ -500,6 +508,12 @@ export function mapCsvRowToProductSetUpdate(
     for (const t of categoryTags.split(",")) {
       const trimmed = t.trim();
       if (trimmed && !tags.includes(trimmed)) tags.push(trimmed);
+    }
+  }
+  if (brandAsTag && brand) {
+    for (const t of brand.split(",")) {
+      const trimmed = t.trim();
+      if (trimmed && !tags.some((x) => x.toLowerCase() === trimmed.toLowerCase())) tags.push(trimmed);
     }
   }
 

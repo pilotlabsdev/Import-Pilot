@@ -192,6 +192,8 @@
   "config.fieldCollections": "Kollektionen",
   "config.defaultTags": "Standard-Tags",
   "config.defaultTagsHelp": "Kommagetrennte Tags, die zu allen Produkten hinzugefügt werden. z.B. Importiert, Angebot, Neu",
+  "config.brandTag": "Marke als Tag hinzufügen",
+  "config.brandTagHelp": "Fügt den Wert der Spalte 'brand' als Produkt-Tag hinzu. Bei Aktualisierungen nur, wenn 'Tags' aktiviert ist.",
   "config.salesChannels": "Verkaufskanäle",
   "config.salesChannelsHelp": "Wählen Sie die Kanäle, in denen neue Produkte veröffentlicht werden (nur ERSTELLEN, nicht AKTUALISIEREN).",
   "config.noChannels": "Keine Kanäle erkannt.",
