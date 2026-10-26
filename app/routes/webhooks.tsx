@@ -6,18 +6,14 @@ import { handleBulkOperationFinish } from "~/lib/bulk-import.server";
 import { queryProductMedia, type StoredImage } from "~/lib/import-engine.server";
 import { isBulkActive } from "~/lib/bulk-active-cache.server";
 import { enforcePlanLimits, upsertSubscription } from "~/lib/billing.server";
-import crypto from "node:crypto";
+import { webhookHmacValid } from "~/lib/dual-secret.server";
 
 const COMPLIANCE_TOPICS = new Set(["customers/data_request", "customers/redact", "shop/redact"]);
 
 function verifyHmac(body: string, hmacHeader: string): boolean {
-  const secret = process.env.SHOPIFY_API_SECRET || "";
-  const calculated = crypto.createHmac("sha256", secret).update(body, "utf8").digest("base64");
-  try {
-    return crypto.timingSafeEqual(Buffer.from(calculated, "base64"), Buffer.from(hmacHeader, "base64"));
-  } catch {
-    return false;
-  }
+  // Acepta el secret vigente y, durante una rotación en curso, también el
+  // legacy (docs oficiales: Shopify firma con el más antiguo aún sin revocar).
+  return webhookHmacValid(body, hmacHeader);
 }
 
 export const action = async ({ request }: ActionFunctionArgs) => {

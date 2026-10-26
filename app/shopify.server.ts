@@ -11,6 +11,7 @@ import { redirect } from "react-router";
 import { prisma } from "~/lib/db.server";
 import { ADMIN_ORIGIN, buildAdminAppUrl, shopFromCookieHeader } from "~/lib/admin-link";
 import { PLAN_HANDLES, PLAN_LIMITS } from "~/lib/plans";
+import { prepareAdminRequest, prepareWebhookRequest } from "~/lib/dual-secret.server";
 import { EventEmitter } from "node:events";
 
 // Aviso conocido de Node: BrotliCompress (compresión HTTP de Railway) supera los
@@ -188,7 +189,32 @@ const shopify = shopifyApp({
 });
 
 export default shopify;
-export const authenticate = shopify.authenticate;
+
+/**
+ * Aceptación de DOS client secrets durante la rotación de SHOPIFY_API_SECRET
+ * (ver módulo: lib/dual-secret.server.ts — fundamento en las docs oficiales
+ * "Manage your app credentials" paso 2 y "Verify webhook deliveries").
+ *
+ * La librería valida con UN solo secret (su config interna NO es accesible),
+ * así que si Shopify firma con el legacy la petición se RE-FIRMA aquí antes
+ * de entregarla. Sin SHOPIFY_API_SECRET_OLD ambas funciones devuelven la
+ * request intacta → comportamiento idéntico al actual.
+ *
+ * Puntos de validación de la app (auditados 2026-10-26):
+ *  - session token (id_token): SOLO authenticate.admin → safeAuthenticate()
+ *    (línea ~386) y routes/auth.$.tsx → cubierto por `admin` abajo.
+ *  - webhook HMAC: authenticate.webhook en routes/webhooks.tsx → cubierto.
+ *  - HMAC manual de webhooks compliance/app-uninstalled: propio de esa ruta.
+ */
+const baseAuthenticate = shopify.authenticate;
+export const authenticate = {
+  ...baseAuthenticate,
+  admin: ((request: Request) =>
+    baseAuthenticate.admin(prepareAdminRequest(request))) as typeof baseAuthenticate.admin,
+  webhook: (async (request: Request) =>
+    baseAuthenticate.webhook(await prepareWebhookRequest(request))) as typeof baseAuthenticate.webhook,
+};
+
 export const unauthenticated = shopify.unauthenticated;
 export const login = shopify.login;
 export const addDocumentResponseHeaders = shopify.addDocumentResponseHeaders;
