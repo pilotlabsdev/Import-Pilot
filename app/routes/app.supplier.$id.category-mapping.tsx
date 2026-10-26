@@ -20,6 +20,7 @@ import {
   Modal,
   Select,
   Spinner,
+  Tag,
   Text,
   TextField,
 } from "@shopify/polaris";
@@ -198,6 +199,7 @@ export default function CategoryMapping() {
       setCategoryTags("");
       setSelectedProductType("");
       setCatSearch("");
+      setColSearch("");
       setEditingCategory(null);
     } else if (actionData?.error) {
       revalidate();
@@ -218,6 +220,7 @@ export default function CategoryMapping() {
   const [selectedCollections, setSelectedCollections] = useState<Record<string, { id: string; title: string }>>({});
   const [categoryTags, setCategoryTags] = useState("");
   const [selectedProductType, setSelectedProductType] = useState("");
+  const [colSearch, setColSearch] = useState("");
   const [editingCategory, setEditingCategory] = useState<string | null>(null);
   const [previewMapping, setPreviewMapping] = useState<{ csvCategory: string; rows: any[] } | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ csvCategory: string } | null>(null);
@@ -261,6 +264,12 @@ export default function CategoryMapping() {
     c.toLowerCase().includes(catSearch.toLowerCase())
   );
 
+  // Filtro de búsqueda de colecciones (en cliente sobre la lista ya cargada)
+  const colSearchQ = colSearch.trim().toLowerCase();
+  const filteredCollections = colSearchQ
+    ? shopifyCollections.filter((c) => c.title.toLowerCase().includes(colSearchQ))
+    : shopifyCollections;
+
   // 1 entrada = 1 categoría CSV con todas sus colecciones dentro
   // (patrón de apps profesionales; internamente sigue habiendo una fila por
   // par categoría×colección, que los motores unifican al importar)
@@ -289,6 +298,7 @@ export default function CategoryMapping() {
     setCategoryTags("");
     setSelectedProductType("");
     setCatSearch("");
+    setColSearch("");
     setEditingCategory(null);
     shopify.saveBar.hide(SAVE_BAR_ID);
   }, []);
@@ -404,16 +414,44 @@ export default function CategoryMapping() {
                       {t("categories.noCollectionsAvailable")}
                     </Text>
                   ) : (
-                    <div style={{ maxHeight: "250px", overflowY: "auto", border: "1px solid #ddd", borderRadius: "4px", padding: "8px" }}>
-                      {shopifyCollections.map((col) => (
-                        <Checkbox
-                          key={col.id}
-                          label={col.title}
-                          checked={!!selectedCollections[col.id]}
-                          onChange={() => toggleCollection(col.id, col.title)}
-                        />
-                      ))}
-                    </div>
+                    <BlockStack gap="200">
+                      <TextField
+                        type="search"
+                        label={t("categories.searchCollections")}
+                        labelHidden
+                        placeholder={t("categories.searchCollections")}
+                        value={colSearch}
+                        onChange={setColSearch}
+                        autoComplete="off"
+                      />
+                      <div style={{ maxHeight: "250px", overflowY: "auto", border: "1px solid #ddd", borderRadius: "4px", padding: "8px" }}>
+                        {filteredCollections.length === 0 && (
+                          <Text as="p" tone="subdued">
+                            {t("categories.noFoundCollections")}
+                          </Text>
+                        )}
+                        {filteredCollections.map((col) => (
+                          <Checkbox
+                            key={col.id}
+                            label={col.title}
+                            checked={!!selectedCollections[col.id]}
+                            onChange={() => toggleCollection(col.id, col.title)}
+                          />
+                        ))}
+                      </div>
+                      {allCollectionIds.length > 0 && (
+                        <InlineStack gap="100" wrap>
+                          {allCollectionIds.map((cId) => (
+                            <Tag
+                              key={cId}
+                              onRemove={() => toggleCollection(cId, selectedCollections[cId]?.title || cId)}
+                            >
+                              {selectedCollections[cId]?.title || cId}
+                            </Tag>
+                          ))}
+                        </InlineStack>
+                      )}
+                    </BlockStack>
                   )}
                 </BlockStack>
                 </div>
@@ -634,6 +672,7 @@ function EditCategoryModal({
   const [productType, setProductType] = useState(
     catMappings.find((m) => m.shopifyProductType)?.shopifyProductType || ""
   );
+  const [colSearch, setColSearch] = useState("");
 
   const toggleCol = (id: string, title: string) => {
     setSelectedCols((prev) => {
@@ -648,6 +687,12 @@ function EditCategoryModal({
   };
 
   const colIds = Object.keys(selectedCols);
+
+  // Filtro de búsqueda de colecciones (en cliente sobre la lista ya cargada)
+  const colSearchQ = colSearch.trim().toLowerCase();
+  const filteredCols = colSearchQ
+    ? shopifyCollections.filter((c) => c.title.toLowerCase().includes(colSearchQ))
+    : shopifyCollections;
 
   return (
     <Modal
@@ -690,16 +735,41 @@ function EditCategoryModal({
                   {t("categories.noCollectionsAvailable")}
                 </Text>
               ) : (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "8px" }}>
-                  {shopifyCollections.map((col) => (
-                    <Checkbox
-                      key={col.id}
-                      label={col.title}
-                      checked={!!selectedCols[col.id]}
-                      onChange={() => toggleCol(col.id, col.title)}
-                    />
-                  ))}
-                </div>
+                <BlockStack gap="200">
+                  <TextField
+                    type="search"
+                    label={t("categories.searchCollections")}
+                    labelHidden
+                    placeholder={t("categories.searchCollections")}
+                    value={colSearch}
+                    onChange={setColSearch}
+                    autoComplete="off"
+                  />
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "8px" }}>
+                    {filteredCols.map((col) => (
+                      <Checkbox
+                        key={col.id}
+                        label={col.title}
+                        checked={!!selectedCols[col.id]}
+                        onChange={() => toggleCol(col.id, col.title)}
+                      />
+                    ))}
+                  </div>
+                  {filteredCols.length === 0 && (
+                    <Text as="p" tone="subdued">
+                      {t("categories.noFoundCollections")}
+                    </Text>
+                  )}
+                  {colIds.length > 0 && (
+                    <InlineStack gap="100" wrap>
+                      {colIds.map((cId) => (
+                        <Tag key={cId} onRemove={() => toggleCol(cId, selectedCols[cId])}>
+                          {selectedCols[cId]}
+                        </Tag>
+                      ))}
+                    </InlineStack>
+                  )}
+                </BlockStack>
               )}
             </BlockStack>
 

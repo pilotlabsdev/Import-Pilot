@@ -298,6 +298,8 @@
   "categories.searchCategories": "Rechercher et sélectionner des catégories...",
   "categories.ofSelected": "sélectionnées",
   "categories.noFound": "Aucune catégorie trouvée",
+  "categories.searchCollections": "Rechercher une collection...",
+  "categories.noFoundCollections": "Aucune collection trouvée",
   "categories.shopifyCollections": "Collections Shopify",
   "categories.noCollectionsAvailable": "Aucune collection disponible.",
   "categories.tagsForCategory": "Tags pour cette catégorie",

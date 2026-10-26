@@ -69,6 +69,16 @@ export async function getCollections(admin: any): Promise<Array<{ id: string; ti
     cursor = json.data?.collections?.pageInfo?.endCursor || null;
   }
 
+  // Orden alfabético en CLIENTE (la API ordena por ID por defecto — docs
+  // oficiales 2026-07 `collections` sortKey = CollectionSortKeys, Default:ID).
+  // Se ordena aquí para no tocar la query ya validada (filtro
+  // collection_type:custom + paginación intactos). `numeric` = orden natural
+  // para títulos con números: "21 IVA" antes que las letras y "Tablets 2"
+  // antes que "Tablets 10"; `sensitivity:"base"` ignora mayúsculas/acentos.
+  collections.sort((a, b) =>
+    a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: "base" })
+  );
+
   return collections;
 }
 
