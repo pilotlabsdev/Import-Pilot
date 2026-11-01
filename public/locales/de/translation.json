@@ -198,6 +198,7 @@
   "config.salesChannelsHelp": "Wählen Sie die Kanäle, in denen neue Produkte veröffentlicht werden (nur ERSTELLEN, nicht AKTUALISIEREN).",
   "config.noChannels": "Keine Kanäle erkannt.",
   "config.noStockZero": "Keine Produkte mit Bestand 0 erstellen",
+  "config.noStockZeroHelp": "Gilt nur beim Erstellen: Ist das Produkt bereits im Shop vorhanden, wird der Bestand trotzdem aktualisiert, auch wenn der Feed auf 0 steht.",
   "config.exclusions": "Ausschlüsse",
   "config.exclusionsHelp": "Produkte, die mit diesen Regeln übereinstimmen, werden beim Import übersprungen (Erstellen und Aktualisieren).",
   "config.excludeTitle": "Nach Titelwörtern ausschließen",

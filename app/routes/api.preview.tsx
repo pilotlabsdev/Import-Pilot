@@ -462,7 +462,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       if (!getFieldVal("title")) errors.push("Sin nombre");
       if (costPrice <= 0) errors.push("Precio proveedor inválido");
       if (exclusion.excluded) errors.push(`Excluido: ${exclusion.reason}`);
-      if (csvQuantity <= 0 && config.skipZeroStockCreate) errors.push("Skip stock 0");
+      if (skipForStock) errors.push("Skip stock 0");
 
       const excludedFields = getExcludedFields(sku, fieldRules, ean);
       if (excludedFields) {

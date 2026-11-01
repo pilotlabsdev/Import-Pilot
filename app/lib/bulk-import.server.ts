@@ -1418,7 +1418,12 @@ async function prepareAndLaunch(
     // Ensure quantity is never negative (Shopify doesn't accept negative stock)
     const stockQty = Math.max(0, quantity);
 
-    if (config.skipZeroStockCreate && stockQty <= 0) {
+    // Match contra Shopify resuelto ANTES del skip de stock 0: hace falta para
+    // distinguir CREAR (sin match) de ACTUALIZAR (con match). skipZeroStockCreate
+    // = solo creaciones; si el producto ya existe, su stock se aplica aunque sea 0.
+    const match = maps.byBarcode.get(ean) || maps.bySku.get(sku);
+
+    if (config.skipZeroStockCreate && stockQty <= 0 && !match) {
       zeroStockSkippedCount++;
       excludedCount++;
       continue;
@@ -1516,8 +1521,6 @@ async function prepareAndLaunch(
       .filter((id: string) => !autoCollectionIds.has(id));
     const categoryTags = matchingCategoryMaps.map((cm: any) => cm.tags).filter(Boolean).join(",");
     const shopifyProductType = matchingCategoryMaps.find((cm: any) => cm.shopifyProductType)?.shopifyProductType || null;
-
-    const match = maps.byBarcode.get(ean) || maps.bySku.get(sku);
 
     const csvTitle = getField(row, columnMaps, "title") || "";
     const csvDescription = getField(row, columnMaps, "description") || "";

@@ -198,6 +198,7 @@
   "config.salesChannelsHelp": "Sélectionnez les canaux sur lesquels les produits seront publiés lors de leur création (CREATE uniquement, pas UPDATE).",
   "config.noChannels": "Aucun canal détecté.",
   "config.noStockZero": "Ne pas créer les produits avec un stock de 0",
+  "config.noStockZeroHelp": "S'applique uniquement à la création : si le produit existe déjà dans la boutique, son stock sera tout de même mis à jour, même si le flux le met à 0.",
   "config.exclusions": "Exclusions",
   "config.exclusionsHelp": "Les produits correspondant à ces règles seront ignorés pendant l'import (create et update).",
   "config.excludeTitle": "Exclure par mots dans le titre",

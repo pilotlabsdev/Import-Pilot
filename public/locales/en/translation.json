@@ -198,6 +198,7 @@
   "config.salesChannelsHelp": "Select the channels where products will be published when created (CREATE only, not UPDATE).",
   "config.noChannels": "No channels detected.",
   "config.noStockZero": "Don't create products with zero stock",
+  "config.noStockZeroHelp": "Applies only when creating: if the product already exists in the store, its stock will still be updated even if the feed sets it to 0.",
   "config.exclusions": "Exclusions",
   "config.exclusionsHelp": "Products matching these rules will be skipped during import (create and update).",
   "config.excludeTitle": "Exclude by title words",

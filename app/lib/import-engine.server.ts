@@ -1884,12 +1884,16 @@ async function processProduct({
   // If no existing mapping, try to find product in Shopify via barcodeMap (pre-loaded)
   let priorityReplaceTarget: { mappingId: string; shopifyProductId: string; supplierName: string; configId: string; tags: string[] | null } | null = null;
   if (!existing) {
-    if (config.skipZeroStockCreate && newQty <= 0) {
+    const rowEan = getField(row, columnMaps, "ean") || row["ean"] || "";
+    // skipZeroStockCreate = SOLO creaciones. Si el producto YA existe en Shopify
+    // (lo encuentra el barcodeMap del chunk) es una adopción/UPDATE → el stock
+    // del feed se aplica aunque sea 0; el skip real ocurre en el create de abajo.
+    const existsInShopify = !!((rowEan && barcodeMap.has(rowEan)) || (sku && barcodeMap.has(sku)));
+    if (config.skipZeroStockCreate && newQty <= 0 && !existsInShopify) {
       result.excluded++;
       return;
     }
 
-    const rowEan = getField(row, columnMaps, "ean") || row["ean"] || "";
     const shopSettings = await prisma.shopSettings.findUnique({ where: { shopDomain } });
     const dupPolicy2 = shopSettings?.duplicatePolicy || "skip_existing";
 
@@ -2572,9 +2576,10 @@ async function processProduct({
       }
     }
 
+    // skipZeroStockCreate NO aplica aquí: es un UPDATE (el producto ya existe en
+    // Shopify), así que el stock del feed se aplica siempre, incluido a 0.
     if (stockChanged && existing.shopifyInventoryItemId) {
-      if (config.skipZeroStockCreate && newQty <= 0) {
-      } else if (processedInventoryItems.has(existing.shopifyInventoryItemId)) {
+      if (processedInventoryItems.has(existing.shopifyInventoryItemId)) {
       } else {
         processedInventoryItems.add(existing.shopifyInventoryItemId);
         try {

@@ -853,6 +853,7 @@ export default function Config() {
 
               <Checkbox
                 label={t("config.noStockZero")}
+                helpText={t("config.noStockZeroHelp")}
                 checked={skipZeroStock}
                 onChange={(v) => { setSkipZeroStock(v); markDirty(); }}
               />

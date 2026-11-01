@@ -198,6 +198,7 @@
   "config.salesChannelsHelp": "Selecione os canais onde os produtos serão publicados ao criá-los (somente CREATE, não UPDATE).",
   "config.noChannels": "Nenhum canal detectado.",
   "config.noStockZero": "Não criar produtos com estoque 0",
+  "config.noStockZeroHelp": "Aplica-se apenas à criação: se o produto já existir na loja, o seu estoque será atualizado mesmo que o feed o defina como 0.",
   "config.exclusions": "Exclusões",
   "config.exclusionsHelp": "Produtos que corresponderem a essas regras serão omitidos durante a importação (create e update).",
   "config.excludeTitle": "Excluir por palavras no título",
