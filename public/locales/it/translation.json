@@ -748,7 +748,7 @@
   "systemError.resume_no_manifest": "Mancano dei file per riprendere l'importazione. Avviala di nuovo.",
   "systemError.finalize_error": "L'importazione non ha potuto completare gli ultimi passaggi. Riprova.",
   "systemError.feed_unreadable": "Il file del feed non contiene dati utilizzabili (colonna SKU vuota o mancante). Riprova tra qualche minuto.",
-  "systemError.invalid_headers": "Il file non ha le colonne previste (SKU o EAN mancanti). Controlla le impostazioni del fornitore.",
+  "systemError.invalid_headers": "Nessuna colonna sku o ean trovata. Prima di importare, vai alla scheda Colonne e scegli quale colonna contiene sku o ean.",
   "systemError.google_not_shared": "Google non scarica il foglio o il file perché non è condiviso. Condividi il foglio con chiunque abbia il link e riprova.",
   "systemError.empty_url": "Questo fornitore non ha URL del file configurato. Vai su Impostazioni, salva l'URL del feed o carica un file e riprova.",
   "systemError.download_failed": "Impossibile scaricare il file ({{status}}). Controlla l'URL e i permessi del file.",

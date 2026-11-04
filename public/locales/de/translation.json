@@ -748,7 +748,7 @@
   "systemError.resume_no_manifest": "Dateien zum Fortsetzen des Imports fehlen. Starte ihn erneut.",
   "systemError.finalize_error": "Der Import konnte die letzten Schritte nicht abschliessen. Versuche es erneut.",
   "systemError.feed_unreadable": "Die Feed-Datei enthält keine verwendbaren Daten (SKU-Spalte leer oder fehlend). Versuche es in wenigen Minuten erneut.",
-  "systemError.invalid_headers": "Die Datei hat nicht die erwarteten Spalten (SKU oder EAN fehlt). Prüfe die Einstellungen des Lieferanten.",
+  "systemError.invalid_headers": "Es wurde keine Spalte sku oder ean gefunden. Gehe vor dem Import zum Tab Spalten und wähle dort, welche Spalte sku oder ean enthält.",
   "systemError.google_not_shared": "Google lässt das Blatt oder die Datei nicht herunterladen, weil es nicht geteilt ist. Teilen Sie das Blatt mit jedem mit dem Link und versuchen Sie es erneut.",
   "systemError.empty_url": "Dieser Lieferant hat keine Datei-URL konfiguriert. Gehe zu den Einstellungen, speichere die Feed-URL oder lade eine Datei hoch, und versuche es erneut.",
   "systemError.download_failed": "Die Datei konnte nicht heruntergeladen werden ({{status}}). Prüfe die URL und die Dateiberechtigungen.",

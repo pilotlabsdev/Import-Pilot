@@ -748,7 +748,7 @@
   "systemError.resume_no_manifest": "Il manque des fichiers pour reprendre l'importation. Relancez-la.",
   "systemError.finalize_error": "L'importation n'a pas pu effectuer ses dernières étapes. Réessayez.",
   "systemError.feed_unreadable": "Le fichier du flux ne contient pas de données utilisables (colonne SKU vide ou absente). Réessayez dans quelques minutes.",
-  "systemError.invalid_headers": "Le fichier n'a pas les colonnes attendues (SKU ou EAN manquant). Vérifiez les paramètres du fournisseur.",
+  "systemError.invalid_headers": "Aucune colonne sku ou ean trouvée. Avant d'importer, allez dans l'onglet Colonnes et choisissez quelle colonne contient le sku ou l'ean.",
   "systemError.google_not_shared": "Google ne permet pas de télécharger la feuille ou le fichier car il n'est pas partagé. Partagez la feuille avec toute personne disposant du lien et réessayez.",
   "systemError.empty_url": "Ce fournisseur n'a pas d'URL de fichier configurée. Allez dans les paramètres, enregistrez l'URL du flux ou téléversez un fichier, puis réessayez.",
   "systemError.download_failed": "Impossible de télécharger le fichier ({{status}}). Vérifiez l'URL et les permissions du fichier.",

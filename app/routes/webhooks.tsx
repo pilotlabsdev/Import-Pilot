@@ -7,6 +7,7 @@ import { queryProductMedia, type StoredImage } from "~/lib/import-engine.server"
 import { isBulkActive } from "~/lib/bulk-active-cache.server";
 import { enforcePlanLimits, upsertSubscription } from "~/lib/billing.server";
 import { webhookHmacValid } from "~/lib/dual-secret.server";
+import { deleteShopStorageFiles } from "~/lib/storage.server";
 
 const COMPLIANCE_TOPICS = new Set(["customers/data_request", "customers/redact", "shop/redact"]);
 
@@ -32,17 +33,35 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const shop = payload.shop_domain || "unknown";
 
     // shop/redact: delete ALL shop data (GDPR, sent 48h after uninstall)
-    if (topicHeader === "shop/redact") {
-      await prisma.$transaction([
-        prisma.importConfig.deleteMany({ where: { shopDomain: shop } }),
-        prisma.productMapping.deleteMany({ where: { shopDomain: shop } }),
-        prisma.importLog.deleteMany({ where: { shopDomain: shop } }),
-        prisma.notificationConfig.deleteMany({ where: { shopDomain: shop } }),
-        prisma.bulkJob.deleteMany({ where: { shopDomain: shop } }),
-        prisma.shopSettings.deleteMany({ where: { shopDomain: shop } }),
-      ]);
-      console.log(`[Webhook] SHOP_REDACT: ${shop} datos eliminados definitivamente`);
+    // Docs: "erase data for that store from your database" (privacy-law-compliance).
+    // Lo que YA borraba la cascada desde ImportConfig: ColumnMapping, PriceRule,
+    // CategoryCollectionMapping, ImportLog, ProductMapping, BulkJob (→ BulkJobOp),
+    // NotificationConfig. Estas NO tienen cascade (sin FK o con shopDomain propio)
+    // y se quedaban huérfanas:
+    const r = await prisma.$transaction([
+      prisma.importConfig.deleteMany({ where: { shopDomain: shop } }),
+      prisma.productMapping.deleteMany({ where: { shopDomain: shop } }),
+      prisma.importLog.deleteMany({ where: { shopDomain: shop } }),
+      prisma.notificationConfig.deleteMany({ where: { shopDomain: shop } }),
+      prisma.bulkJob.deleteMany({ where: { shopDomain: shop } }),
+      prisma.shopSettings.deleteMany({ where: { shopDomain: shop } }),
+      prisma.appSubscription.deleteMany({ where: { shopDomain: shop } }),
+      prisma.importQueue.deleteMany({ where: { shopDomain: shop } }),
+      prisma.duplicateLog.deleteMany({ where: { shopDomain: shop } }),
+      prisma.supportMessage.deleteMany({ where: { shopDomain: shop } }),
+      prisma.session.deleteMany({ where: { shop } }),
+    ]);
+    // Ficheros subidos al bucket (CSVs del merchant, prefijo "<shop>/").
+    // Best-effort: si falla, la respuesta sigue siendo 200 (la BD ya está limpia).
+    let bucketFiles = 0;
+    try {
+      bucketFiles = await deleteShopStorageFiles(shop);
+    } catch (e: any) {
+      console.error(`[Webhook] SHOP_REDACT: error borrando ficheros del bucket (${shop}):`, e?.message);
     }
+    console.log(
+      `[Webhook] SHOP_REDACT: ${shop} datos eliminados definitivamente (filas: ${r.map((x) => x.count).join("/")}, ficheros bucket: ${bucketFiles})`
+    );
 
     console.log(`[Webhook] Compliance: ${topicHeader} from ${shop} — OK (200)`);
     throw new Response(null, { status: 200 });

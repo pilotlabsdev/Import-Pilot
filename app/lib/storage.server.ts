@@ -124,6 +124,33 @@ export async function getFileSize(bucketKey: string): Promise<number> {
   }
 }
 
+/**
+ * Delete EVERY object stored under "<shopDomain>/" (used by shop/redact).
+ * Objects are always written as "<shopDomain>/<configId>/<file>" (makeBucketKey),
+ * so the shop prefix is a safe boundary: no other shop's files can match.
+ * Returns the number of deleted objects (0 if storage isn't configured).
+ */
+export async function deleteShopStorageFiles(shopDomain: string): Promise<number> {
+  if (!isStorageConfigured() || !shopDomain) return 0;
+  const prefix = `${shopDomain}/`;
+  let continuationToken: string | undefined;
+  let deleted = 0;
+  do {
+    const res = await getClient().send(new ListObjectsV2Command({
+      Bucket: BUCKET,
+      Prefix: prefix,
+      ContinuationToken: continuationToken,
+    }));
+    const keys = (res.Contents || []).map((o) => o.Key).filter((k): k is string => !!k);
+    for (const key of keys) {
+      await getClient().send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
+      deleted++;
+    }
+    continuationToken = res.IsTruncated ? res.NextContinuationToken : undefined;
+  } while (continuationToken);
+  return deleted;
+}
+
 /** List all files in a bucket prefix (shopDomain/configId/). */
 export async function listStorageFiles(shopDomain: string, configId: string): Promise<Array<{ key: string; name: string; size: number; lastModified: string }>> {
   const prefix = `${shopDomain}/${configId}/`;
