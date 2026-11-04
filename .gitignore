@@ -7,3 +7,5 @@ uploads/
 *.log
 .react-router/
 .shopify
+# scripts de prueba/inspeccion locales (E2E, probes) — nunca se commitean
+scripts/_*
