@@ -728,8 +728,59 @@ export async function runBulkImport({
     lastTitle: string | null; lastDescription: string | null; lastVendor: string | null;
     lastProductType: string | null; lastTags: string | null;
   }>();
+  // Hidratación de mappings: las consultas de producto van EN PARALELO (x10)
+  // pero los resultados se aplican EN EL ORDEN ORIGINAL. El orden de aplicación
+  // es lo que decide "gana el primero" en bySku/byBarcode y la rama
+  // enrich-vs-query — idéntico al bucle secuencial previo, mismos mapas,
+  // misma limpieza de huérfanos. El rate limiter (rateLimitedGraphql, sincronizado
+  // con el bucket real de Shopify) regula la concurrencia efectiva contra la API.
+  type FetchedProduct = { ok: true; product: any } | { ok: false };
+  const PRODUCT_LOOKUP_QUERY = `#graphql
+    query ($id: ID!) {
+      product(id: $id) {
+        id title vendor productType tags descriptionHtml
+        images(first: 5) { edges { node { id url } } }
+        variants(first: 5) {
+          edges {
+            node { id sku barcode price inventoryItem { id unitCost { amount } inventoryLevels(first: 10) { nodes { location { id } quantities(names: ["available"]) { name quantity } } } } }
+          }
+        }
+      }
+    }
+  `;
+  const fetchResults = new Map<number, FetchedProduct>();
+  const toFetch: Array<{ index: number; productId: string }> = [];
+  for (let i = 0; i < allMappings.length; i++) {
+    const m = allMappings[i];
+    if (
+      !targetedMaps.bySku.has(m.supplierSku) &&
+      m.shopifyProductId &&
+      (m.postProcessStatus === "complete" || m.postProcessStatus === "pending" || !m.postProcessStatus || m.postProcessStatus === "error_permanent")
+    ) {
+      toFetch.push({ index: i, productId: m.shopifyProductId });
+    }
+  }
+  console.log(`[Bulk] Hidratación: ${toFetch.length}/${allMappings.length} consultas de producto a lanzar (concurrency ${10})`);
+  const HYDRATE_CONCURRENCY = 10;
+  for (let i = 0; i < toFetch.length; i += HYDRATE_CONCURRENCY) {
+    await touchLookup();
+    const batch = toFetch.slice(i, i + HYDRATE_CONCURRENCY);
+    await Promise.all(
+      batch.map(async ({ index, productId }) => {
+        try {
+          const json = await gql(admin, PRODUCT_LOOKUP_QUERY, { variables: { id: productId } }, job.shopDomain);
+          fetchResults.set(index, { ok: true, product: json.data?.product ?? null });
+        } catch {
+          fetchResults.set(index, { ok: false });
+        }
+      })
+    );
+  }
+
+  // Aplicación secuencial en orden original (semántica idéntica al bucle previo)
   let hydratedCount = 0;
-  for (const m of allMappings) {
+  for (let i = 0; i < allMappings.length; i++) {
+    const m = allMappings[i];
     if (++hydratedCount % 500 === 0) await touchLookup();
     if (targetedMaps.bySku.has(m.supplierSku)) {
       const existing = targetedMaps.bySku.get(m.supplierSku)!;
@@ -737,26 +788,14 @@ export async function runBulkImport({
       if (!existing.variantId && m.shopifyVariantId) existing.variantId = m.shopifyVariantId;
     } else if (m.shopifyProductId) {
       if (m.postProcessStatus === "complete" || m.postProcessStatus === "pending" || !m.postProcessStatus || m.postProcessStatus === "error_permanent") {
-        try {
-          const productQuery = `#graphql
-            query ($id: ID!) {
-              product(id: $id) {
-                id title vendor productType tags descriptionHtml
-                images(first: 5) { edges { node { id url } } }
-                variants(first: 5) {
-                  edges {
-                    node { id sku barcode price inventoryItem { id unitCost { amount } inventoryLevels(first: 10) { nodes { location { id } quantities(names: ["available"]) { name quantity } } } } }
-                  }
-                }
-              }
-            }
-          `;
-          const json = await gql(admin, productQuery, { variables: { id: m.shopifyProductId } }, job.shopDomain);
-          const product = json.data?.product;
-          if (!product) {
-            await prisma.productMapping.delete({ where: { id: m.id } }).catch(() => {});
-            continue;
-          }
+        const fetched = fetchResults.get(i);
+        if (!fetched || !fetched.ok) {
+          // Si no podemos verificar, conservar el mapping (igual que el catch previo)
+        } else if (!fetched.product) {
+          await prisma.productMapping.delete({ where: { id: m.id } }).catch(() => {});
+          continue;
+        } else {
+          const product = fetched.product;
           const productId = product.id;
           const productTitle = product.title || undefined;
           const productDescription = product.descriptionHtml || undefined;
@@ -786,8 +825,6 @@ export async function runBulkImport({
             if (v.sku && !targetedMaps.bySku.has(v.sku)) targetedMaps.bySku.set(String(v.sku), matchData);
             if (v.barcode && !targetedMaps.byBarcode.has(String(v.barcode))) targetedMaps.byBarcode.set(String(v.barcode), matchData);
           }
-        } catch {
-          // Si no podemos verificar, conservar el mapping
         }
       }
     }
@@ -813,12 +850,20 @@ export async function runBulkImport({
   });
   const locationId = await getLocationId(admin, shopDomain, fullConfig.id);
   if (incompleteMappings.length > 0) {
-    for (let i = 0; i < incompleteMappings.length; i++) {
-      if (i > 0 && i % 10 === 0) await touchLookup();
-      const mapping = incompleteMappings[i];
-      await retryPostProcess(admin, mapping, job, fullConfig, locationId).catch((e: any) => {
-        console.error(`[Bulk] retryPostProcess failed for SKU ${mapping.supplierSku}: ${e?.message}`);
-      });
+    // Reintentos en paralelo (x10): retryPostProcess solo muta SU fila de BD y
+    // hace sets idempotentes sobre SU producto (inventario/canales) — sin
+    // creaciones, seguro en concurrencia. El rate limiter regula la tasa real.
+    const RETRY_CONCURRENCY = 10;
+    for (let i = 0; i < incompleteMappings.length; i += RETRY_CONCURRENCY) {
+      await touchLookup();
+      const batch = incompleteMappings.slice(i, i + RETRY_CONCURRENCY);
+      await Promise.all(
+        batch.map((mapping) =>
+          retryPostProcess(admin, mapping, job, fullConfig, locationId).catch((e: any) => {
+            console.error(`[Bulk] retryPostProcess failed for SKU ${mapping.supplierSku}: ${e?.message}`);
+          })
+        )
+      );
     }
   }
 
