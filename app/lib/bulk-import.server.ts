@@ -558,6 +558,10 @@ interface MetaLine {
   imagesChanged?: boolean;
   priceApplied?: boolean;
   stockApplied?: boolean;
+  nameApplied?: boolean;
+  descriptionApplied?: boolean;
+  vendorApplied?: boolean;
+  productTypeApplied?: boolean;
   skipPrice?: boolean;
   skipStock?: boolean;
   prevPrice?: number | null;
@@ -1715,6 +1719,10 @@ async function prepareAndLaunch(
       meta.images = csvImageUrls;
       meta.priceApplied = effectiveOpts.has("price");
       meta.stockApplied = effectiveOpts.has("stock") && stockQty >= 0;
+      meta.nameApplied = effectiveOpts.has("name");
+      meta.descriptionApplied = effectiveOpts.has("description");
+      meta.vendorApplied = effectiveOpts.has("vendor");
+      meta.productTypeApplied = effectiveOpts.has("productType");
       meta.skipPrice = excludedFields?.includes("price") || false;
       meta.skipStock = excludedFields?.includes("stock") || false;
       meta.prevPrice = lastPrice;
@@ -2129,10 +2137,13 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       if (!meta.priceBaselineLive && csvCompare !== undefined && csvCompare !== existingMapping.lastComparePrice) priceChanged = true;
       if (!meta.stockBaselineLive && csvQty !== undefined && csvQty !== existingMapping.lastQuantity) stockChanged = true;
       if (csvCost !== undefined && csvCost !== existingMapping.lastCost) costChanged = true;
-      if (!titleChanged && meta.title && existingMapping.lastTitle !== null && meta.title !== existingMapping.lastTitle) titleChanged = true;
-      if (!descriptionChanged && meta.description && existingMapping.lastDescription !== null && normalizeHtml(meta.description).trim() !== normalizeHtml(existingMapping.lastDescription).trim()) descriptionChanged = true;
-      if (!vendorChanged && meta.vendor && meta.vendor.trim() !== "" && existingMapping.lastVendor !== null && meta.vendor !== existingMapping.lastVendor) vendorChanged = true;
-      if (!productTypeChanged && meta.productType && existingMapping.lastProductType !== null && meta.productType !== existingMapping.lastProductType) productTypeChanged = true;
+      // Re-marcación SOLO para campos realmente enviados en la mutación
+      // (meta.XApplied !== false: undefined en creates = todo se envía; false en
+      // updates con opción apagada = el campo no viajó → NO contar ni aplicar).
+      if (!titleChanged && meta.nameApplied !== false && meta.title && existingMapping.lastTitle !== null && meta.title !== existingMapping.lastTitle) titleChanged = true;
+      if (!descriptionChanged && meta.descriptionApplied !== false && meta.description && existingMapping.lastDescription !== null && normalizeHtml(meta.description).trim() !== normalizeHtml(existingMapping.lastDescription).trim()) descriptionChanged = true;
+      if (!vendorChanged && meta.vendorApplied !== false && meta.vendor && meta.vendor.trim() !== "" && existingMapping.lastVendor !== null && meta.vendor !== existingMapping.lastVendor) vendorChanged = true;
+      if (!productTypeChanged && meta.productTypeApplied !== false && meta.productType && existingMapping.lastProductType !== null && meta.productType !== existingMapping.lastProductType) productTypeChanged = true;
 
     } else {
     }
@@ -2160,10 +2171,10 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
         lastComparePrice: meta.compareAtPrice,
         lastQuantity: meta.stockQty,
         lastCost: meta.costPrice > 0 ? meta.costPrice : null,
-        lastTitle: meta.title ?? null,
-        lastDescription: meta.description ?? null,
-        lastVendor: meta.vendor ?? null,
-        lastProductType: meta.productType ?? null,
+        lastTitle: meta.nameApplied !== false ? meta.title ?? null : null,
+        lastDescription: meta.descriptionApplied !== false ? meta.description ?? null : null,
+        lastVendor: meta.vendorApplied !== false ? meta.vendor ?? null : null,
+        lastProductType: meta.productTypeApplied !== false ? meta.productType ?? null : null,
         lastTags: meta.tags ? JSON.stringify(meta.tags) : null,
         lastImportSource: sourceKey || null,
         postProcessStatus: actuallyNew ? "pending" : "complete",
@@ -2178,10 +2189,10 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
         lastComparePrice: meta.priceApplied !== false ? meta.compareAtPrice : undefined,
         lastQuantity: meta.stockApplied !== false ? meta.stockQty : undefined,
         lastCost: meta.costPrice > 0 ? meta.costPrice : undefined,
-        lastTitle: meta.title ?? undefined,
-        lastDescription: meta.description ?? undefined,
-        lastVendor: meta.vendor ?? undefined,
-        lastProductType: meta.productType ?? undefined,
+        lastTitle: meta.nameApplied !== false ? meta.title ?? undefined : undefined,
+        lastDescription: meta.descriptionApplied !== false ? meta.description ?? undefined : undefined,
+        lastVendor: meta.vendorApplied !== false ? meta.vendor ?? undefined : undefined,
+        lastProductType: meta.productTypeApplied !== false ? meta.productType ?? undefined : undefined,
         lastTags: meta.tags ? JSON.stringify(meta.tags) : undefined,
         lastImportSource: sourceKey || undefined,
         postProcessStatus: actuallyNew ? "pending" : "complete",
@@ -2457,8 +2468,10 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
                   shopifyVariantId: variant?.id ?? null, shopifyInventoryItemId: variant?.inventoryItem?.id ?? null,
                   lastPrice: rm.regularPrice, lastComparePrice: rm.compareAtPrice, lastQuantity: rm.stockQty,
                   lastCost: rm.costPrice > 0 ? rm.costPrice : null,
-                  lastTitle: rm.title ?? null, lastDescription: rm.description ?? null,
-                  lastVendor: rm.vendor ?? null, lastProductType: rm.productType ?? null,
+                  lastTitle: rm.nameApplied !== false ? rm.title ?? null : null,
+                  lastDescription: rm.descriptionApplied !== false ? rm.description ?? null : null,
+                  lastVendor: rm.vendorApplied !== false ? rm.vendor ?? null : null,
+                  lastProductType: rm.productTypeApplied !== false ? rm.productType ?? null : null,
                   lastTags: rm.tags ? JSON.stringify(rm.tags) : null,
                   lastImportSource: sourceKey || null,
                   postProcessStatus: op.kind === "create" ? "pending" : "complete",
@@ -2468,8 +2481,10 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
                   shopifyInventoryItemId: variant?.inventoryItem?.id ?? null,
                   lastPrice: rm.regularPrice, lastComparePrice: rm.compareAtPrice, lastQuantity: rm.stockQty,
                   lastCost: rm.costPrice > 0 ? rm.costPrice : null,
-                  lastTitle: rm.title ?? undefined, lastDescription: rm.description ?? undefined,
-                  lastVendor: rm.vendor ?? undefined, lastProductType: rm.productType ?? undefined,
+                  lastTitle: rm.nameApplied !== false ? rm.title ?? undefined : undefined,
+                  lastDescription: rm.descriptionApplied !== false ? rm.description ?? undefined : undefined,
+                  lastVendor: rm.vendorApplied !== false ? rm.vendor ?? undefined : undefined,
+                  lastProductType: rm.productTypeApplied !== false ? rm.productType ?? undefined : undefined,
                   lastTags: rm.tags ? JSON.stringify(rm.tags) : undefined,
                   lastImportSource: sourceKey || undefined,
                   postProcessStatus: op.kind === "create" ? "pending" : "complete", postProcessError: null, postProcessRetries: 0,
