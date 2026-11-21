@@ -2353,10 +2353,10 @@ async function handleMutationOpFinished(job: any, op: any, admin: any, status: s
       if (claimLost) return;
       const i = nextRowIndex++;
       if (i >= resultLines.length) return;
-      // Heartbeat con contadores vivos: cada 25 filas completadas o como máximo cada 45s
-      // (muy por debajo del umbral stale de 10 min — antes filas lentas de ~26s rompían
-      // la cadencia de 25 filas y disparen un falso stale).
-      if (rowsSinceBeat >= 25 || Date.now() - lastBeatAt >= 45_000) {
+      // Heartbeat con contadores vivos: cada 5 filas completadas o como máximo cada 10s
+      // (los contadores se actualizan casi en tiempo real en la UI; el umbral stale de 10 min
+      // sigue muy por encima — 60× margen).
+      if (rowsSinceBeat >= 5 || Date.now() - lastBeatAt >= 10_000) {
         rowsSinceBeat = 0;
         lastBeatAt = Date.now();
         await beatLive({ progressCount: rowsProcessed });
